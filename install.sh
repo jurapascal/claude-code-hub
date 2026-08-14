@@ -1,7 +1,12 @@
 #!/bin/bash
-# Claude Code Hub — installer
-# Nakopíruje appku do ~/.claude, založí konfig, ikonu a položku v nabídce aplikací.
-# Nic nepřepíše bez zálohy a nesahá na ~/.claude/settings.json.
+# Claude Code Hub — instalačka.
+#
+# Repo je jen instalačka: obsah (projekty, paměť) má každý svůj na disku.
+# Skript zjistí, kde ho má, uloží to do ~/.claude/hub-config.json a podle
+# toho vyrenderuje aplikaci i slash příkazy. Nic nepřepíše bez zálohy
+# a do ~/.claude/settings.json nesahá.
+#
+# Použití: bash install.sh [--yes]     (--yes = bez otázek, jen detekce)
 set -u
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,6 +14,11 @@ CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 ICON_DIR="$HOME/.local/share/icons"
 APP_DIR="$HOME/.local/share/applications"
 STAMP="$(date +%Y%m%d-%H%M%S)"
+CONFIG="$CLAUDE_DIR/hub-config.json"
+
+ASSUME_YES=false
+[ "${1:-}" = "--yes" ] && ASSUME_YES=true
+[ -t 0 ] || ASSUME_YES=true   # bez terminálu se neptáme
 
 A="\033[38;5;208m"; G="\033[38;5;114m"; Y="\033[38;5;180m"; D="\033[2m"; R="\033[0m"
 ok()   { echo -e "  ${G}✓${R} $1"; }
@@ -27,7 +37,7 @@ from gi.repository import Gtk, Vte" 2>/dev/null || MISSING="$MISSING python3-gi/
 
 if [ -n "$MISSING" ]; then
     warn "Chybí:$MISSING"
-    echo -e "     ${D}Debian/Ubuntu/Zorin: sudo apt install python3 python3-gi gir1.2-vte-2.91 gir1.2-gtk-3.0${R}"
+    echo -e "     ${D}Debian/Ubuntu/Zorin: sudo apt install python3 python3-gi gir1.2-gtk-3.0 gir1.2-vte-2.91${R}"
     echo -e "     ${D}Fedora:              sudo dnf install python3-gobject vte291-gtk3${R}"
     echo -e "     ${D}Arch:                sudo pacman -S python-gobject vte3${R}"
     exit 1
@@ -41,8 +51,90 @@ else
     echo -e "     ${D}npm install -g @anthropic-ai/claude-code${R}"
 fi
 
-# ── 2. Soubory do ~/.claude ──────────────────────────────────────────────────
-mkdir -p "$CLAUDE_DIR/hooks" "$ICON_DIR" "$APP_DIR"
+# ── 2. Kde má tenhle počítač co ──────────────────────────────────────────────
+detect_project_dirs() {
+    local found=""
+    for c in "$HOME/Desktop" "$HOME/Plocha" "$HOME/Projects" "$HOME/projects" \
+             "$HOME/dev" "$HOME/code" "$HOME/git" "$HOME/src" "$HOME/www" \
+             "/opt/lampp/htdocs" "/var/www/html"; do
+        [ -d "$c" ] && found="$found${found:+, }$c"
+    done
+    echo "$found"
+}
+
+detect_vault() {
+    # Obsidian vault = složka s .obsidian/ nebo s podsložkou memory/
+    for c in "$HOME/Obsidian"/*/ "$HOME/Documents/Obsidian"/*/ "$HOME/obsidian"/*/; do
+        [ -d "$c" ] || continue
+        if [ -d "${c}.obsidian" ] || [ -d "${c}memory" ]; then
+            echo "${c%/}"; return
+        fi
+    done
+    echo ""
+}
+
+if [ -f "$CONFIG" ]; then
+    ok "konfig už existuje — nechávám ho být ($CONFIG)"
+    PROJECT_DIRS_CSV=""
+    VAULT="$(python3 -c "
+import json, os, sys
+cfg = json.load(open(sys.argv[1]))
+print(os.path.expanduser(cfg.get('brain_dir') or ''))" "$CONFIG" 2>/dev/null)"
+else
+    PROJECT_DIRS_CSV="$(detect_project_dirs)"
+    VAULT="$(detect_vault)"
+
+    if ! $ASSUME_YES; then
+        echo ""
+        info "Kde máš projekty? ${D}(čárkou oddělený seznam)${R}"
+        read -r -p "     [${PROJECT_DIRS_CSV}]: " ANSWER
+        [ -n "$ANSWER" ] && PROJECT_DIRS_CSV="$ANSWER"
+
+        info "Obsidian vault s pamětí? ${D}(Enter = nechat prázdné, paměť se vypne)${R}"
+        read -r -p "     [${VAULT}]: " ANSWER
+        [ -n "$ANSWER" ] && VAULT="$ANSWER"
+        echo ""
+    fi
+
+    python3 - "$CONFIG" "$PROJECT_DIRS_CSV" "$VAULT" "$ICON_DIR/claude-code.png" \
+             "$CLAUDE_DIR/ftp-deploy.sh" <<'PYEOF'
+import json, os, sys
+cfg_path, dirs_csv, vault, icon, ftp = sys.argv[1:6]
+dirs = [d.strip() for d in dirs_csv.split(",") if d.strip()]
+cfg = {
+    "project_dirs": dirs or ["~/Desktop", "~/Projects"],
+    "brain_dir": vault.strip() or "~/Obsidian/Claude-Brain",
+    "icon": icon,
+    "ftp_deploy_script": ftp,
+}
+os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
+with open(cfg_path, "w", encoding="utf-8") as fh:
+    json.dump(cfg, fh, ensure_ascii=False, indent=2)
+    fh.write("\n")
+PYEOF
+    ok "konfig zapsán: $CONFIG"
+fi
+
+VAULT="$(python3 -c "
+import json, os, sys
+try:
+    cfg = json.load(open(sys.argv[1]))
+except Exception:
+    cfg = {}
+print(os.path.expanduser(cfg.get('brain_dir') or ''))" "$CONFIG" 2>/dev/null)"
+MEMORY_DIR="$VAULT/memory"
+BRAIN_SKILLS="$VAULT/skills"
+HAS_VAULT=false
+[ -n "$VAULT" ] && [ -d "$MEMORY_DIR" ] && HAS_VAULT=true
+
+if $HAS_VAULT; then
+    ok "paměť: $MEMORY_DIR"
+else
+    info "bez Obsidian vaultu — paměťové příkazy a panel paměti se přeskočí"
+fi
+
+# ── 3. Aplikace do ~/.claude ─────────────────────────────────────────────────
+mkdir -p "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/skills" "$ICON_DIR" "$APP_DIR"
 
 copy() {  # copy <zdroj> <cíl> — existující jiný soubor zazálohuje
     local src="$1" dst="$2"
@@ -60,16 +152,37 @@ chmod +x "$CLAUDE_DIR/claude-hub.py" "$CLAUDE_DIR/claude-wrapper.sh" \
          "$CLAUDE_DIR/hooks/save-session.py"
 ok "aplikace v $CLAUDE_DIR"
 
-# ── 3. Konfig (nikdy nepřepisovat existující) ────────────────────────────────
-if [ -f "$CLAUDE_DIR/hub-config.json" ]; then
-    ok "konfig už existuje — nechávám být ($CLAUDE_DIR/hub-config.json)"
-else
-    cp "$SRC/hub-config.example.json" "$CLAUDE_DIR/hub-config.json"
-    ok "konfig založen: $CLAUDE_DIR/hub-config.json"
-    info "uprav si v něm 'project_dirs' (kde máš projekty)"
+# ── 4. Slash příkazy ─────────────────────────────────────────────────────────
+# Claude Code ≥ 2.1 čte vlastní příkazy z ~/.claude/skills/<jméno>/SKILL.md
+# (složka ~/.claude/commands/ se v tomhle buildu ignoruje). Šablony ze skills/
+# se sem vyrenderují s cestami z konfigu.
+STATE_FILE="$CLAUDE_DIR/session-state.md"
+$HAS_VAULT && STATE_FILE="$MEMORY_DIR/session-state.md"
+VAULT_ONLY=" save learn project skill "   # bez vaultu nedávají smysl
+INSTALLED=""
+
+for dir in "$SRC"/skills/*/; do
+    name="$(basename "$dir")"
+    [ -f "$dir/SKILL.md" ] || continue
+    if ! $HAS_VAULT && [[ "$VAULT_ONLY" == *" $name "* ]]; then
+        continue
+    fi
+    mkdir -p "$CLAUDE_DIR/skills/$name"
+    sed -e "s|{{MEMORY_DIR}}|$MEMORY_DIR|g" \
+        -e "s|{{SKILLS_DIR}}|$BRAIN_SKILLS|g" \
+        -e "s|{{CLAUDE_DIR}}|$CLAUDE_DIR|g" \
+        -e "s|{{FTP_DEPLOY}}|$CLAUDE_DIR/ftp-deploy.sh|g" \
+        -e "s|{{STATE_FILE}}|$STATE_FILE|g" \
+        "$dir/SKILL.md" > "$CLAUDE_DIR/skills/$name/SKILL.md"
+    INSTALLED="$INSTALLED /$name"
+done
+ok "slash příkazy:$INSTALLED"
+
+if ls "$CLAUDE_DIR"/commands/*.md >/dev/null 2>&1; then
+    warn "$CLAUDE_DIR/commands/ tenhle build Claude Code nečte — příkazy teď běží ze skills/"
 fi
 
-# ── 4. Ikona + položka v nabídce ─────────────────────────────────────────────
+# ── 5. Ikona + položka v nabídce ─────────────────────────────────────────────
 cp "$SRC/assets/claude-code.png" "$ICON_DIR/claude-code.png" 2>/dev/null && \
     ok "ikona v $ICON_DIR/claude-code.png"
 
@@ -90,7 +203,7 @@ chmod +x "$APP_DIR/claude-code-hub.desktop"
 update-desktop-database "$APP_DIR" >/dev/null 2>&1
 ok "položka v nabídce aplikací: Claude Code"
 
-# ── 5. Hook na ukládání session (jen upozornění, settings.json nesaháme) ─────
+# ── 6. Hook na ukládání session (settings.json nesaháme) ─────────────────────
 if grep -q "save-session.py" "$CLAUDE_DIR/settings.json" 2>/dev/null; then
     ok "Stop hook (save-session.py) je v settings.json zapojený"
 else

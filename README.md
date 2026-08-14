@@ -6,6 +6,10 @@
 
 > GTK okno kolem Claude Code — projekty v postranním panelu, každý otevřený jako vlastní tab se skutečným terminálem.
 
+**Repo je jen instalačka.** Žádná data, žádné projekty, žádná paměť, žádné přihlašovací
+údaje. Instalátor se podívá, co máš na disku ty, zapíše to do `~/.claude/hub-config.json`
+a aplikace i slash příkazy pak čtou odtud.
+
 📂 **Kolekce:** Ostatní
 🖥 **Platforma:** Linux (GTK 3 + VTE)
 👤 **Autor:** [@jurapascal](https://github.com/jurapascal)
@@ -22,8 +26,9 @@ dělá jednu aplikaci:
 - **Taby** — klik na projekt otevře **skutečný terminál** (stejný VTE engine jako
   gnome-terminal), takže TUI Claude Code vypadá přesně jako v terminálu. Když session
   skončí, tab zůstane jako obyčejný shell.
-- **Akční panel vpravo** — tlačítka, která do chatu vloží hotovou instrukci
-  (deploy, push na GitHub, přehled projektů, screenshot webu).
+- **Akční panel vpravo** — tlačítka posílají do chatu rovnou slash příkazy
+  (`/save`, `/project`, `/deploy`, `/push`, `/status`, `/screenshot`). Tlačítko se
+  zobrazí, jen když je odpovídající příkaz nainstalovaný.
 - **Dark/light** — řídí se motivem plochy, přepínač 🌙/☀ v hlavičce.
 - **Obsidian paměť (volitelné)** — když máš vault, panel ukáže poslední poznámky
   (learnings/errors/wins) a klikem je otevře v Obsidianu. Bez vaultu se sekce
@@ -52,11 +57,37 @@ cd claude-code-hub
 bash install.sh
 ```
 
-Instalátor nakopíruje appku do `~/.claude/`, založí `~/.claude/hub-config.json`,
-nainstaluje ikonu a položku **Claude Code** do nabídky aplikací. Existující soubory
-zálohuje (`*.backup-<datum>`) a do `~/.claude/settings.json` nesahá.
+Instalátor se zeptá (s předvyplněnou detekcí), kde máš projekty a jestli máš Obsidian
+vault, zapíše to do `~/.claude/hub-config.json`, nakopíruje appku do `~/.claude/`,
+vyrenderuje slash příkazy, nainstaluje ikonu a položku **Claude Code** do nabídky
+aplikací. Existující soubory zálohuje (`*.backup-<datum>`) a do `~/.claude/settings.json`
+nesahá. `bash install.sh --yes` = bez otázek, jen detekce.
 
 Spuštění: ikona **Claude Code** v nabídce, nebo `python3 ~/.claude/claude-hub.py`.
+
+## Slash příkazy
+
+Instalátor je vyrenderuje do `~/.claude/skills/<jméno>/SKILL.md` — **odsud si je
+Claude Code 2.1+ načítá**; starší složka `~/.claude/commands/*.md` se v tomhle buildu
+ignoruje (příkazy odtud hlásí „Unknown command"). Cesty v nich nejsou natvrdo, doplní
+se z tvého konfigu při instalaci.
+
+| Příkaz | Co dělá | Potřebuje vault |
+|---|---|---|
+| `/save` | uloží, co jsme právě dělali, jako poznámku do paměti | ✅ |
+| `/learn <popis>` | uloží poznatek / chybu / úspěch podle klíčových slov | ✅ |
+| `/project` | založí nebo aktualizuje poznámku k aktuálnímu projektu | ✅ |
+| `/skill <název>` | načte skill z vaultu | ✅ |
+| `/deploy` | nasadí projekt — FTP (`.ftp-deploy.json`) nebo git, auto-detekce | — |
+| `/ftp` | FTP/FTPS/SFTP deploy, poprvé si vyžádá údaje | — |
+| `/push` | commit + push na GitHub (nikdy force) | — |
+| `/status` | přehled projektů a jejich git stavů | — |
+| `/screenshot <url>` | screenshot webu (desktop + mobil) | — |
+| `/audit <url>` | vizuální a technický audit webu | — |
+
+Bez vaultu se čtyři paměťové příkazy vůbec neinstalují — a tlačítka na ně v Hubu
+se nezobrazí. Vlastní příkazy si přidáš jako další složku do `~/.claude/skills/`;
+instalátor je nemaže.
 
 ## Přihlášení vlastním účtem
 
@@ -86,10 +117,11 @@ i typ (Git / Node / PHP / Shopify).
 ## Obsah repa
 
 ```
+install.sh                instalačka: detekce cest → konfig → appka + slash příkazy
 claude-hub.py             hlavní aplikace (GTK okno, sidebar, taby, akční panel)
 claude-wrapper.sh         boot sekvence před spuštěním claude + restart po ctrl+c
 hooks/save-session.py     Stop hook — uloží stav projektů do session-state.md
-install.sh                instalace do ~/.claude + ikona + .desktop
+skills/<jméno>/SKILL.md   šablony slash příkazů ({{MEMORY_DIR}} apod. doplní instalátor)
 hub-config.example.json   vzor konfigurace
 settings.example.json     vzor zapojení Stop hooku (bez jakýchkoli klíčů)
 assets/                   ikona
@@ -107,4 +139,5 @@ privátní, ale i tak sem tajemství nepatří.
 cd claude-code-hub && git pull && bash install.sh
 ```
 
-`hub-config.json` zůstane nedotčený, přepíší se jen soubory aplikace.
+`hub-config.json` zůstane nedotčený, přepíší se soubory aplikace a znovu vyrenderují
+slash příkazy z repa. Vlastní příkazy ve `~/.claude/skills/` zůstanou.

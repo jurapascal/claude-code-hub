@@ -58,6 +58,7 @@ MEMORY_DIR = os.path.join(BRAIN, "memory")
 VAULT_NAME = os.path.basename(BRAIN.rstrip("/"))  # used in obsidian:// URIs
 ICON_PATH = os.path.expanduser(CONFIG["icon"])
 FTP_DEPLOY = os.path.expanduser(CONFIG["ftp_deploy_script"])
+SKILLS_DIR = os.path.join(CLAUDE_DIR, "skills")  # slash commands live here
 # Only keep folders that actually exist — a stock config lists several candidates.
 PROJECT_DIRS = [p for p in (os.path.expanduser(d) for d in CONFIG["project_dirs"])
                 if os.path.isdir(p)]
@@ -828,38 +829,19 @@ class ClaudeHub(Gtk.Window):
         panel.get_style_context().add_class("actionbar")
         panel.set_size_request(184, -1)
 
-        # Custom slash commands don't load in this Claude Code build, so we feed a
-        # plain instruction instead — Claude has the memory/deploy rules in CLAUDE.md.
+        # Buttons send the real slash commands installed in ~/.claude/skills/.
+        # A button only shows up when its skill is actually installed, so nobody
+        # clicks their way to "Unknown command".
         actions = []
-        if HAS_BRAIN:  # memory buttons make no sense without a vault
-            actions += [
-                ("💾  Uložit do paměti",
-                 f"Ulož do Obsidian paměti ({MEMORY_DIR}/) co jsme právě "
-                 "dělali: samostatná poznámka s frontmatterem (name, description, "
-                 "metadata.type). DŮLEŽITÉ pro graf Obsidianu — štědře propoj "
-                 "[[wikilinky]] na související existující poznámky i na příslušný "
-                 "rozcestník (moc_*). Přidej řádek do MEMORY.md a odkaz i do té MOC.\r"),
-                ("📝  Poznámka projektu",
-                 "Založ nebo aktualizuj poznámku project_<slug>.md k tomuto projektu v "
-                 f"{MEMORY_DIR}/ (stack, hosting, deploy, TODO) a propoj "
-                 "ji [[odkazy]].\r"),
-            ]
-        actions += [
-            ("⬆  Deploy",
-             "Nasaď tento projekt: je-li v něm .ftp-deploy.json, spusť "
-             f"bash {FTP_DEPLOY} . --yes ; jinak git add -A, commit a push.\r"),
-            ("🐙  Push na GitHub",
-             "Zacommituj a pushni tenhle projekt na GitHub: ukaž mi krátce git status, "
-             "pak git add -A a commit s výstižnou zprávou odvozenou z diffu (česky, "
-             "formát typ(rozsah): popis), pak git push. Nemá-li branch upstream, použij "
-             "git push -u origin <branch>. Nikdy nedělej force push a při konfliktu se "
-             "nejdřív zeptej. Na konci mi napiš hash commitu a kam se to pushlo.\r"),
-            ("📊  Přehled projektů",
-             f"Spusť python3 {CLAUDE_DIR}/hooks/save-session.py a ukaž mi přehled "
-             "projektů a jejich git stav ze session-state.md.\r"),
-            ("🖼  Screenshot…",
-             "Udělej screenshot webu (headless Chrome, desktop i mobil) této URL: "),
-        ]
+        for label, cmd in (("💾  Uložit do paměti", "/save\r"),
+                           ("📝  Poznámka projektu", "/project\r"),
+                           ("⬆  Deploy", "/deploy\r"),
+                           ("🐙  Push na GitHub", "/push\r"),
+                           ("📊  Přehled projektů", "/status\r"),
+                           ("🖼  Screenshot…", "/screenshot ")):
+            name = cmd[1:].strip()
+            if os.path.isfile(os.path.join(SKILLS_DIR, name, "SKILL.md")):
+                actions.append((label, cmd))
         for label, cmd in actions:
             b = Gtk.Button(label=label)
             b.get_style_context().add_class("barbtn")
@@ -946,11 +928,12 @@ class ClaudeHub(Gtk.Window):
 
         add("▸   Otevřít v Claude", lambda: self.open_project(path, name))
         add("⬆   Deploy", lambda: self.deploy_project(p))
-        add("📝   Poznámka do paměti (/project)", lambda: self._add_terminal_tab(
-            f"note: {name}", path,
-            ["/bin/bash", "-c",
-             f'cd "{path}" && bash "{WRAPPER}" "/project"; '
-             f'echo; echo "[ hotovo — tab zůstává jako shell ]"; exec bash']))
+        if os.path.isfile(os.path.join(SKILLS_DIR, "project", "SKILL.md")):
+            add("📝   Poznámka do paměti (/project)", lambda: self._add_terminal_tab(
+                f"note: {name}", path,
+                ["/bin/bash", "-c",
+                 f'cd "{path}" && bash "{WRAPPER}" "/project"; '
+                 f'echo; echo "[ hotovo — tab zůstává jako shell ]"; exec bash']))
         add("💻   Shell tady", lambda: self._add_terminal_tab(
             name, path, ["/bin/bash"]))
         add("📁   Otevřít složku", lambda: self.open_path(path))
