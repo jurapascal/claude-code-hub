@@ -1,0 +1,11 @@
+{
+  "_comment": "Zkopíruj jako ~/.claude/hub-config.json a uprav si cesty. Všechny klíče jsou volitelné — co vynecháš, doplní se výchozí hodnotou.",
+
+  "project_dirs": ["~/Desktop", "~/Projects", "/opt/lampp/htdocs"],
+
+  "brain_dir": "~/Obsidian/Claude-Brain",
+
+  "icon": "~/.local/share/icons/claude-code.png",
+
+  "ftp_deploy_script": "~/.claude/ftp-deploy.sh"
+}

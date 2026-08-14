@@ -1,0 +1,14 @@
+# osobní konfigurace — nikdy do repa
+hub-config.json
+settings.json
+settings.local.json
+.credentials.json
+.ftp-deploy.json
+.ftp-deploy-sync-state.json
+
+# runtime smetí
+__pycache__/
+*.pyc
+*.backup-*
+*.log
+.DS_Store

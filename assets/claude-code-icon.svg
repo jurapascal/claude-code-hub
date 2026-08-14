@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1410"/>
+      <stop offset="100%" style="stop-color:#2a1f14"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#da7f33"/>
+      <stop offset="100%" style="stop-color:#e8a65a"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="256" height="256" rx="48" fill="url(#bg)"/>
+
+  <!-- Outer glow ring -->
+  <circle cx="128" cy="120" r="70" fill="none" stroke="#da7f33" stroke-width="2" opacity="0.2"/>
+
+  <!-- Claude star/sparkle -->
+  <g transform="translate(128,110)">
+    <!-- Main star -->
+    <polygon points="0,-40 8,-12 40,-8 12,8 16,40 0,18 -16,40 -12,8 -40,-8 -8,-12" fill="#da7f33" opacity="0.9"/>
+    <!-- Inner glow -->
+    <circle cx="0" cy="0" r="14" fill="#e8a65a" opacity="0.6"/>
+    <circle cx="0" cy="0" r="6" fill="#f5d5a0" opacity="0.8"/>
+  </g>
+
+  <!-- Small sparkles -->
+  <circle cx="78" cy="70" r="3" fill="#da7f33" opacity="0.5"/>
+  <circle cx="178" cy="80" r="2" fill="#e8a65a" opacity="0.4"/>
+  <circle cx="88" cy="160" r="2" fill="#da7f33" opacity="0.3"/>
+
+  <!-- Terminal prompt line -->
+  <text x="68" y="195" font-family="monospace" font-size="16" font-weight="bold" fill="#da7f33" opacity="0.7">$ claude</text>
+  <rect x="160" y="182" width="10" height="16" fill="#da7f33" opacity="0.5"/>
+
+  <!-- "code" label -->
+  <text x="128" y="235" font-family="sans-serif" font-size="16" font-weight="bold" fill="#e8a65a" text-anchor="middle" opacity="0.5" letter-spacing="4">CODE</text>
+</svg>

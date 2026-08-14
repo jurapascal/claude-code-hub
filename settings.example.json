@@ -1,0 +1,18 @@
+{
+  "_comment": "Ukázka ~/.claude/settings.json — NEPŘEPISUJ si tím vlastní soubor, jen si z něj vezmi blok 'hooks'. Nikdy sem nedávej API klíče ani tokeny.",
+
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/save-session.py",
+            "timeout": 10,
+            "statusMessage": "Auto-saving session state..."
+          }
+        ]
+      }
+    ]
+  }
+}
