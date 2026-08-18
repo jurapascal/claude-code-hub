@@ -210,6 +210,50 @@ else
     warn "Volitelné: přidej si do $CLAUDE_DIR/settings.json blok 'hooks' ze settings.example.json"
 fi
 
+# ── 7. Playwright MCP (volitelné) ────────────────────────────────────────────
+# Prohlížeč pro Claude Code — klikání, konzole a screenshoty přes accessibility
+# tree místo vlastních Puppeteer skriptů. Registruje se do user scope
+# (~/.claude.json), takže platí ve všech projektech. Bez zeptání se neinstaluje:
+# poprvé stahuje ~115 MB prohlížeče.
+add_playwright_mcp() {
+    # --browser chromium = bundlovaný Chromium z ~/.cache/ms-playwright;
+    # výchozí kanál "chrome" by chtěl systémový Google Chrome.
+    if ! claude mcp add playwright -s user -- \
+            npx @playwright/mcp@latest --browser chromium >/dev/null 2>&1; then
+        warn "'claude mcp add playwright' selhalo — přidej si ho ručně"
+        return 1
+    fi
+    ok "playwright MCP zaregistrován (user scope)"
+
+    # Verze prohlížeče se váže na verzi MCP serveru; bez tohohle kroku vrací
+    # první browser_navigate "Browser chrome-for-testing is not installed".
+    info "stahuju prohlížeč (~115 MB, stahuje se jen co chybí)…"
+    if npx -y @playwright/mcp@latest install-browser chrome-for-testing >/dev/null 2>&1; then
+        ok "prohlížeč připraven v ~/.cache/ms-playwright"
+    else
+        warn "prohlížeč se nestáhl — dožeň to: npx @playwright/mcp@latest install-browser chrome-for-testing"
+    fi
+}
+
+NODE_MAJOR="$(node -v 2>/dev/null | sed 's/^v//; s/\..*//')"
+if ! command -v claude >/dev/null 2>&1; then
+    info "Playwright MCP přeskočen — chybí Claude Code CLI"
+elif claude mcp get playwright >/dev/null 2>&1; then
+    ok "playwright MCP už je zaregistrovaný"
+elif [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 20 ]; then
+    warn "Playwright MCP přeskočen — chce Node.js 20+ (teď: ${NODE_MAJOR:-žádný})"
+elif $ASSUME_YES; then
+    info "Playwright MCP přeskočen (--yes) — přidáš ho: claude mcp add playwright -s user -- npx @playwright/mcp@latest --browser chromium"
+else
+    echo ""
+    info "Přidat Playwright MCP? ${D}(prohlížeč pro Claude Code, stáhne ~115 MB)${R}"
+    read -r -p "     [a/N]: " ANSWER
+    case "$ANSWER" in
+        [aAyY]*) add_playwright_mcp ;;
+        *) info "přeskočeno — kdykoli později: claude mcp add playwright -s user -- npx @playwright/mcp@latest --browser chromium" ;;
+    esac
+fi
+
 echo ""
 echo -e "  ${A}✦${R} Hotovo. Spusť: ${D}python3 $CLAUDE_DIR/claude-hub.py${R}  (nebo ikonu Claude Code v nabídce)"
 echo -e "  ${D}První spuštění Claude Code: v tabu napiš /login a přihlas se svým účtem.${R}"

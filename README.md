@@ -41,6 +41,7 @@ dělá jednu aplikaci:
 | Linux s GTK 3 | okno a terminál |
 | `python3`, `python3-gi`, `gir1.2-vte-2.91` | běh aplikace |
 | [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) | vlastní účet, viz níže |
+| Node.js 20+ | jen pro volitelný Playwright MCP |
 
 ```bash
 # Debian / Ubuntu / Zorin
@@ -61,7 +62,8 @@ Instalátor se zeptá (s předvyplněnou detekcí), kde máš projekty a jestli 
 vault, zapíše to do `~/.claude/hub-config.json`, nakopíruje appku do `~/.claude/`,
 vyrenderuje slash příkazy, nainstaluje ikonu a položku **Claude Code** do nabídky
 aplikací. Existující soubory zálohuje (`*.backup-<datum>`) a do `~/.claude/settings.json`
-nesahá. `bash install.sh --yes` = bez otázek, jen detekce.
+nesahá. Na konci se ještě zeptá na **Playwright MCP** (viz níže).
+`bash install.sh --yes` = bez otázek, jen detekce — MCP se v tom režimu přeskočí.
 
 Spuštění: ikona **Claude Code** v nabídce, nebo `python3 ~/.claude/claude-hub.py`.
 
@@ -88,6 +90,31 @@ se z tvého konfigu při instalaci.
 Bez vaultu se čtyři paměťové příkazy vůbec neinstalují — a tlačítka na ně v Hubu
 se nezobrazí. Vlastní příkazy si přidáš jako další složku do `~/.claude/skills/`;
 instalátor je nemaže.
+
+## Playwright MCP (volitelné)
+
+Prohlížeč pro Claude Code — otevře stránku, klikne, přečte konzoli, udělá screenshot.
+Pracuje nad accessibility tree, ne nad pixely, takže nepotřebuje vision model.
+Instalátor ho nabídne na konci, ručně to jsou dva příkazy:
+
+```bash
+claude mcp add playwright -s user -- npx @playwright/mcp@latest --browser chromium
+npx @playwright/mcp@latest install-browser chrome-for-testing
+```
+
+- `-s user` = platí ve všech projektech; zapíše se do `~/.claude.json`, ne do repa.
+- `--browser chromium` jede na bundlovaném Chromiu — výchozí kanál `chrome` by chtěl
+  systémový Google Chrome.
+- Druhý příkaz je nutný: verze prohlížeče se váže na verzi MCP serveru, jinak první
+  `browser_navigate` vrátí „Browser chrome-for-testing is not installed". Stahuje
+  ~115 MB do `~/.cache/ms-playwright` (jen co chybí).
+- Nástroje se pak jmenují `mcp__playwright__*` a naběhnou po restartu session.
+- Bez vyskakujícího okna: přidat za `--browser chromium` ještě `--headless`.
+- Snapshoty stránek si server ukládá do `.playwright-mcp/` v aktuální složce —
+  hodí se do `.gitignore`.
+
+Odebrání: `claude mcp remove playwright -s user`.
+[Dokumentace](https://playwright.dev/docs/getting-started-mcp)
 
 ## Přihlášení vlastním účtem
 
