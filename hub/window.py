@@ -8,8 +8,9 @@ hosts are tried in order, and the first one that works wins:
   2. WebKitGTK through PyGObject             (Linux, no browser needed at all)
   3. whatever the desktop's default browser is (last resort, plain tab)
 
-Each host returns a `wait()` that blocks until the window is gone, so the
-launcher can shut the server down at the right moment.
+Only WebKitGTK runs in-process and can tell us reliably when its window closed.
+For a spawned browser the process is NOT a reliable signal — see _open_chromium —
+so the launcher watches the page's websocket instead.
 """
 import os
 import shutil
@@ -84,18 +85,22 @@ def has_webkit():
 
 
 def _open_chromium(browser, url):
+    """Spawn the browser. We keep the handle, but its lifetime is NOT the hub's:
+    a chromium launcher that hands the window to an already running process exits
+    immediately, and treating that as 'window closed' would kill the server out
+    from under a window the user is still looking at."""
     argv = [
         browser,
         f"--app={url}",
-        f"--user-data-dir={PROFILE_DIR}",   # our own process to wait on
+        f"--user-data-dir={PROFILE_DIR}",   # a profile of our own, not the user's
         "--no-first-run",
         "--no-default-browser-check",
         "--window-size=1360,860",
     ]
     if not core.IS_WINDOWS and not core.IS_MAC:
         argv.append("--class=Claude Code")  # matches StartupWMClass in the .desktop
-    proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return proc.wait
+    return subprocess.Popen(argv, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
 
 
 def _open_webkit(url, versions):
@@ -142,7 +147,13 @@ def _open_webkit(url, versions):
 
 
 def open_window(url, prefer=""):
-    """Open the hub UI. Returns (host_name, wait_callable)."""
+    """Open the hub UI.
+
+    Returns (host_name, proc, blocking_wait). Exactly one of the last two is set:
+    `blocking_wait` is an in-process loop that owns the window's lifetime
+    (WebKitGTK), otherwise `proc` is the browser we spawned — which may or may not
+    outlive the window, so the caller must watch the page instead.
+    """
     order = ["chromium", "webkit", "browser"]
     if prefer in order:
         order.remove(prefer)
@@ -152,13 +163,13 @@ def open_window(url, prefer=""):
         if host == "chromium":
             browser = find_browser()
             if browser:
-                return os.path.basename(browser), _open_chromium(browser, url)
+                return os.path.basename(browser), _open_chromium(browser, url), None
         elif host == "webkit":
             versions = has_webkit()
             if versions:
                 try:
-                    return "webkitgtk", _open_webkit(url, versions)
+                    return "webkitgtk", None, _open_webkit(url, versions)
                 except Exception:
                     continue  # broken WebKit install → next host
     webbrowser.open(url)
-    return "browser", None  # no process to wait on; the launcher watches the page
+    return "browser", None, None  # launcher watches the page

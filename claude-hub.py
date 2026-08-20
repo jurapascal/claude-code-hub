@@ -51,6 +51,7 @@ def doctor():
          ", ".join("/" + s for s in core.installed_skills()) or "žádné"),
         ("okno", host),
         ("pty test", "OK" if ok else f"SELHAL — {detail}"),
+        ("log", core.LOG_PATH),
     ]:
         print(f"  {label:<20} {value}")
     print()
@@ -62,20 +63,33 @@ def doctor():
     return 0 if (ok and info["bash"]) else 1
 
 
-def wait_for_page_to_close(grace=10):
-    """Exit once the page has been open and then gone for `grace` seconds.
+def wait_for_page(proc=None, grace=10, startup=60):
+    """Stay alive while the page is open. The page — not the browser process — is
+    the signal.
 
-    Only used when the hub had to fall back to the default browser, where there
-    is no window process to wait on — the websocket becomes the liveness signal.
+    A chromium launcher that hands its window to an already running browser exits
+    within milliseconds. Waiting on that process meant shutting the server down
+    while the window was still on screen, and the user got ERR_CONNECTION_REFUSED
+    on a window that had never even loaded.
     """
     hub = server.HUB
+    deadline = time.time() + startup
     while hub.clients == 0 and hub.last_empty_at is None:
+        if time.time() > deadline:
+            core.log("okno se do %d s nepřipojilo — končím" % startup)
+            if proc is not None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+            return
         time.sleep(0.3)
     while True:
         time.sleep(0.5)
         if hub.clients > 0:
             continue
         if hub.last_empty_at and time.time() - hub.last_empty_at > grace:
+            core.log("okno zavřeno — končím")
             return
 
 
@@ -90,15 +104,23 @@ def main():
             prefer = arg.split("=", 1)[1]
 
     httpd, url = server.start()
+    core.log(f"start: port {httpd.server_address[1]}, platforma {core.doctor()['platform']}")
     try:
         if "--no-browser" in args:
             print(url, flush=True)
             while True:
                 time.sleep(3600)
-        _, wait = window.open_window(url, prefer)
-        (wait or wait_for_page_to_close)()
+        host, proc, blocking = window.open_window(url, prefer)
+        core.log(f"okno: {host}")
+        if blocking:
+            blocking()          # in-process loop owns the window's lifetime
+        else:
+            wait_for_page(proc)
     except KeyboardInterrupt:
         pass
+    except Exception as exc:
+        core.log(f"CHYBA: {exc!r}")
+        raise
     finally:
         server.HUB.shutdown()
         httpd.shutdown()

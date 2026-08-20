@@ -61,6 +61,23 @@ HAS_BRAIN = os.path.isdir(MEMORY_DIR)  # no vault → the whole memory UI stays 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0
 
 
+LOG_PATH = os.path.join(CLAUDE_DIR, "hub.log")
+
+
+def log(message):
+    """Append one line to ~/.claude/hub.log.
+
+    The Windows shortcut runs pythonw.exe, which has no console at all — without
+    this a failed start leaves nothing behind to look at.
+    """
+    try:
+        import datetime
+        with open(LOG_PATH, "a", encoding="utf-8") as fh:
+            fh.write(f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S}  {message}\n")
+    except Exception:
+        pass
+
+
 # ── Running helper programs ──────────────────────────────────────────────────
 def run(argv, cwd=None, timeout=5):
     """Run argv and return stdout, or '' on any failure. Never raises."""
