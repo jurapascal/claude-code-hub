@@ -58,6 +58,24 @@ function Write-Utf8($path, $text) {
         $path, $text, (New-Object System.Text.UTF8Encoding $false))
 }
 
+# winget zapíše nové PATH do registru, ale běžící PowerShell má svou kopii z chvíle,
+# kdy se spustil. Bez tohohle skript čerstvě nainstalovaný gh/node/claude "nevidí"
+# a hlásí, že chybí — přitom je na disku.
+function Update-Path {
+    $parts = @()
+    foreach ($scope in 'Machine', 'User') {
+        $value = [Environment]::GetEnvironmentVariable('Path', $scope)
+        if ($value) { $parts += $value }
+    }
+    if ($parts) { $env:Path = ($parts -join ';') }
+}
+
+function Install-WithWinget($id) {
+    winget install --id $id --source winget `
+        --accept-package-agreements --accept-source-agreements
+    Update-Path
+}
+
 $HasWinget = Test-Cmd winget
 
 Write-Host ''
@@ -88,7 +106,7 @@ foreach ($candidate in @('python', 'python3', 'py')) {
 if (-not $Python) {
     Write-Warn 'Chybí Python 3.9+'
     if ($HasWinget -and (Ask-YesNo 'Nainstalovat Python přes winget?')) {
-        winget install --id Python.Python.3.13 --source winget --accept-package-agreements --accept-source-agreements
+        Install-WithWinget 'Python.Python.3.13'
         Write-Info 'Zavři a znovu otevři PowerShell, pak spusť install.ps1 znovu.'
     } else {
         Write-Dim 'winget install Python.Python.3.13   (nebo python.org)'
@@ -140,7 +158,7 @@ if (-not $GitBash) {
     Write-Warn 'Nenašel jsem Git for Windows (bash.exe)'
     Write-Dim 'Bez něj hub neumí spustit tab — ani Claude Code nemá Bash tool.'
     if ($HasWinget -and (Ask-YesNo 'Nainstalovat Git for Windows přes winget?')) {
-        winget install --id Git.Git --source winget --accept-package-agreements --accept-source-agreements
+        Install-WithWinget 'Git.Git'
         foreach ($candidate in $bashCandidates) {
             if ($candidate -and (Test-Path $candidate)) { $GitBash = $candidate; break }
         }
@@ -159,7 +177,7 @@ if ($ClaudeCli) {
 } else {
     Write-Warn "Claude Code CLI ('claude') není v PATH — Hub se spustí, ale taby zůstanou v shellu."
     if ($HasWinget -and (Ask-YesNo 'Nainstalovat Claude Code přes winget?')) {
-        winget install --id Anthropic.ClaudeCode --source winget --accept-package-agreements --accept-source-agreements
+        Install-WithWinget 'Anthropic.ClaudeCode'
         $ClaudeCli = (Get-Command claude -ErrorAction SilentlyContinue).Source
     } else {
         Write-Dim 'irm https://claude.ai/install.ps1 | iex'
@@ -201,8 +219,16 @@ function Find-Gh {
     $cmd = (Get-Command gh -CommandType Application -ErrorAction SilentlyContinue |
             Select-Object -First 1).Source
     if ($cmd) { return $cmd }
-    foreach ($base in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA)) {
-        $guess = Join-Safe $base 'GitHub CLI\gh.exe'
+    $candidates = @()
+    foreach ($base in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+        $candidates += (Join-Safe $base 'GitHub CLI\gh.exe')
+    }
+    # winget --scope user, scoop a choco si sahají jinam
+    $candidates += (Join-Safe $env:LOCALAPPDATA 'Programs\GitHub CLI\gh.exe')
+    $candidates += (Join-Safe $env:LOCALAPPDATA 'Microsoft\WinGet\Links\gh.exe')
+    $candidates += (Join-Safe $env:USERPROFILE 'scoop\shims\gh.exe')
+    $candidates += 'C:\ProgramData\chocolatey\bin\gh.exe'
+    foreach ($guess in $candidates) {
         if ($guess -and (Test-Path $guess)) { return $guess }
     }
     return $null
@@ -225,7 +251,7 @@ if (Find-Obsidian) {
 } else {
     Write-Warn 'Obsidian není nainstalovaný — v něm žije paměť (/save, /learn, /project)'
     if ($HasWinget -and (Ask-YesNo 'Nainstalovat Obsidian přes winget?')) {
-        winget install --id Obsidian.Obsidian --source winget --accept-package-agreements --accept-source-agreements
+        Install-WithWinget 'Obsidian.Obsidian'
         if (Find-Obsidian) { Write-Ok 'Obsidian nainstalován' }
         else { Write-Info 'hotovo, ale zatím ho nevidím — po restartu PowerShellu bude v pořádku' }
     } else {
@@ -248,7 +274,7 @@ $Gh = Find-Gh
 if (-not $Gh) {
     Write-Warn "GitHub CLI ('gh') není — bez něj se z tohohle stroje nepushuje na GitHub"
     if ($HasWinget -and (Ask-YesNo 'Nainstalovat GitHub CLI přes winget?')) {
-        winget install --id GitHub.cli --source winget --accept-package-agreements --accept-source-agreements
+        Install-WithWinget 'GitHub.cli'
         $Gh = Find-Gh
         if (-not $Gh) { Write-Info 'gh nainstalován, ale chce nový PowerShell — pak: gh auth login' }
     } else {
@@ -435,8 +461,10 @@ function Find-Node {
     $cmd = (Get-Command node -CommandType Application -ErrorAction SilentlyContinue |
             Select-Object -First 1).Source
     if ($cmd) { return $cmd }
-    foreach ($base in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
-        $guess = Join-Safe $base 'nodejs\node.exe'
+    foreach ($guess in @((Join-Safe $env:ProgramFiles 'nodejs\node.exe'),
+                         (Join-Safe ${env:ProgramFiles(x86)} 'nodejs\node.exe'),
+                         (Join-Safe $env:LOCALAPPDATA 'Programs\nodejs\node.exe'),
+                         (Join-Safe $env:APPDATA 'npm\node.exe'))) {
         if ($guess -and (Test-Path $guess)) { return $guess }
     }
     return $null
@@ -446,8 +474,10 @@ function Find-Npx {
     $cmd = (Get-Command npx -CommandType Application -ErrorAction SilentlyContinue |
             Select-Object -First 1).Source
     if ($cmd) { return $cmd }
-    foreach ($base in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
-        $guess = Join-Safe $base 'nodejs\npx.cmd'
+    foreach ($guess in @((Join-Safe $env:ProgramFiles 'nodejs\npx.cmd'),
+                         (Join-Safe ${env:ProgramFiles(x86)} 'nodejs\npx.cmd'),
+                         (Join-Safe $env:LOCALAPPDATA 'Programs\nodejs\npx.cmd'),
+                         (Join-Safe $env:APPDATA 'npm\npx.cmd'))) {
         if ($guess -and (Test-Path $guess)) { return $guess }
     }
     return $null
@@ -456,7 +486,7 @@ function Find-Npx {
 $NodeExe = Find-Node
 if (-not $NodeExe -and $ClaudeCli -and $HasWinget -and
     (Ask-YesNo 'Node.js není nainstalovaný. Nainstalovat LTS přes winget? (kvůli Playwright MCP)')) {
-    winget install --id OpenJS.NodeJS.LTS --source winget --accept-package-agreements --accept-source-agreements
+    Install-WithWinget 'OpenJS.NodeJS.LTS'
     $NodeExe = Find-Node
     if (-not $NodeExe) { Write-Info 'Node se nainstaloval, ale je potřeba nový PowerShell — pak spusť install.ps1 znovu.' }
 }
@@ -512,6 +542,9 @@ if ($ClaudeCli) {
         Write-Dim 'Později: spusť claude a napiš /login'
     }
 }
+
+# Závěrečná kontrola: jeden výpis, ze kterého je vidět, co na stroji opravdu je.
+try { & $Python (Join-Path $ClaudeDir 'claude-hub.py') --doctor } catch { }
 
 Write-Host ''
 Write-Host '  ✦ Hotovo. Spusť zástupce Claude Code v nabídce Start.' -ForegroundColor DarkYellow

@@ -425,6 +425,9 @@ if command -v claude >/dev/null 2>&1; then
     fi
 fi
 
+# Závěrečná kontrola: jeden výpis, ze kterého je vidět, co na stroji opravdu je.
+python3 "$CLAUDE_DIR/claude-hub.py" --doctor || true
+
 echo ""
 echo -e "  ${A}✦${R} Hotovo. Spusť: ${D}python3 $CLAUDE_DIR/claude-hub.py${R}  (nebo ikonu Claude Code v nabídce)"
 echo -e "  ${D}Kontrola prostředí:  python3 $CLAUDE_DIR/claude-hub.py --doctor${R}"
