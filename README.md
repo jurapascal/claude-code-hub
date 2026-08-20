@@ -211,6 +211,7 @@ i typ (Git / Node / PHP / Shopify).
 
 ```
 install.sh                instalačka pro Linux/macOS
+make-zip.sh               balíček k rozeslání (ZIP + návod pro příjemce, bez gitu a GitHubu)
 install.ps1               instalačka pro Windows (winget, zástupci, pywinpty)
 claude-hub.py             launcher — nastartuje server a otevře okno (--doctor, --no-browser)
 hub/core.py               konfig, skenování projektů a paměti, platformové rozdíly
