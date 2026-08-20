@@ -326,29 +326,73 @@ if ((Test-Path $settings) -and (Select-String -Path $settings -Pattern 'save-ses
 
 # ── 10. Playwright MCP (volitelné) ───────────────────────────────────────────
 # Prohlížeč pro Claude Code. Poprvé stahuje ~115 MB, takže se ptáme.
+# Everything here is optional, and nothing in it may colour the install red.
+# `node` a `npx` hledáme přes Get-Command -CommandType Application (skutečné .exe,
+# ne alias ani funkce z profilu) a voláme je plnou cestou; bez nich se celá sekce
+# přeskočí — včetně dotazu na `claude`, protože npm shim `claude.ps1` si sám sahá
+# po `node` a bez něj vypíše CommandNotFoundException do průběhu instalace.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'SilentlyContinue'
+try {
+function Find-Node {
+    # winget nepromítne PATH do už běžícího PowerShellu, takže po instalaci
+    # hledáme i na obvyklém místě, ať se nemusí zavírat okno.
+    $cmd = (Get-Command node -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1).Source
+    if ($cmd) { return $cmd }
+    foreach ($base in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+        $guess = Join-Safe $base 'nodejs\node.exe'
+        if ($guess -and (Test-Path $guess)) { return $guess }
+    }
+    return $null
+}
+
+function Find-Npx {
+    $cmd = (Get-Command npx -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1).Source
+    if ($cmd) { return $cmd }
+    foreach ($base in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+        $guess = Join-Safe $base 'nodejs\npx.cmd'
+        if ($guess -and (Test-Path $guess)) { return $guess }
+    }
+    return $null
+}
+
+$NodeExe = Find-Node
+if (-not $NodeExe -and $ClaudeCli -and $HasWinget -and
+    (Ask-YesNo 'Node.js není nainstalovaný. Nainstalovat LTS přes winget? (kvůli Playwright MCP)')) {
+    winget install --id OpenJS.NodeJS.LTS --source winget --accept-package-agreements --accept-source-agreements
+    $NodeExe = Find-Node
+    if (-not $NodeExe) { Write-Info 'Node se nainstaloval, ale je potřeba nový PowerShell — pak spusť install.ps1 znovu.' }
+}
+$NpxExe = if ($NodeExe) { Find-Npx } else { $null }
 $nodeMajor = 0
-if (Test-Cmd node) {
-    $nodeVersion = (& node -v 2>$null)
-    if ($nodeVersion -match '^v(\d+)') { $nodeMajor = [int]$Matches[1] }
+if ($NodeExe) {
+    try {
+        if ((& $NodeExe -v) -match '^v(\d+)') { $nodeMajor = [int]$Matches[1] }
+    } catch { $nodeMajor = 0 }
 }
 
 $mcpRegistered = $false
-if ($ClaudeCli) {
-    & claude mcp get playwright 2>$null | Out-Null
-    $mcpRegistered = ($LASTEXITCODE -eq 0)
+if ($ClaudeCli -and $NodeExe) {
+    try {
+        & $ClaudeCli mcp get playwright *>$null
+        $mcpRegistered = ($LASTEXITCODE -eq 0)
+    } catch { $mcpRegistered = $false }
 }
 
-try {
 if (-not $ClaudeCli) {
     Write-Info 'Playwright MCP přeskočen — chybí Claude Code CLI'
+} elseif (-not $NodeExe -or -not $NpxExe) {
+    Write-Info 'Playwright MCP přeskočen — bez Node.js/npx ho není čím spustit'
 } elseif ($mcpRegistered) {
     Write-Ok 'playwright MCP už je zaregistrovaný'
 } elseif ($nodeMajor -lt 20) {
-    Write-Warn "Playwright MCP přeskočen — chce Node.js 20+ (teď: $(if ($nodeMajor) { $nodeMajor } else { 'žádný' }))"
+    Write-Warn "Playwright MCP přeskočen — chce Node.js 20+ (teď: $nodeMajor)"
 } elseif (Ask-YesNo 'Přidat Playwright MCP? (prohlížeč pro Claude Code, stáhne ~115 MB)') {
-    claude mcp add playwright -s user -- npx '@playwright/mcp@latest' --browser chromium
+    & $ClaudeCli mcp add playwright -s user -- npx '@playwright/mcp@latest' --browser chromium
     Write-Info 'stahuju prohlížeč (~115 MB, stahuje se jen co chybí)…'
-    npx -y '@playwright/mcp@latest' install-browser chrome-for-testing
+    & $NpxExe -y '@playwright/mcp@latest' install-browser chrome-for-testing
     Write-Ok 'playwright MCP připraven'
 } else {
     Write-Info 'přeskočeno — kdykoli později: claude mcp add playwright -s user -- npx @playwright/mcp@latest --browser chromium'
@@ -356,10 +400,13 @@ if (-not $ClaudeCli) {
 } catch {
     # nothing here is required for the hub to work — never let it fail the install
     Write-Warn "Playwright MCP se nepovedlo přidat: $($_.Exception.Message)"
+} finally {
+    $ErrorActionPreference = $prevEap
 }
 
 Write-Host ''
 Write-Host '  ✦ Hotovo. Spusť zástupce Claude Code v nabídce Start.' -ForegroundColor DarkYellow
 Write-Dim  "Kontrola prostředí:  `"$Python`" `"$(Join-Path $ClaudeDir 'claude-hub.py')`" --doctor"
 Write-Dim  'První spuštění Claude Code: v tabu napiš /login a přihlas se svým účtem.'
+Write-Dim  "Kdyby okno zůstalo prázdné, důvod je v $(Join-Path $ClaudeDir 'hub.log')"
 Write-Host ''
