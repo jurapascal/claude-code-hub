@@ -27,6 +27,13 @@ function Write-Info ($m) { Write-Host "  ▸ $m" -ForegroundColor DarkYellow }
 function Write-Warn ($m) { Write-Host "  ⚠ $m" -ForegroundColor Yellow }
 function Write-Dim  ($m) { Write-Host "    $m" -ForegroundColor DarkGray }
 
+# Calling a program that is not installed raises a terminating CommandNotFoundException
+# that `2>$null` does not swallow — with ErrorActionPreference=Stop it kills the whole
+# install. Every external program therefore gets checked before it is called.
+function Test-Cmd($name) {
+    return [bool](Get-Command $name -ErrorAction SilentlyContinue)
+}
+
 function Ask-YesNo($question) {
     if (-not $Interactive) { return $false }
     $answer = Read-Host "     $question [a/N]"
@@ -51,9 +58,17 @@ function Write-Utf8($path, $text) {
         $path, $text, (New-Object System.Text.UTF8Encoding $false))
 }
 
+$HasWinget = Test-Cmd winget
+
 Write-Host ''
 Write-Host '  ✦ Claude Code Hub — instalace' -ForegroundColor DarkYellow
 Write-Host '  ────────────────────────────────────' -ForegroundColor DarkGray
+
+if (-not $HasWinget) {
+    Write-Warn 'winget na tomhle systému není — co bude chybět, si musíš doinstalovat ručně:'
+    Write-Dim 'Python: python.org/downloads · Git: git-scm.com/downloads/win'
+    Write-Dim 'Claude Code: irm https://claude.ai/install.ps1 | iex'
+}
 
 # ── 1. Python ────────────────────────────────────────────────────────────────
 $Python = $null
@@ -72,7 +87,7 @@ foreach ($candidate in @('python', 'python3', 'py')) {
 }
 if (-not $Python) {
     Write-Warn 'Chybí Python 3.9+'
-    if (Ask-YesNo 'Nainstalovat Python přes winget?') {
+    if ($HasWinget -and (Ask-YesNo 'Nainstalovat Python přes winget?')) {
         winget install --id Python.Python.3.13 --source winget --accept-package-agreements --accept-source-agreements
         Write-Info 'Zavři a znovu otevři PowerShell, pak spusť install.ps1 znovu.'
     } else {
@@ -124,7 +139,7 @@ foreach ($candidate in $bashCandidates) {
 if (-not $GitBash) {
     Write-Warn 'Nenašel jsem Git for Windows (bash.exe)'
     Write-Dim 'Bez něj hub neumí spustit tab — ani Claude Code nemá Bash tool.'
-    if (Ask-YesNo 'Nainstalovat Git for Windows přes winget?') {
+    if ($HasWinget -and (Ask-YesNo 'Nainstalovat Git for Windows přes winget?')) {
         winget install --id Git.Git --source winget --accept-package-agreements --accept-source-agreements
         foreach ($candidate in $bashCandidates) {
             if ($candidate -and (Test-Path $candidate)) { $GitBash = $candidate; break }
@@ -143,7 +158,7 @@ if ($ClaudeCli) {
     Write-Ok "Claude Code CLI ($ClaudeCli)"
 } else {
     Write-Warn "Claude Code CLI ('claude') není v PATH — Hub se spustí, ale taby zůstanou v shellu."
-    if (Ask-YesNo 'Nainstalovat Claude Code přes winget?') {
+    if ($HasWinget -and (Ask-YesNo 'Nainstalovat Claude Code přes winget?')) {
         winget install --id Anthropic.ClaudeCode --source winget --accept-package-agreements --accept-source-agreements
         $ClaudeCli = (Get-Command claude -ErrorAction SilentlyContinue).Source
     } else {
@@ -312,8 +327,10 @@ if ((Test-Path $settings) -and (Select-String -Path $settings -Pattern 'save-ses
 # ── 10. Playwright MCP (volitelné) ───────────────────────────────────────────
 # Prohlížeč pro Claude Code. Poprvé stahuje ~115 MB, takže se ptáme.
 $nodeMajor = 0
-$nodeVersion = (& node -v 2>$null)
-if ($nodeVersion -match '^v(\d+)') { $nodeMajor = [int]$Matches[1] }
+if (Test-Cmd node) {
+    $nodeVersion = (& node -v 2>$null)
+    if ($nodeVersion -match '^v(\d+)') { $nodeMajor = [int]$Matches[1] }
+}
 
 $mcpRegistered = $false
 if ($ClaudeCli) {
@@ -321,6 +338,7 @@ if ($ClaudeCli) {
     $mcpRegistered = ($LASTEXITCODE -eq 0)
 }
 
+try {
 if (-not $ClaudeCli) {
     Write-Info 'Playwright MCP přeskočen — chybí Claude Code CLI'
 } elseif ($mcpRegistered) {
@@ -334,6 +352,10 @@ if (-not $ClaudeCli) {
     Write-Ok 'playwright MCP připraven'
 } else {
     Write-Info 'přeskočeno — kdykoli později: claude mcp add playwright -s user -- npx @playwright/mcp@latest --browser chromium'
+}
+} catch {
+    # nothing here is required for the hub to work — never let it fail the install
+    Write-Warn "Playwright MCP se nepovedlo přidat: $($_.Exception.Message)"
 }
 
 Write-Host ''
