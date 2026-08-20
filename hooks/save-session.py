@@ -41,10 +41,14 @@ STATE_DIR = MEMORY_DIR if os.path.isdir(MEMORY_DIR) else CLAUDE_DIR
 STATE_FILE = os.path.join(STATE_DIR, "session-state.md")
 
 
+# Windows would flash a console window for every git call without this.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+
+
 def run(cmd, cwd=None, timeout=3):
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True,
-                           cwd=cwd, timeout=timeout)
+                           cwd=cwd, timeout=timeout, creationflags=_NO_WINDOW)
         return r.stdout.strip()
     except Exception:
         return ""
@@ -128,7 +132,7 @@ def main():
     if active_projects:
         summary = f"Práce na: {', '.join(active_projects)}"
     elif recent:
-        dirs = set(os.path.dirname(f).split("/")[-1] for f in recent)
+        dirs = set(os.path.basename(os.path.dirname(f)) for f in recent)
         if dirs:
             summary = f"Editováno v: {', '.join(sorted(dirs))}"
 

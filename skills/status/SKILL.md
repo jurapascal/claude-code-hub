@@ -6,7 +6,7 @@ Show an overview of all projects and the current work status.
 
 ## Instructions
 
-1. Run `python3 {{CLAUDE_DIR}}/hooks/save-session.py` to refresh the session state.
+1. Run `{{PYTHON}} {{CLAUDE_DIR}}/hooks/save-session.py` to refresh the session state.
 2. Read `{{STATE_FILE}}`.
 3. Present the info in a clean format:
    - Which projects have uncommitted changes

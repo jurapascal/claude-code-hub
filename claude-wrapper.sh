@@ -9,8 +9,19 @@
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 CONFIG="$CLAUDE_DIR/hub-config.json"
 
+# Windows has no `python3` — only `python`/`py`, and the WindowsApps stub of the
+# same name just opens the Store, so each candidate has to be proven by running it.
+PY=""
+for cand in python3 python py; do
+    command -v "$cand" >/dev/null 2>&1 || continue
+    if [ "$("$cand" -c "print('ok')" 2>/dev/null)" = "ok" ]; then
+        PY="$cand"
+        break
+    fi
+done
+
 # brain_dir from the config, default ~/Obsidian/Claude-Brain
-BRAIN=$(python3 - "$CONFIG" <<'PYEOF' 2>/dev/null
+BRAIN=$([ -n "$PY" ] && "$PY" - "$CONFIG" <<'PYEOF' 2>/dev/null
 import json, os, sys
 try:
     cfg = json.load(open(sys.argv[1]))
@@ -93,7 +104,7 @@ boot_sequence() {
     # 5. Hooks
     show_step "Initializing hooks"
     HOOK_COUNT=0
-    [ -f "$CLAUDE_DIR/settings.json" ] && HOOK_COUNT=$(python3 -c "
+    [ -f "$CLAUDE_DIR/settings.json" ] && [ -n "$PY" ] && HOOK_COUNT=$("$PY" -c "
 import json, sys
 try:
     d = json.load(open(sys.argv[1]))

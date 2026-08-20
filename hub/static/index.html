@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code</title>
+<link rel="stylesheet" href="/vendor/xterm.css">
+<link rel="stylesheet" href="/hub.css">
+</head>
+<body>
+
+<!-- Icon sprite: solid shapes at 1em in currentColor, never emoji — the system
+     emoji font renders them in its own colours and they clash with the theme. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></symbol>
+  <symbol id="i-note" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zm17.7-10.2a1 1 0 0 0 0-1.42l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.82z"/></symbol>
+  <symbol id="i-deploy" viewBox="0 0 24 24"><path d="M12 2l5.5 5.5h-3.5V15h-4V7.5H6.5L12 2zM4 17h16v4H4z"/></symbol>
+  <symbol id="i-push" viewBox="0 0 24 24"><path d="M6 2a3 3 0 0 0-1 5.83v8.34A3 3 0 1 0 7 16.17V7.83A3 3 0 0 0 6 2zm12 0a3 3 0 0 0-1 5.83V10a2 2 0 0 1-2 2h-4v2h4a4 4 0 0 0 4-4V7.83A3 3 0 0 0 18 2z"/></symbol>
+  <symbol id="i-status" viewBox="0 0 24 24"><path d="M4 20h3.2V11H4v9zm6.4 0h3.2V4h-3.2v16zm6.4 0H20v-6h-3.2v6z"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M3 5h18v14H3V5zm2 2v7.2l3.8-3.8 3.2 3.2 3.2-3.2L19 14.2V7H5zm3.6.9a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 0 0 0-3.2z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 5h6.2l2 2H21v12H3V5z"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M6 2h13v16H6.5a1.5 1.5 0 0 0-1.5 1.5V4a2 2 0 0 1 2-2h-1zm-1 18.2A2.8 2.8 0 0 1 6.5 20H19v2H6.5A1.5 1.5 0 0 1 5 20.5v-.3z"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M12 5V1.5L7.5 6 12 10.5V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M13 2a9.5 9.5 0 1 0 8.5 13.6A7.5 7.5 0 0 1 13 2z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><path d="M12 7.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM11 1h2v3.2h-2V1zm0 18.8h2V23h-2v-3.2zM1 11h3.2v2H1v-2zm18.8 0H23v2h-3.2v-2zM4.2 2.8l2.3 2.3-1.4 1.4-2.3-2.3 1.4-1.4zm13.3 13.3l2.3 2.3-1.4 1.4-2.3-2.3 1.4-1.4zM2.8 19.8l2.3-2.3 1.4 1.4-2.3 2.3-1.4-1.4zM16.1 6.5l2.3-2.3 1.4 1.4-2.3 2.3-1.4-1.4z"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M19 6.4L17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M2 4h20v16H2V4zm2 2v12h16V6H4zm2.9 1.9L10.9 12l-4 4.1L5.5 14.7 8.2 12 5.5 9.3l1.4-1.4zM12 15h6v1.8h-6V15z"/></symbol>
+  <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 0-4 12.75V17h8v-2.25A7 7 0 0 0 12 2zM9 18.5h6V20a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2v-1.5z"/></symbol>
+  <symbol id="i-error" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm4 13.2L14.6 16.6 12 14l-2.6 2.6L8 15.2 10.6 12.6 8 10l1.4-1.4L12 11.2l2.6-2.6L16 10l-2.6 2.6L16 15.2z"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 17.2 5.9 20.6l1.4-6.8L2.2 9.1l6.9-.8L12 2z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M10 3a7 7 0 1 1-4.2 12.6l-.2-.2A7 7 0 0 1 10 3zm0 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm5.5 9.1l4.6 4.6-1.4 1.4-4.6-4.6 1.4-1.4z"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9.3 6.3L15 12l-5.7 5.7-1.4-1.4L12.2 12 7.9 7.7l1.4-1.4z"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 6l6 6-1.4 1.4L13 9.8V20h-2V9.8l-3.6 3.6L6 12l6-6z"/></symbol>
+</defs></svg>
+
+<header class="topbar">
+  <div class="topbar-title">
+    <svg class="ico brand-ico"><use href="#i-terminal"/></svg>
+    <strong>Claude Code</strong><span class="topbar-sub">Hub</span>
+  </div>
+  <div class="topbar-actions">
+    <button id="btn-refresh" class="iconbtn" title="Načíst projekty znovu">
+      <svg class="ico"><use href="#i-refresh"/></svg></button>
+    <button id="btn-theme" class="iconbtn" title="Přepnout světlý/tmavý režim">
+      <svg class="ico"><use href="#i-moon"/></svg></button>
+  </div>
+</header>
+
+<div class="layout">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-name">CLAUDE CODE</div>
+      <div class="brand-sub">vyber projekt → otevře se jako tab</div>
+    </div>
+
+    <div class="section">PROJEKTY</div>
+    <div class="searchwrap">
+      <svg class="ico search-ico"><use href="#i-search"/></svg>
+      <input id="search" type="search" placeholder="Hledat projekt…" autocomplete="off">
+    </div>
+    <div id="projects" class="cards"></div>
+
+    <button id="btn-browse" class="actionbtn">
+      <svg class="ico"><use href="#i-folder"/></svg> Otevřít jinou složku…
+    </button>
+
+    <div id="memory-section" hidden>
+      <div class="section">OBSIDIAN PAMĚŤ</div>
+      <button id="btn-brain" class="actionbtn">
+        <svg class="ico"><use href="#i-book"/></svg> Otevřít Obsidian Brain
+      </button>
+      <div id="memory-summary" class="mem-summary"></div>
+      <div id="memory" class="cards"></div>
+    </div>
+
+    <div class="spacer"></div>
+    <div id="footer" class="footer"></div>
+  </aside>
+
+  <main class="main">
+    <div class="tabbar" id="tabbar">
+      <button id="btn-newtab" class="tabplus" title="Nový shell">
+        <svg class="ico"><use href="#i-plus"/></svg></button>
+    </div>
+    <div class="panes" id="panes">
+      <div class="welcome" id="welcome">
+        <svg class="ico welcome-ico"><use href="#i-terminal"/></svg>
+        <div class="welcome-big">Claude Code</div>
+        <div class="welcome-sub">Vyber projekt vlevo — otevře se tady jako nový tab.</div>
+        <div class="welcome-warn" id="welcome-warn" hidden></div>
+      </div>
+    </div>
+  </main>
+
+  <aside class="actionbar" id="actionbar" hidden>
+    <div class="barlabel">RYCHLÉ AKCE</div>
+    <div id="actions"></div>
+  </aside>
+
+</div>
+
+<div class="modal" id="modal" hidden>
+  <div class="modal-box">
+    <div class="modal-head">
+      <strong id="modal-title">Vyber složku</strong>
+      <button class="iconbtn" id="modal-close"><svg class="ico"><use href="#i-close"/></svg></button>
+    </div>
+    <div class="modal-roots" id="modal-roots"></div>
+    <div class="modal-path" id="modal-path"></div>
+    <div class="modal-list" id="modal-list"></div>
+    <div class="modal-foot">
+      <button class="btn ghost" id="modal-cancel">Zrušit</button>
+      <button class="btn primary" id="modal-open">Otevřít tuhle složku</button>
+    </div>
+  </div>
+</div>
+
+<div class="ctxmenu" id="ctxmenu" hidden></div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-fit.js"></script>
+<script src="/vendor/addon-web-links.js"></script>
+<script src="/hub.js"></script>
+</body>
+</html>

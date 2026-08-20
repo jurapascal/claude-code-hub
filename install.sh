@@ -1,10 +1,12 @@
 #!/bin/bash
-# Claude Code Hub — instalačka.
+# Claude Code Hub — instalačka pro Linux a macOS.
 #
 # Repo je jen instalačka: obsah (projekty, paměť) má každý svůj na disku.
 # Skript zjistí, kde ho má, uloží to do ~/.claude/hub-config.json a podle
 # toho vyrenderuje aplikaci i slash příkazy. Nic nepřepíše bez zálohy
 # a do ~/.claude/settings.json nesahá.
+#
+# Windows má vlastní install.ps1.
 #
 # Použití: bash install.sh [--yes]     (--yes = bez otázek, jen detekce)
 set -u
@@ -30,25 +32,44 @@ echo -e "  ${A}✦${R} Claude Code Hub — instalace"
 echo -e "  ${D}────────────────────────────────────${R}"
 
 # ── 1. Závislosti ────────────────────────────────────────────────────────────
-MISSING=""
-command -v python3 >/dev/null 2>&1 || MISSING="$MISSING python3"
-python3 -c "import gi; gi.require_version('Gtk','3.0'); gi.require_version('Vte','2.91');
-from gi.repository import Gtk, Vte" 2>/dev/null || MISSING="$MISSING python3-gi/gir1.2-vte-2.91"
-
-if [ -n "$MISSING" ]; then
-    warn "Chybí:$MISSING"
-    echo -e "     ${D}Debian/Ubuntu/Zorin: sudo apt install python3 python3-gi gir1.2-gtk-3.0 gir1.2-vte-2.91${R}"
-    echo -e "     ${D}Fedora:              sudo dnf install python3-gobject vte291-gtk3${R}"
-    echo -e "     ${D}Arch:                sudo pacman -S python-gobject vte3${R}"
+# Hub je web appka v lokálním okně: stačí Python 3 ze standardní knihovny.
+# GTK ani VTE už potřeba nejsou.
+if ! command -v python3 >/dev/null 2>&1; then
+    warn "Chybí python3"
+    echo -e "     ${D}Debian/Ubuntu/Zorin: sudo apt install python3${R}"
+    echo -e "     ${D}Fedora:              sudo dnf install python3${R}"
     exit 1
 fi
-ok "Python 3 + GTK 3 + VTE 2.91"
+ok "Python 3 ($(python3 --version 2>&1 | cut -d' ' -f2))"
+
+# Okno: chromium v --app režimu, nebo WebKitGTK, jinak zůstane obyčejná záložka.
+WINDOW_HOST=""
+for b in google-chrome google-chrome-stable chromium chromium-browser \
+         brave-browser microsoft-edge vivaldi; do
+    command -v "$b" >/dev/null 2>&1 && { WINDOW_HOST="$b"; break; }
+done
+if [ -n "$WINDOW_HOST" ]; then
+    ok "okno: $WINDOW_HOST (--app režim)"
+elif python3 -c "
+import gi
+for gtk, wk, name in (('4.0','6.0','WebKit'), ('3.0','4.1','WebKit2')):
+    try:
+        gi.require_version('Gtk', gtk); gi.require_version(name, wk)
+        __import__('gi.repository', fromlist=['Gtk', name]); raise SystemExit(0)
+    except SystemExit: raise
+    except Exception: pass
+raise SystemExit(1)" 2>/dev/null; then
+    ok "okno: WebKitGTK (bez prohlížeče)"
+else
+    warn "žádný chromium ani WebKitGTK — hub se otevře jako záložka ve výchozím prohlížeči"
+    echo -e "     ${D}Nativní okno: sudo apt install gir1.2-webkit2-4.1  (nebo chromium)${R}"
+fi
 
 if command -v claude >/dev/null 2>&1; then
     ok "Claude Code CLI ($(command -v claude))"
 else
     warn "Claude Code CLI ('claude') není v PATH — Hub se spustí, ale taby zůstanou v shellu."
-    echo -e "     ${D}npm install -g @anthropic-ai/claude-code${R}"
+    echo -e "     ${D}curl -fsSL https://claude.ai/install.sh | bash${R}"
 fi
 
 # ── 2. Kde má tenhle počítač co ──────────────────────────────────────────────
@@ -75,11 +96,6 @@ detect_vault() {
 
 if [ -f "$CONFIG" ]; then
     ok "konfig už existuje — nechávám ho být ($CONFIG)"
-    PROJECT_DIRS_CSV=""
-    VAULT="$(python3 -c "
-import json, os, sys
-cfg = json.load(open(sys.argv[1]))
-print(os.path.expanduser(cfg.get('brain_dir') or ''))" "$CONFIG" 2>/dev/null)"
 else
     PROJECT_DIRS_CSV="$(detect_project_dirs)"
     VAULT="$(detect_vault)"
@@ -148,6 +164,10 @@ copy() {  # copy <zdroj> <cíl> — existující jiný soubor zazálohuje
 copy "$SRC/claude-hub.py"          "$CLAUDE_DIR/claude-hub.py"
 copy "$SRC/claude-wrapper.sh"      "$CLAUDE_DIR/claude-wrapper.sh"
 copy "$SRC/hooks/save-session.py"  "$CLAUDE_DIR/hooks/save-session.py"
+# hub/ je celý náš — nahrazuje se vcelku, aby po updatu nezůstaly staré soubory
+rm -rf "$CLAUDE_DIR/hub"
+cp -r "$SRC/hub" "$CLAUDE_DIR/hub"
+find "$CLAUDE_DIR/hub" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null
 chmod +x "$CLAUDE_DIR/claude-hub.py" "$CLAUDE_DIR/claude-wrapper.sh" \
          "$CLAUDE_DIR/hooks/save-session.py"
 ok "aplikace v $CLAUDE_DIR"
@@ -173,6 +193,7 @@ for dir in "$SRC"/skills/*/; do
         -e "s|{{CLAUDE_DIR}}|$CLAUDE_DIR|g" \
         -e "s|{{FTP_DEPLOY}}|$CLAUDE_DIR/ftp-deploy.sh|g" \
         -e "s|{{STATE_FILE}}|$STATE_FILE|g" \
+        -e "s|{{PYTHON}}|python3|g" \
         "$dir/SKILL.md" > "$CLAUDE_DIR/skills/$name/SKILL.md"
     INSTALLED="$INSTALLED /$name"
 done
@@ -256,5 +277,6 @@ fi
 
 echo ""
 echo -e "  ${A}✦${R} Hotovo. Spusť: ${D}python3 $CLAUDE_DIR/claude-hub.py${R}  (nebo ikonu Claude Code v nabídce)"
+echo -e "  ${D}Kontrola prostředí:  python3 $CLAUDE_DIR/claude-hub.py --doctor${R}"
 echo -e "  ${D}První spuštění Claude Code: v tabu napiš /login a přihlas se svým účtem.${R}"
 echo ""
