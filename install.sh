@@ -16,6 +16,7 @@ CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 ICON_DIR="$HOME/.local/share/icons"
 APP_DIR="$HOME/.local/share/applications"
 STAMP="$(date +%Y%m%d-%H%M%S)"
+CLONED_VAULT=""
 CONFIG="$CLAUDE_DIR/hub-config.json"
 
 ASSUME_YES=false
@@ -121,6 +122,27 @@ install_gh() {
     return 1
 }
 
+clone_vault() {  # clone_vault <owner/repo|URL> <rodičovská složka> → $CLONED_VAULT
+    local repo="$1" parent="$2" name target
+    name="$(basename "${repo%.git}")"
+    target="$parent/$name"
+    [ -d "$target" ] && { warn "$target už existuje"; return 1; }
+    mkdir -p "$parent"
+    # gh umí i privátní repo, na které má přihlášený účet přístup jako kolaborátor
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        gh repo clone "$repo" "$target" >/dev/null 2>&1 || return 1
+    else
+        case "$repo" in
+            *://*|git@*) git clone "$repo" "$target" >/dev/null 2>&1 || return 1 ;;
+            *) git clone "https://github.com/$repo.git" "$target" >/dev/null 2>&1 || return 1 ;;
+        esac
+    fi
+    CLONED_VAULT="$target"
+    # vault z gitu nemusí mít memory/ (třeba když se commitovalo jen skills/)
+    [ -d "$target/memory" ] || create_vault "$target"
+    return 0
+}
+
 create_vault() {  # create_vault <cesta> — prázdný vault, ať má paměť kam psát
     mkdir -p "$1/memory" "$1/skills" "$1/.obsidian"
     if [ ! -f "$1/memory/MEMORY.md" ] && [ -f "$SRC/assets/vault/MEMORY.md" ]; then
@@ -152,16 +174,6 @@ else
     fi
 fi
 
-VAULT_FOUND="$(detect_vault)"
-if [ -n "$VAULT_FOUND" ]; then
-    ok "vault: $VAULT_FOUND"
-elif ask "Založit prázdný vault $HOME/Obsidian/Claude-Brain pro paměť?"; then
-    create_vault "$HOME/Obsidian/Claude-Brain"
-    ok "vault založen: $HOME/Obsidian/Claude-Brain  ${D}(v Obsidianu: Open folder as vault)${R}"
-else
-    info "bez vaultu poběží hub taky, jen bez paměti"
-fi
-
 if command -v gh >/dev/null 2>&1; then
     ok "GitHub CLI ($(command -v gh))"
 else
@@ -181,6 +193,31 @@ if command -v gh >/dev/null 2>&1 && ! gh auth status >/dev/null 2>&1; then
     fi
 elif command -v gh >/dev/null 2>&1; then
     ok "gh přihlášený ($(gh api user --jq .login 2>/dev/null || echo 'ok'))"
+fi
+
+# Vault až po gh: cizí stroj si tvůj vault naklonuje z privátního repa, a na to
+# musí být `gh` napřed přihlášený.
+VAULT_FOUND="$(detect_vault)"
+if [ -n "$VAULT_FOUND" ]; then
+    ok "vault: $VAULT_FOUND"
+elif $ASSUME_YES; then
+    info "bez vaultu — paměť zůstane vypnutá (spusť instalačku bez --yes a založíš ho)"
+else
+    echo ""
+    info "Máš paměť (Obsidian vault) v gitu? ${D}owner/repo nebo URL — Enter = nemám${R}"
+    read -r -p "     []: " VAULT_REPO
+    if [ -n "$VAULT_REPO" ]; then
+        if clone_vault "$VAULT_REPO" "$HOME/Obsidian"; then
+            ok "vault naklonován: $CLONED_VAULT  ${D}(v Obsidianu: Open folder as vault)${R}"
+        else
+            warn "klonování nevyšlo — ověř přístup: gh repo view $VAULT_REPO"
+        fi
+    elif ask "Založit prázdný vault $HOME/Obsidian/Claude-Brain pro paměť?"; then
+        create_vault "$HOME/Obsidian/Claude-Brain"
+        ok "vault založen: $HOME/Obsidian/Claude-Brain  ${D}(v Obsidianu: Open folder as vault)${R}"
+    else
+        info "bez vaultu poběží hub taky, jen bez paměti"
+    fi
 fi
 
 # ── 3. Kde má tenhle počítač co ──────────────────────────────────────────────
