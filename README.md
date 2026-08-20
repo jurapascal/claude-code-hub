@@ -69,6 +69,8 @@ jedno a totéž a liší se jen dvě věci pod ním:
 | `pywinpty` | ConPTY terminál; instalačka ho doinstaluje sama | Windows |
 | chromium / WebKitGTK | okno bez adresního řádku (jinak se hub otevře jako záložka) | Linux, macOS |
 | Node.js 20+ | jen pro volitelný Playwright MCP | všude |
+| [Obsidian](https://obsidian.md/download) | paměť (`/save`, `/learn`, `/project`) a panel poznámek | volitelné, všude |
+| [GitHub CLI](https://github.com/cli/cli#installation) | `gh auth login` → klonování a `/push` z čerstvého stroje | volitelné, všude |
 
 Na Linuxu **už není potřeba GTK 3 ani VTE**. Chceš-li nativní okno bez prohlížeče:
 
@@ -96,18 +98,32 @@ cd claude-code-hub
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-Instalačka nabídne doinstalovat, co chybí (Python, Git for Windows, Claude Code CLI —
-všechno přes `winget`), sama přidá `pywinpty`, vyrobí zástupce **Claude Code** v nabídce
-Start a volitelně na ploše. Zástupce spouští `pythonw.exe`, takže se vedle okna
-neotevírá černá konzole.
+Instalačka nabídne doinstalovat, co chybí (Python, Git for Windows, Claude Code CLI,
+Obsidian, GitHub CLI — všechno přes `winget`), sama přidá `pywinpty`, vyrobí zástupce
+**Claude Code** v nabídce Start a volitelně na ploše. Zástupce spouští `pythonw.exe`,
+takže se vedle okna neotevírá černá konzole; kdyby okno zůstalo prázdné, důvod je
+v `%USERPROFILE%\.claude\hub.log`.
 
 ### Obě platformy
 
 Instalátor se zeptá (s předvyplněnou detekcí), kde máš projekty a jestli máš Obsidian
 vault, zapíše to do `~/.claude/hub-config.json`, nakopíruje appku do `~/.claude/`
 a vyrenderuje slash příkazy. Existující soubory zálohuje (`*.backup-<datum>`) a do
-`~/.claude/settings.json` nesahá. Na konci se ještě zeptá na **Playwright MCP**.
-`--yes` (resp. `-Yes`) = bez otázek, jen detekce — MCP se v tom režimu přeskočí.
+`~/.claude/settings.json` nesahá.
+
+Na čerstvém stroji cestou nabídne i to, bez čeho by hub sice běžel, ale nebylo by
+s ním co dělat — vždycky otázkou, nikdy potichu:
+
+| Nabídne | Co udělá |
+|---|---|
+| **Obsidian** | `winget install Obsidian.Obsidian`, na Linuxu flatpak z Flathubu (jinak snap), na macOS `brew --cask` |
+| **prázdný vault** | když žádný nenajde: `~/Obsidian/Claude-Brain` s `memory/`, `skills/` a rozcestníkem `MEMORY.md` — teprve tím se zapnou `/save`, `/learn`, `/project`, `/skill` |
+| **GitHub CLI** | `winget install GitHub.cli` / apt / dnf / pacman / snap / brew, pak `gh auth login` + `gh auth setup-git` |
+| **Playwright MCP** | prohlížeč pro Claude Code (~115 MB, potřebuje Node.js 20+) |
+| **přihlášení** | spustí `claude`, projdeš `/login` a dáš `/exit` |
+
+`--yes` (resp. `-Yes`) = bez otázek, jen detekce — v tom režimu se nic z tabulky
+neinstaluje, jen se vypíše, co chybí.
 
 Když něco nehraje:
 
@@ -209,6 +225,7 @@ legacy/claude-hub-gtk.py  původní GTK 3 + VTE verze (Linux only, už se neinst
 hub-config.example.json   vzor konfigurace
 settings.example.json     vzor zapojení Stop hooku (bez jakýchkoli klíčů)
 assets/                   ikona (.png pro Linux, .ico pro Windows)
+assets/vault/MEMORY.md    rozcestník paměti pro nově založený vault
 ```
 
 ## Co v repu záměrně není

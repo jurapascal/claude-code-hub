@@ -72,15 +72,60 @@ else
     echo -e "     ${D}curl -fsSL https://claude.ai/install.sh | bash${R}"
 fi
 
-# ── 2. Kde má tenhle počítač co ──────────────────────────────────────────────
-detect_project_dirs() {
-    local found=""
-    for c in "$HOME/Desktop" "$HOME/Plocha" "$HOME/Projects" "$HOME/projects" \
-             "$HOME/dev" "$HOME/code" "$HOME/git" "$HOME/src" "$HOME/www" \
-             "/opt/lampp/htdocs" "/var/www/html"; do
-        [ -d "$c" ] && found="$found${found:+, }$c"
-    done
-    echo "$found"
+# ── 2. Obsidian a GitHub CLI ─────────────────────────────────────────────────
+# Hub běží i bez obojího, ale bez Obsidianu nemá paměť kde bydlet (/save, /learn,
+# /project) a bez `gh` se z čerstvého stroje nedá klonovat ani pushovat. Nikdy
+# neinstalujeme potichu: s --yes se jen vypíše, co si má člověk doinstalovat.
+ask() {
+    $ASSUME_YES && return 1
+    local answer
+    read -r -p "     $1 [a/N]: " answer
+    [[ "$answer" =~ ^[aAyY] ]]
+}
+
+have_obsidian() {
+    command -v obsidian >/dev/null 2>&1 && return 0
+    flatpak info md.obsidian.Obsidian >/dev/null 2>&1 && return 0
+    snap list obsidian >/dev/null 2>&1 && return 0
+    [ -d /Applications/Obsidian.app ] && return 0
+    ls "$HOME"/Applications/Obsidian*.AppImage >/dev/null 2>&1 && return 0
+    return 1
+}
+
+install_obsidian() {
+    if [ "$(uname)" = "Darwin" ]; then
+        command -v brew >/dev/null 2>&1 && brew install --cask obsidian && return 0
+    elif command -v flatpak >/dev/null 2>&1; then
+        flatpak remote-add --if-not-exists --user \
+            flathub https://flathub.org/repo/flathub.flatpakrepo >/dev/null 2>&1
+        flatpak install -y --user flathub md.obsidian.Obsidian && return 0
+    elif command -v snap >/dev/null 2>&1; then
+        sudo snap install obsidian --classic && return 0
+    fi
+    return 1
+}
+
+install_gh() {
+    if [ "$(uname)" = "Darwin" ]; then
+        command -v brew >/dev/null 2>&1 && brew install gh && return 0
+    # `apt-get install -s` je simulace: běží bez roota a nezávisí na jazyku výpisu
+    elif command -v apt-get >/dev/null 2>&1 && apt-get install -s gh >/dev/null 2>&1; then
+        sudo apt-get install -y gh && return 0
+    elif command -v dnf >/dev/null 2>&1; then
+        sudo dnf install -y gh && return 0
+    elif command -v pacman >/dev/null 2>&1; then
+        sudo pacman -S --noconfirm github-cli && return 0
+    elif command -v snap >/dev/null 2>&1; then
+        sudo snap install gh && return 0
+    fi
+    return 1
+}
+
+create_vault() {  # create_vault <cesta> — prázdný vault, ať má paměť kam psát
+    mkdir -p "$1/memory" "$1/skills" "$1/.obsidian"
+    if [ ! -f "$1/memory/MEMORY.md" ] && [ -f "$SRC/assets/vault/MEMORY.md" ]; then
+        cp "$SRC/assets/vault/MEMORY.md" "$1/memory/MEMORY.md"
+    fi
 }
 
 detect_vault() {
@@ -92,6 +137,61 @@ detect_vault() {
         fi
     done
     echo ""
+}
+
+echo ""
+if have_obsidian; then
+    ok "Obsidian"
+else
+    warn "Obsidian není nainstalovaný — v něm žije paměť (/save, /learn, /project)"
+    if ask "Nainstalovat Obsidian?"; then
+        if install_obsidian; then ok "Obsidian nainstalován"
+        else warn "instalace nevyšla — stáhni ho z https://obsidian.md/download"; fi
+    else
+        echo -e "     ${D}Ručně: https://obsidian.md/download${R}"
+    fi
+fi
+
+VAULT_FOUND="$(detect_vault)"
+if [ -n "$VAULT_FOUND" ]; then
+    ok "vault: $VAULT_FOUND"
+elif ask "Založit prázdný vault $HOME/Obsidian/Claude-Brain pro paměť?"; then
+    create_vault "$HOME/Obsidian/Claude-Brain"
+    ok "vault založen: $HOME/Obsidian/Claude-Brain  ${D}(v Obsidianu: Open folder as vault)${R}"
+else
+    info "bez vaultu poběží hub taky, jen bez paměti"
+fi
+
+if command -v gh >/dev/null 2>&1; then
+    ok "GitHub CLI ($(command -v gh))"
+else
+    warn "GitHub CLI ('gh') není — bez něj se z tohohle stroje nepushuje na GitHub"
+    if ask "Nainstalovat gh?"; then
+        if install_gh; then ok "gh nainstalován"
+        else warn "instalace nevyšla — návod: https://github.com/cli/cli#installation"; fi
+    fi
+fi
+if command -v gh >/dev/null 2>&1 && ! gh auth status >/dev/null 2>&1; then
+    info "gh není přihlášený k GitHubu"
+    if ask "Přihlásit se teď (otevře prohlížeč)?"; then
+        gh auth login || warn "přihlášení nedoběhlo — kdykoli později: gh auth login"
+        gh auth setup-git >/dev/null 2>&1 && ok "git umí přes gh i push přes HTTPS"
+    else
+        echo -e "     ${D}Později: gh auth login${R}"
+    fi
+elif command -v gh >/dev/null 2>&1; then
+    ok "gh přihlášený ($(gh api user --jq .login 2>/dev/null || echo 'ok'))"
+fi
+
+# ── 3. Kde má tenhle počítač co ──────────────────────────────────────────────
+detect_project_dirs() {
+    local found=""
+    for c in "$HOME/Desktop" "$HOME/Plocha" "$HOME/Projects" "$HOME/projects" \
+             "$HOME/dev" "$HOME/code" "$HOME/git" "$HOME/src" "$HOME/www" \
+             "/opt/lampp/htdocs" "/var/www/html"; do
+        [ -d "$c" ] && found="$found${found:+, }$c"
+    done
+    echo "$found"
 }
 
 if [ -f "$CONFIG" ]; then
@@ -149,7 +249,7 @@ else
     info "bez Obsidian vaultu — paměťové příkazy a panel paměti se přeskočí"
 fi
 
-# ── 3. Aplikace do ~/.claude ─────────────────────────────────────────────────
+# ── 4. Aplikace do ~/.claude ─────────────────────────────────────────────────
 mkdir -p "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/skills" "$ICON_DIR" "$APP_DIR"
 
 copy() {  # copy <zdroj> <cíl> — existující jiný soubor zazálohuje
@@ -172,7 +272,7 @@ chmod +x "$CLAUDE_DIR/claude-hub.py" "$CLAUDE_DIR/claude-wrapper.sh" \
          "$CLAUDE_DIR/hooks/save-session.py"
 ok "aplikace v $CLAUDE_DIR"
 
-# ── 4. Slash příkazy ─────────────────────────────────────────────────────────
+# ── 5. Slash příkazy ─────────────────────────────────────────────────────────
 # Claude Code ≥ 2.1 čte vlastní příkazy z ~/.claude/skills/<jméno>/SKILL.md
 # (složka ~/.claude/commands/ se v tomhle buildu ignoruje). Šablony ze skills/
 # se sem vyrenderují s cestami z konfigu.
@@ -203,7 +303,7 @@ if ls "$CLAUDE_DIR"/commands/*.md >/dev/null 2>&1; then
     warn "$CLAUDE_DIR/commands/ tenhle build Claude Code nečte — příkazy teď běží ze skills/"
 fi
 
-# ── 5. Ikona + položka v nabídce ─────────────────────────────────────────────
+# ── 6. Ikona + položka v nabídce ─────────────────────────────────────────────
 cp "$SRC/assets/claude-code.png" "$ICON_DIR/claude-code.png" 2>/dev/null && \
     ok "ikona v $ICON_DIR/claude-code.png"
 
@@ -224,14 +324,14 @@ chmod +x "$APP_DIR/claude-code-hub.desktop"
 update-desktop-database "$APP_DIR" >/dev/null 2>&1
 ok "položka v nabídce aplikací: Claude Code"
 
-# ── 6. Hook na ukládání session (settings.json nesaháme) ─────────────────────
+# ── 7. Hook na ukládání session (settings.json nesaháme) ─────────────────────
 if grep -q "save-session.py" "$CLAUDE_DIR/settings.json" 2>/dev/null; then
     ok "Stop hook (save-session.py) je v settings.json zapojený"
 else
     warn "Volitelné: přidej si do $CLAUDE_DIR/settings.json blok 'hooks' ze settings.example.json"
 fi
 
-# ── 7. Playwright MCP (volitelné) ────────────────────────────────────────────
+# ── 8. Playwright MCP (volitelné) ────────────────────────────────────────────
 # Prohlížeč pro Claude Code — klikání, konzole a screenshoty přes accessibility
 # tree místo vlastních Puppeteer skriptů. Registruje se do user scope
 # (~/.claude.json), takže platí ve všech projektech. Bez zeptání se neinstaluje:
@@ -275,8 +375,21 @@ else
     esac
 fi
 
+# ── 9. Přihlášení do Claude Code ─────────────────────────────────────────────
+# Bez přihlášení se v každém tabu objeví login obrazovka. Spustit `claude` tady
+# je nejrychlejší cesta: uživatel projde /login a dá /exit.
+if command -v claude >/dev/null 2>&1; then
+    if [ -f "$CLAUDE_DIR/.credentials.json" ] || [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+        ok "Claude Code je přihlášený"
+    elif ask "Přihlásit se teď do Claude Code? (spustí claude, projdi /login a dej /exit)"; then
+        claude || true
+    else
+        echo -e "     ${D}Později: spusť claude a napiš /login${R}"
+    fi
+fi
+
 echo ""
 echo -e "  ${A}✦${R} Hotovo. Spusť: ${D}python3 $CLAUDE_DIR/claude-hub.py${R}  (nebo ikonu Claude Code v nabídce)"
 echo -e "  ${D}Kontrola prostředí:  python3 $CLAUDE_DIR/claude-hub.py --doctor${R}"
-echo -e "  ${D}První spuštění Claude Code: v tabu napiš /login a přihlas se svým účtem.${R}"
+echo -e "  ${D}Když okno zůstane prázdné, důvod je v $CLAUDE_DIR/hub.log${R}"
 echo ""

@@ -166,7 +166,118 @@ if ($ClaudeCli) {
     }
 }
 
-# ── 5. Kde má tenhle počítač co ──────────────────────────────────────────────
+# ── 5. Obsidian a GitHub CLI ─────────────────────────────────────────────────
+# Hub běží i bez obojího, ale bez Obsidianu nemá paměť kde bydlet (/save, /learn,
+# /project) a bez `gh` se z čerstvého stroje nedá klonovat ani pushovat.
+# Nikdy neinstalujeme potichu — bez -Yes se na všechno ptáme.
+function Detect-Vault {
+    $bases = @((Join-Safe $env:USERPROFILE 'Obsidian'),
+               (Join-Safe $env:USERPROFILE 'Documents\Obsidian'),
+               (Join-Safe $env:USERPROFILE 'OneDrive\Obsidian'),
+               (Join-Safe $env:USERPROFILE 'OneDrive\Dokumenty\Obsidian'))
+    foreach ($base in $bases) {
+        if (-not $base -or -not (Test-Path $base)) { continue }
+        foreach ($dir in Get-ChildItem -Path $base -Directory -ErrorAction SilentlyContinue) {
+            if ((Test-Path (Join-Path $dir.FullName '.obsidian')) -or
+                (Test-Path (Join-Path $dir.FullName 'memory'))) {
+                return $dir.FullName
+            }
+        }
+    }
+    return ''
+}
+
+function Find-Obsidian {
+    foreach ($p in @((Join-Safe $env:LOCALAPPDATA 'Obsidian\Obsidian.exe'),
+                     (Join-Safe $env:ProgramFiles 'Obsidian\Obsidian.exe'))) {
+        if ($p -and (Test-Path $p)) { return $p }
+    }
+    # nainstalovaný Obsidian si registruje obsidian:// handler
+    if (Test-Path 'Registry::HKEY_CLASSES_ROOT\obsidian' -ErrorAction SilentlyContinue) { return 'obsidian://' }
+    return $null
+}
+
+function Find-Gh {
+    $cmd = (Get-Command gh -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1).Source
+    if ($cmd) { return $cmd }
+    foreach ($base in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA)) {
+        $guess = Join-Safe $base 'GitHub CLI\gh.exe'
+        if ($guess -and (Test-Path $guess)) { return $guess }
+    }
+    return $null
+}
+
+function New-Vault($path) {
+    foreach ($sub in @('memory', 'skills', '.obsidian')) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $path $sub) | Out-Null
+    }
+    $index = Join-Path $path 'memory\MEMORY.md'
+    $template = Join-Path $Src 'assets\vault\MEMORY.md'
+    if (-not (Test-Path $index) -and (Test-Path $template)) {
+        Copy-Item $template $index
+    }
+}
+
+Write-Host ''
+if (Find-Obsidian) {
+    Write-Ok 'Obsidian'
+} else {
+    Write-Warn 'Obsidian není nainstalovaný — v něm žije paměť (/save, /learn, /project)'
+    if ($HasWinget -and (Ask-YesNo 'Nainstalovat Obsidian přes winget?')) {
+        winget install --id Obsidian.Obsidian --source winget --accept-package-agreements --accept-source-agreements
+        if (Find-Obsidian) { Write-Ok 'Obsidian nainstalován' }
+        else { Write-Info 'hotovo, ale zatím ho nevidím — po restartu PowerShellu bude v pořádku' }
+    } else {
+        Write-Dim 'Ručně: https://obsidian.md/download'
+    }
+}
+
+$vaultFound = Detect-Vault
+if ($vaultFound) {
+    Write-Ok "vault: $vaultFound"
+} elseif (Ask-YesNo "Založit prázdný vault $(Join-Path $env:USERPROFILE 'Obsidian\Claude-Brain') pro paměť?") {
+    New-Vault (Join-Path $env:USERPROFILE 'Obsidian\Claude-Brain')
+    Write-Ok "vault založen: $(Join-Path $env:USERPROFILE 'Obsidian\Claude-Brain')"
+    Write-Dim 'V Obsidianu pak: Open folder as vault'
+} else {
+    Write-Info 'bez vaultu poběží hub taky, jen bez paměti'
+}
+
+$Gh = Find-Gh
+if (-not $Gh) {
+    Write-Warn "GitHub CLI ('gh') není — bez něj se z tohohle stroje nepushuje na GitHub"
+    if ($HasWinget -and (Ask-YesNo 'Nainstalovat GitHub CLI přes winget?')) {
+        winget install --id GitHub.cli --source winget --accept-package-agreements --accept-source-agreements
+        $Gh = Find-Gh
+        if (-not $Gh) { Write-Info 'gh nainstalován, ale chce nový PowerShell — pak: gh auth login' }
+    } else {
+        Write-Dim 'Ručně: https://github.com/cli/cli#installation'
+    }
+}
+if ($Gh) {
+    Write-Ok "GitHub CLI ($Gh)"
+    $ghAuthed = $false
+    try {
+        & $Gh auth status *>$null
+        $ghAuthed = ($LASTEXITCODE -eq 0)
+    } catch { $ghAuthed = $false }
+    if ($ghAuthed) {
+        Write-Ok 'gh je přihlášený'
+    } elseif (Ask-YesNo 'Přihlásit gh k GitHubu teď? (otevře prohlížeč)') {
+        try {
+            & $Gh auth login
+            & $Gh auth setup-git *>$null
+            Write-Ok 'gh přihlášen a napojený na git'
+        } catch {
+            Write-Warn "přihlášení nedoběhlo — kdykoli později: gh auth login"
+        }
+    } else {
+        Write-Dim 'Později: gh auth login'
+    }
+}
+
+# ── 6. Kde má tenhle počítač co ──────────────────────────────────────────────
 function Detect-ProjectDirs {
     $found = @()
     $candidates = @(
@@ -180,22 +291,6 @@ function Detect-ProjectDirs {
     )
     foreach ($c in $candidates) { if ($c -and (Test-Path $c)) { $found += $c } }
     return ($found -join ', ')
-}
-
-function Detect-Vault {
-    $bases = @((Join-Safe $env:USERPROFILE 'Obsidian'),
-               (Join-Safe $env:USERPROFILE 'Documents\Obsidian'),
-               (Join-Safe $env:USERPROFILE 'OneDrive\Obsidian'))
-    foreach ($base in $bases) {
-        if (-not $base -or -not (Test-Path $base)) { continue }
-        foreach ($dir in Get-ChildItem -Path $base -Directory -ErrorAction SilentlyContinue) {
-            if ((Test-Path (Join-Path $dir.FullName '.obsidian')) -or
-                (Test-Path (Join-Path $dir.FullName 'memory'))) {
-                return $dir.FullName
-            }
-        }
-    }
-    return ''
 }
 
 New-Item -ItemType Directory -Force -Path $ClaudeDir | Out-Null
@@ -242,7 +337,7 @@ $HasVault = (Test-Path $MemoryDir)
 if ($HasVault) { Write-Ok "paměť: $MemoryDir" }
 else { Write-Info 'bez Obsidian vaultu — paměťové příkazy a panel paměti se přeskočí' }
 
-# ── 6. Aplikace do ~\.claude ─────────────────────────────────────────────────
+# ── 7. Aplikace do ~\.claude ─────────────────────────────────────────────────
 New-Item -ItemType Directory -Force -Path (Join-Path $ClaudeDir 'hooks') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $ClaudeDir 'skills') | Out-Null
 
@@ -267,7 +362,7 @@ Get-ChildItem $hubDest -Recurse -Directory -Filter '__pycache__' -ErrorAction Si
 Copy-Item (Join-Path $Src 'assets\claude-code.ico') (Join-Path $ClaudeDir 'claude-code.ico') -Force
 Write-Ok "aplikace v $ClaudeDir"
 
-# ── 7. Slash příkazy ─────────────────────────────────────────────────────────
+# ── 8. Slash příkazy ─────────────────────────────────────────────────────────
 # Claude Code ≥ 2.1 čte vlastní příkazy z ~\.claude\skills\<jméno>\SKILL.md.
 $stateFile = if ($HasVault) { Join-Path $MemoryDir 'session-state.md' }
              else { Join-Path $ClaudeDir 'session-state.md' }
@@ -292,7 +387,7 @@ foreach ($dir in Get-ChildItem -Path (Join-Path $Src 'skills') -Directory) {
 }
 Write-Ok "slash příkazy: $($installed -join ' ')"
 
-# ── 8. Zástupci (nabídka Start + plocha) ─────────────────────────────────────
+# ── 9. Zástupci (nabídka Start + plocha) ─────────────────────────────────────
 # pythonw.exe = žádné černé okno konzole vedle hubu.
 function New-Shortcut($path) {
     $shell = New-Object -ComObject WScript.Shell
@@ -313,7 +408,7 @@ if (Ask-YesNo 'Přidat zástupce i na plochu?') {
     Write-Ok 'zástupce na ploše'
 }
 
-# ── 9. Hook na ukládání session (settings.json nesaháme) ─────────────────────
+# ── 10. Hook na ukládání session (settings.json nesaháme) ─────────────────────
 $settings = Join-Path $ClaudeDir 'settings.json'
 if ((Test-Path $settings) -and (Select-String -Path $settings -Pattern 'save-session.py' -Quiet)) {
     Write-Ok 'Stop hook (save-session.py) je v settings.json zapojený'
@@ -324,7 +419,7 @@ if ((Test-Path $settings) -and (Select-String -Path $settings -Pattern 'save-ses
     Write-Dim "    `"command`": `"$hookCmd`", `"timeout`": 10 } ] } ] }"
 }
 
-# ── 10. Playwright MCP (volitelné) ───────────────────────────────────────────
+# ── 11. Playwright MCP (volitelné) ───────────────────────────────────────────
 # Prohlížeč pro Claude Code. Poprvé stahuje ~115 MB, takže se ptáme.
 # Everything here is optional, and nothing in it may colour the install red.
 # `node` a `npx` hledáme přes Get-Command -CommandType Application (skutečné .exe,
@@ -402,6 +497,20 @@ if (-not $ClaudeCli) {
     Write-Warn "Playwright MCP se nepovedlo přidat: $($_.Exception.Message)"
 } finally {
     $ErrorActionPreference = $prevEap
+}
+
+# ── 12. Přihlášení do Claude Code ────────────────────────────────────────────
+# Bez přihlášení uvítá každý tab login obrazovka. Spustit `claude` rovnou tady je
+# nejrychlejší: uživatel projde /login a dá /exit.
+if ($ClaudeCli) {
+    $credFile = Join-Path $ClaudeDir '.credentials.json'
+    if ((Test-Path $credFile) -or $env:ANTHROPIC_API_KEY) {
+        Write-Ok 'Claude Code je přihlášený'
+    } elseif (Ask-YesNo 'Přihlásit se teď do Claude Code? (projdi /login a dej /exit)') {
+        try { & $ClaudeCli } catch { Write-Warn 'claude se nepodařilo spustit — zkus ho z tabu v hubu' }
+    } else {
+        Write-Dim 'Později: spusť claude a napiš /login'
+    }
 }
 
 Write-Host ''
