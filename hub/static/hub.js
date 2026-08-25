@@ -468,6 +468,24 @@ function hideMenu() { $('ctxmenu').hidden = true; }
 
 /* ── folder picker ────────────────────────────────────────────────────────── */
 let pickerPath = '';
+let pickerResolve = null;
+
+/* Vybrat složku a dostat ji zpátky — průvodce i nastavení potřebují cestu,
+   ne otevřený tab. */
+function pickFolder(start) {
+  return new Promise((resolve) => {
+    if (pickerResolve) pickerResolve(null);   // předchozí výběr už nikoho nezajímá
+    pickerResolve = resolve;
+    openPicker(start || '');
+  });
+}
+
+function settlePicker(value) {
+  const resolve = pickerResolve;
+  pickerResolve = null;
+  if (resolve) resolve(value);
+  return !!resolve;
+}
 
 async function openPicker(path) {
   const data = await api('listdir?path=' + encodeURIComponent(path || ''));
@@ -499,7 +517,7 @@ async function openPicker(path) {
   }
 }
 
-function closePicker() { $('modal').hidden = true; }
+function closePicker() { $('modal').hidden = true; settlePicker(null); }
 
 /* ── websocket ────────────────────────────────────────────────────────────── */
 function connect() {
@@ -556,6 +574,20 @@ function toast(text) {
   toastTimer = setTimeout(() => { el.hidden = true; }, 6000);
 }
 
+/* ── průvodce a nastavení ─────────────────────────────────────────────────── */
+function hubIO() {
+  return {
+    get state() { return STATE; },
+    api,
+    setTheme,
+    toast,
+    pickFolder,
+    reload,
+    refreshState: async () => { STATE = await api('state'); },
+    openWizard: () => HubOnboarding.open({...hubIO(), state: STATE}),
+  };
+}
+
 /* ── boot ─────────────────────────────────────────────────────────────────── */
 async function main() {
   const saved = localStorage.getItem('hub-theme');
@@ -567,15 +599,18 @@ async function main() {
   $('search').oninput = (ev) => renderProjects(ev.target.value);
   $('btn-refresh').onclick = () => reload();
   $('btn-theme').onclick = () => setTheme(!DARK, true);
+  $('btn-settings').onclick = () => HubSettings.open({...hubIO(), state: STATE});
   $('btn-newtab').onclick = () => openTab({kind: 'shell', path: '', title: 'shell'});
   $('btn-browse').onclick = () => openPicker('');
   $('btn-brain').onclick = () => openExternal('', 'brain');
   $('modal-close').onclick = closePicker;
   $('modal-cancel').onclick = closePicker;
   $('modal-open').onclick = () => {
-    closePicker();
-    const name = pickerPath.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || pickerPath;
-    openTab({kind: 'project', path: pickerPath, title: name});
+    const path = pickerPath;
+    $('modal').hidden = true;
+    if (settlePicker(path)) return;          // o cestu si někdo řekl
+    const name = path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path;
+    openTab({kind: 'project', path, title: name});
   };
 
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (ev) => {
@@ -595,6 +630,10 @@ async function main() {
   window.addEventListener('resize', () => refit(ACTIVE));
 
   connect();
+
+  // Napoprvé se hub nastavuje tady, ne v instalačce — ta běží jednou a v
+  // terminálu, takže po ní nebylo kde nastavení změnit.
+  if (!STATE.onboarded) HubOnboarding.open({...hubIO(), state: STATE});
 }
 
 main().catch(err => toast('Hub se nenačetl: ' + err.message));

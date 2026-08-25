@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Claude Code Hub — značka.
+     Kreslí to, co aplikace je: sloupec projektů vlevo, terminál vpravo.
+     Počítáno na 16 px: v té velikosti zbydou tři čárky a prompt, což pořád
+     drží tvar. Žádný text — ten se v liště úloh stejně slije. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2129"/>
+      <stop offset="1" stop-color="#0d1117"/>
+    </linearGradient>
+    <linearGradient id="amber" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f0a259"/>
+      <stop offset="1" stop-color="#d9702a"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="256" height="256" rx="56" fill="url(#tile)"/>
+  <rect x="1.5" y="1.5" width="253" height="253" rx="54.5"
+        fill="none" stroke="#e0843c" stroke-opacity=".28" stroke-width="3"/>
+
+  <!-- sloupec projektů -->
+  <g fill="url(#amber)">
+    <rect x="40" y="78"  width="34" height="15" rx="7.5"/>
+    <rect x="40" y="120" width="34" height="15" rx="7.5" opacity=".72"/>
+    <rect x="40" y="162" width="34" height="15" rx="7.5" opacity=".46"/>
+  </g>
+
+  <!-- terminál: prompt a kurzor -->
+  <path d="M108 98 L140 128 L108 158" fill="none" stroke="url(#amber)"
+        stroke-width="19" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="156" y="145" width="60" height="16" rx="8" fill="url(#amber)"/>
+</svg>

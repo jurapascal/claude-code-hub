@@ -292,6 +292,15 @@ class Handler(BaseHTTPRequestHandler):
                 "doctor": core.doctor(),
                 "user": os.environ.get("USER") or os.environ.get("USERNAME") or "",
                 "obsidian": core.has_obsidian(),
+                "onboarded": bool(core.CONFIG.get("onboarded")),
+                "config": {"project_dirs": core.CONFIG.get("project_dirs") or [],
+                           "brain_dir": core.CONFIG.get("brain_dir") or ""},
+                "cloud": core.cloud_folders(),
+                "suggest_dirs": core.suggest_project_dirs(),
+                "home": core.HOME,
+                "version": core.version_info(),
+                "vault_git": dict(zip(("is_repo", "remote"), core.vault_git_state())),
+                "vault_autosync": bool(core.CONFIG.get("vault_autosync")),
             })
         if name == "open-path":
             target = payload.get("path", "")
@@ -340,7 +349,60 @@ class Handler(BaseHTTPRequestHandler):
                     payload.get("name", ""), raw)})
             except Exception as exc:
                 return self._json({"error": f"Nepodařilo se uložit: {exc}"}, 500)
+        if name == "config":
+            allowed = ("project_dirs", "brain_dir", "onboarded", "vault_autosync")
+            updates = {k: v for k, v in payload.items() if k in allowed}
+            if not updates:
+                return self._json({"error": "Nic k uložení."}, 400)
+            try:
+                core.save_config(updates)
+            except Exception as exc:
+                return self._json({"error": f"Konfig nejde zapsat: {exc}"}, 500)
+            return self._json({"ok": True, "brain_dir": core.BRAIN,
+                               "project_dirs": core.PROJECT_DIRS})
+        if name == "vault":
+            return self._vault(payload)
+        if name == "update-check":
+            # Síťový dotaz je zvlášť, aby se na něj nečekalo při každém načtení.
+            return self._json(core.version_info(check_remote=True))
+        if name == "update":
+            return self._json(core.update_hub())
         return self._json({"error": "unknown"}, 404)
+
+    def _vault(self, payload):
+        """Založit / vybrat / přesunout vault, nebo z něj udělat git zálohu."""
+        action = payload.get("action")
+        path = os.path.expanduser(str(payload.get("path", "")))
+        try:
+            if action == "create":
+                if not path:
+                    return self._json({"error": "Chybí cesta."}, 400)
+                for sub in ("memory", "skills", ".obsidian"):
+                    os.makedirs(os.path.join(path, sub), exist_ok=True)
+                index = os.path.join(path, "memory", "MEMORY.md")
+                if not os.path.isfile(index):
+                    with open(index, "w", encoding="utf-8") as fh:
+                        fh.write(core.EMPTY_MEMORY_INDEX)
+                core.save_config({"brain_dir": path})
+                return self._json({"ok": True, "path": core.BRAIN})
+            if action == "use":
+                if not os.path.isdir(path):
+                    return self._json({"error": "Taková složka není."}, 400)
+                core.save_config({"brain_dir": path})
+                return self._json({"ok": True, "path": core.BRAIN,
+                                   "has_memory": core.HAS_BRAIN})
+            if action == "move":
+                return self._json({"ok": True, **core.move_vault(path)})
+            if action == "git":
+                name = str(payload.get("repo") or "claude-brain").strip()
+                ok, detail = core.vault_git_setup(name)
+                return self._json({"ok": ok, "detail": detail},
+                                  200 if ok else 400)
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, 400)
+        except Exception as exc:
+            return self._json({"error": f"Nepovedlo se: {exc}"}, 500)
+        return self._json({"error": "Neznámá akce."}, 400)
 
     # ---- websocket ----
     def _websocket(self, query):

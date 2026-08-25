@@ -1,1 +1,5 @@
-"""Claude Code Hub — cross-platform core (server, pty backend, static UI)."""
+"""Claude Code Hub."""
+
+# Jediné místo, kde se čísluje verze. Aktualizace v aplikaci porovnává tohle
+# s nejnovější značkou na GitHubu, takže se to musí zvyšovat spolu s vydáním.
+__version__ = "1.0.0"

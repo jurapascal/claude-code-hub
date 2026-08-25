@@ -426,6 +426,405 @@ def _prune_images():
         pass
 
 
+# ── Konfigurace za běhu ──────────────────────────────────────────────────────
+def refresh():
+    """Načte hub-config.json znovu a přepočítá, co z něj plyne.
+
+    Onboarding mění cesty za běhu aplikace. Bez tohohle by se změna projevila
+    až po restartu, protože odvozené hodnoty vznikají při importu.
+    """
+    global CONFIG, BRAIN, MEMORY_DIR, VAULT_NAME, ICON_PATH, FTP_DEPLOY
+    global PROJECT_DIRS, HAS_BRAIN
+    CONFIG = load_config()
+    BRAIN = os.path.expanduser(CONFIG["brain_dir"])
+    MEMORY_DIR = os.path.join(BRAIN, "memory")
+    VAULT_NAME = os.path.basename(BRAIN.replace("\\", "/").rstrip("/"))
+    ICON_PATH = os.path.expanduser(CONFIG["icon"])
+    FTP_DEPLOY = os.path.expanduser(CONFIG["ftp_deploy_script"])
+    PROJECT_DIRS = [p for p in (os.path.expanduser(d) for d in CONFIG["project_dirs"])
+                    if os.path.isdir(p)]
+    HAS_BRAIN = os.path.isdir(MEMORY_DIR)
+
+
+def save_config(updates):
+    """Zapíše změny do hub-config.json (jen předané klíče) a zavolá refresh()."""
+    cfg = dict(load_config())
+    cfg.update(updates)
+    # Nechceme do souboru vrátit výchozí hodnoty, které tam uživatel nemá —
+    # zapisuje se to, co v něm bylo, plus změna.
+    os.makedirs(CLAUDE_DIR, exist_ok=True)
+    tmp = CONFIG_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    os.replace(tmp, CONFIG_PATH)
+    refresh()
+    return cfg
+
+
+def suggest_project_dirs():
+    """Složky, kde na tomhle stroji nejspíš bydlí projekty."""
+    if IS_WINDOWS:
+        cands = [os.path.join(HOME, d) for d in
+                 ("Desktop", "Documents", r"source\repos", "projects", "dev", "code")]
+        cands += [r"C:\xampp\htdocs", r"C:\wamp64\www", r"C:\laragon\www"]
+    else:
+        cands = [os.path.join(HOME, d) for d in
+                 ("Desktop", "Plocha", "Projects", "projects", "dev", "code",
+                  "git", "src", "www")]
+        cands += ["/opt/lampp/htdocs", "/var/www/html"]
+    return [p for p in cands if os.path.isdir(p)]
+
+
+# ── Paměť v cloudu ───────────────────────────────────────────────────────────
+# Vault je obyčejná složka s markdownem, takže „napojení na cloud" znamená
+# jediné: ať leží uvnitř složky, kterou už nějaký klient synchronizuje.
+CLOUD_DIRS = [
+    ("OneDrive", ["~/OneDrive", "~/OneDrive - *", "~/Onedrive"]),
+    ("Dropbox", ["~/Dropbox"]),
+    ("Disk Google", ["~/Google Drive", "~/GoogleDrive", "~/Insync/*"]),
+    ("Nextcloud", ["~/Nextcloud", "~/ownCloud"]),
+    ("pCloud", ["~/pCloudDrive"]),
+    ("MEGA", ["~/MEGA"]),
+    ("Syncthing", ["~/Sync"]),
+    ("Proton Drive", ["~/Proton Drive", "~/ProtonDrive"]),
+    ("iCloud", ["~/Library/Mobile Documents/com~apple~CloudDocs"]),
+]
+
+
+def cloud_folders():
+    """Složky synchronizovaných klientů, které na tomhle stroji opravdu jsou."""
+    import glob
+    found = []
+    for name, patterns in CLOUD_DIRS:
+        for pattern in patterns:
+            for path in sorted(glob.glob(os.path.expanduser(pattern))):
+                if os.path.isdir(path):
+                    found.append({"name": name, "path": path})
+    if IS_WINDOWS and os.environ.get("OneDrive"):
+        p = os.environ["OneDrive"]
+        if os.path.isdir(p) and not any(f["path"] == p for f in found):
+            found.insert(0, {"name": "OneDrive", "path": p})
+    return found
+
+
+def _relink(old_root, new_root):
+    """Přesměruje symlinky, které mířily do staré cesty vaultu.
+
+    Paměť Claude Code je symlink do vaultu (`~/.claude/projects/<…>/memory`);
+    kdyby po přesunu zůstal viset na staré cestě, paměť by prostě oslepla.
+    """
+    fixed = []
+    base = os.path.join(CLAUDE_DIR, "projects")
+    for root, dirs, files in os.walk(base):
+        for name in list(dirs) + list(files):
+            link = os.path.join(root, name)
+            if not os.path.islink(link):
+                continue
+            target = os.readlink(link)
+            if not target.startswith(old_root):
+                continue
+            new_target = new_root + target[len(old_root):]
+            os.unlink(link)
+            os.symlink(new_target, link)
+            fixed.append(link)
+    return fixed
+
+
+def move_vault(target_parent):
+    """Přesune vault do zadané složky a všechno na něj přesměruje."""
+    src = os.path.abspath(BRAIN)
+    parent = os.path.abspath(os.path.expanduser(target_parent))
+    if not os.path.isdir(src):
+        raise ValueError("Vault na původním místě není.")
+    dst = os.path.join(parent, os.path.basename(src))
+    if os.path.abspath(dst) == src:
+        raise ValueError("Vault už tam je.")
+    if os.path.exists(dst):
+        raise ValueError(f"{dst} už existuje — přesun by přepsal cizí data.")
+    os.makedirs(parent, exist_ok=True)
+    shutil.move(src, dst)
+    relinked = _relink(src, dst)
+    save_config({"brain_dir": dst})
+    return {"path": dst, "relinked": relinked}
+
+
+# ── Paměť v gitu ─────────────────────────────────────────────────────────────
+EMPTY_MEMORY_INDEX = """# Paměť
+
+Jeden soubor = jedna poznámka. Sem patří jenom **rozcestník**: na každou
+poznámku jeden řádek do 120 znaků, detail žije v odkazovaném souboru.
+Když index přeroste zhruba 25 kB, načte se ho jen kus a na zbytek se zapomene.
+
+## Projekty a reference
+
+## Poznatky (learnings)
+
+## Chyby (errors)
+
+## Úspěchy (wins)
+"""
+
+VAULT_GITIGNORE = """# Obsidian si sem ukládá stav okna — do historie nepatří
+.obsidian/workspace*
+.obsidian/cache
+.trash/
+.DS_Store
+"""
+
+
+def vault_git_state():
+    """(je_repo, remote_url) pro vault."""
+    if not os.path.isdir(BRAIN):
+        return False, ""
+    if not os.path.isdir(os.path.join(BRAIN, ".git")):
+        return False, ""
+    return True, run([GIT, "remote", "get-url", "origin"], cwd=BRAIN) if GIT else ""
+
+
+def vault_git_setup(repo_name):
+    """Založí z vaultu privátní repo na GitHubu a pošle tam první commit.
+
+    Vrací (ok, hlášku). Nikdy nevyhazuje — onboarding musí umět pokračovat
+    i když tohle nevyjde.
+    """
+    if not GIT:
+        return False, "Na stroji není git."
+    if not shutil.which("gh"):
+        return False, "Chybí GitHub CLI (gh)."
+    if not os.path.isdir(BRAIN):
+        return False, "Vault neexistuje."
+    try:
+        if subprocess.run(["gh", "auth", "status"], capture_output=True,
+                          timeout=20).returncode != 0:
+            return False, "gh není přihlášený — spusť: gh auth login"
+    except Exception:
+        return False, "gh se nepodařilo spustit."
+
+    gitignore = os.path.join(BRAIN, ".gitignore")
+    if not os.path.isfile(gitignore):
+        with open(gitignore, "w", encoding="utf-8") as fh:
+            fh.write(VAULT_GITIGNORE)
+
+    try:
+        if not os.path.isdir(os.path.join(BRAIN, ".git")):
+            subprocess.run([GIT, "init", "-q"], cwd=BRAIN, check=True,
+                           capture_output=True, timeout=30)
+        subprocess.run([GIT, "add", "-A"], cwd=BRAIN, check=True,
+                       capture_output=True, timeout=120)
+        # Prázdný commit projde taky — jde o to mít co pushnout.
+        subprocess.run([GIT, "commit", "-q", "--allow-empty",
+                        "-m", "paměť: první záloha"],
+                       cwd=BRAIN, capture_output=True, timeout=120)
+        existing = run([GIT, "remote", "get-url", "origin"], cwd=BRAIN)
+        if not existing:
+            r = subprocess.run(
+                ["gh", "repo", "create", repo_name, "--private",
+                 "--source", ".", "--push"],
+                cwd=BRAIN, capture_output=True, text=True, timeout=300)
+            if r.returncode != 0:
+                return False, (r.stderr or r.stdout or "gh repo create selhalo").strip()[:300]
+        else:
+            r = subprocess.run([GIT, "push", "-u", "origin", "HEAD"], cwd=BRAIN,
+                               capture_output=True, text=True, timeout=300)
+            if r.returncode != 0:
+                return False, (r.stderr or "push selhal").strip()[:300]
+    except subprocess.CalledProcessError as exc:
+        return False, (exc.stderr or b"").decode("utf-8", "replace")[:300] or str(exc)
+    except Exception as exc:
+        return False, str(exc)[:300]
+
+    save_config({"vault_autosync": True})
+    return True, run([GIT, "remote", "get-url", "origin"], cwd=BRAIN)
+
+
+def vault_git_push(message="paměť: automatická záloha"):
+    """Commit + push vaultu. Používá to Stop hook, takže musí být tichý."""
+    if not GIT or not os.path.isdir(os.path.join(BRAIN, ".git")):
+        return False, "vault není git repo"
+    try:
+        if not run([GIT, "status", "--porcelain"], cwd=BRAIN):
+            return True, "beze změn"
+        subprocess.run([GIT, "add", "-A"], cwd=BRAIN, capture_output=True, timeout=120)
+        subprocess.run([GIT, "commit", "-q", "-m", message], cwd=BRAIN,
+                       capture_output=True, timeout=120)
+        r = subprocess.run([GIT, "push", "-q", "origin", "HEAD"], cwd=BRAIN,
+                           capture_output=True, text=True, timeout=300)
+        if r.returncode != 0:
+            return False, (r.stderr or "push selhal").strip()[:200]
+        return True, "posláno"
+    except Exception as exc:
+        return False, str(exc)[:200]
+
+
+# ── Verze a aktualizace ──────────────────────────────────────────────────────
+# „Aktualizovat" a „načíst znovu" jsou dvě různé věci: ⟳ v hlavičce jen přečte
+# projekty a paměť, tohle mění samotnou aplikaci. Proto se to jmenuje jinak
+# a proto se tu drží číslo verze, ať je vidět, co je nainstalované.
+REPO = "jurapascal/claude-code-hub"
+SRC_DIR = os.path.join(CLAUDE_DIR, "hub-src")
+
+
+def version():
+    from . import __version__
+    return __version__
+
+
+def _as_tuple(text):
+    """'v1.2.3' → (1, 2, 3). Co nejde přečíst, je (0,), tedy nejstarší."""
+    parts = []
+    for chunk in str(text or "").lstrip("vV").split("."):
+        digits = "".join(c for c in chunk if c.isdigit())
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts) or (0,)
+
+
+def source_dir():
+    """Složka se zdrojem, ze kterého se hub instaluje."""
+    for cand in (CONFIG.get("src_dir"), SRC_DIR):
+        if not cand:
+            continue
+        path = os.path.expanduser(cand)
+        if os.path.isfile(os.path.join(path, "install.sh")):
+            return path
+    return ""
+
+
+def latest_version():
+    """(nejnovější vydaná verze, důvod prázdna).
+
+    Rozlišuje „není síť" od „repo zatím nic nevydalo" — pro toho, kdo se dívá
+    do nastavení, je to úplně jiná zpráva.
+    """
+    import urllib.error
+    import urllib.request
+    reachable = False
+    for url, key in ((f"https://api.github.com/repos/{REPO}/releases/latest", "tag_name"),
+                     (f"https://api.github.com/repos/{REPO}/tags", None)):
+        try:
+            req = urllib.request.Request(url, headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "claude-code-hub"})
+            with urllib.request.urlopen(req, timeout=6) as r:
+                data = json.load(r)
+            reachable = True
+            tag = data.get(key) if key else (data[0]["name"] if data else "")
+            if tag:
+                return str(tag), ""
+        except urllib.error.HTTPError:
+            reachable = True          # server odpověděl, jen tam nic není
+            continue
+        except Exception:
+            continue
+    return "", ("Repo zatím nemá žádné vydání." if reachable
+                else "Nepodařilo se spojit s GitHubem.")
+
+
+def version_info(check_remote=False):
+    src = source_dir()
+    info = {"version": version(), "src": src, "repo": REPO, "latest": "",
+            "update_available": False}
+    if src and GIT:
+        info["commit"] = run([GIT, "-C", src, "rev-parse", "--short", "HEAD"])
+    if check_remote:
+        latest, why = latest_version()
+        info["latest"] = latest
+        info["why"] = why
+        info["update_available"] = bool(
+            latest and _as_tuple(latest) > _as_tuple(version()))
+    return info
+
+
+def _fetch_source():
+    """Zajistí, že v ~/.claude/hub-src je aktuální zdroj. Vrací (ok, detail).
+
+    Klon se používá, když už tam je; jinak se stáhne tarball, takže aktualizace
+    funguje i tomu, kdo hub dostal jako ZIP a git nemá.
+    """
+    if GIT and os.path.isdir(os.path.join(SRC_DIR, ".git")):
+        r = subprocess.run([GIT, "-C", SRC_DIR, "pull", "--ff-only", "--quiet"],
+                           capture_output=True, text=True, timeout=180)
+        if r.returncode != 0:
+            return False, (r.stderr or "git pull selhal").strip()[:300]
+        return True, "git pull"
+    if GIT:
+        parent = os.path.dirname(SRC_DIR)
+        os.makedirs(parent, exist_ok=True)
+        if os.path.isdir(SRC_DIR):
+            shutil.rmtree(SRC_DIR, ignore_errors=True)
+        r = subprocess.run([GIT, "clone", "--quiet", "--depth", "1",
+                            f"https://github.com/{REPO}.git", SRC_DIR],
+                           capture_output=True, text=True, timeout=300)
+        if r.returncode == 0:
+            return True, "klon"
+        return False, (r.stderr or "klonování selhalo").strip()[:300]
+
+    import tarfile
+    import tempfile
+    import urllib.request
+    url = f"https://codeload.github.com/{REPO}/tar.gz/refs/heads/main"
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = os.path.join(tmp, "hub.tgz")
+            urllib.request.urlretrieve(url, archive)
+            with tarfile.open(archive) as tf:
+                tf.extractall(tmp)
+            inner = [os.path.join(tmp, n) for n in os.listdir(tmp)
+                     if os.path.isdir(os.path.join(tmp, n))]
+            if not inner:
+                return False, "stažený balík byl prázdný"
+            if os.path.isdir(SRC_DIR):
+                shutil.rmtree(SRC_DIR, ignore_errors=True)
+            shutil.move(inner[0], SRC_DIR)
+        return True, "tarball"
+    except Exception as exc:
+        return False, f"stažení nevyšlo: {exc}"[:300]
+
+
+def update_hub():
+    """Stáhne nejnovější verzi a přeinstaluje ji. Nikdy nevyhazuje."""
+    was = version()
+    ok, detail = _fetch_source()
+    if not ok:
+        return {"ok": False, "detail": detail}
+    installer = os.path.join(SRC_DIR, "install.sh")
+    if IS_WINDOWS:
+        installer = os.path.join(SRC_DIR, "install.ps1")
+        argv = ["powershell", "-ExecutionPolicy", "Bypass", "-File", installer, "-Yes"]
+    else:
+        if not BASH:
+            return {"ok": False, "detail": "Na stroji není bash."}
+        argv = [BASH, installer, "--yes"]
+    if not os.path.isfile(installer):
+        return {"ok": False, "detail": "Ve staženém zdroji chybí instalačka."}
+    try:
+        r = subprocess.run(argv, cwd=SRC_DIR, capture_output=True, text=True,
+                           timeout=1800)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "detail": "Aktualizace trvala moc dlouho."}
+    except Exception as exc:
+        return {"ok": False, "detail": str(exc)[:300]}
+    if r.returncode != 0:
+        return {"ok": False,
+                "detail": ("Instalace selhala:\n" + (r.stderr or r.stdout))[:500]}
+    # Nová verze leží v ~/.claude/hub, ale běžící proces má v paměti tu starou.
+    now = ""
+    try:
+        with open(os.path.join(SRC_DIR, "hub", "__init__.py"), encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("__version__"):
+                    now = line.split("=", 1)[1].strip().strip('"\'')
+    except Exception:
+        pass
+    changed = bool(now and now != was)
+    return {"ok": True, "changed": changed, "was": was, "now": now or was,
+            "restart": changed,
+            "detail": (f"Nainstalována verze {now}." if changed
+                       else f"Verze {was} je nejnovější.")}
+
+
 # ── Systémová schránka ───────────────────────────────────────────────────────
 # WebKitGTK (okno hubu na Linuxu) odmítá navigator.clipboard bez uživatelského
 # gesta a document.execCommand('copy') tam vrací false, takže se v tabu nedalo

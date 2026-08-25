@@ -1,0 +1,326 @@
+/* První spuštění: co se dřív odpovídalo v instalačce, se teď nastavuje tady.
+ *
+ * Instalačka běží jednou, v terminálu, a kdo ji překlikal, neměl potom kde to
+ * změnit. Průvodce v aplikaci to bere jinak: ptá se až na hotové appce, ukazuje
+ * výsledek rovnou (motiv se přepne pod rukama) a dá se kdykoli spustit znovu.
+ *
+ * Zapisuje se přes /api/config a /api/vault, takže server si cesty přepočítá
+ * hned — restart aplikace kvůli tomu potřeba není.
+ */
+'use strict';
+
+(function (global) {
+
+  let io = null;        // {api, setTheme, isDark, toast, pickFolder, reload}
+  let state = null;     // payload z /api/state
+  let step = 0;
+  let chosen = {dirs: [], vault: '', backup: 'later', cloudPath: '', repo: 'claude-brain'};
+  let root = null;
+
+  const STEPS = ['vitej', 'vzhled', 'projekty', 'pamet', 'zaloha', 'hotovo'];
+
+  /* ── kostra ─────────────────────────────────────────────────────────────── */
+  function el(tag, cls, text) {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  function mark(size) {
+    // Značka aplikace — stejné tvary jako ikona, jen v currentColor.
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('width', size);
+    svg.setAttribute('height', size);
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', '#i-hub');
+    svg.appendChild(use);
+    return svg;
+  }
+
+  function open(opts) {
+    io = opts;
+    state = opts.state;
+    step = 0;
+    chosen.dirs = (state.config.project_dirs || []).slice();
+    if (!chosen.dirs.length) chosen.dirs = (state.suggest_dirs || []).slice();
+    chosen.vault = state.config.brain_dir || '';
+    chosen.backup = state.vault_git.is_repo ? 'git' : 'later';
+    build();
+    render();
+  }
+
+  function build() {
+    root = el('div', 'onb');
+    root.innerHTML = `
+      <div class="onb-box">
+        <div class="onb-head">
+          <span class="onb-mark"></span>
+          <div>
+            <div class="onb-title"></div>
+            <div class="onb-sub"></div>
+          </div>
+          <div class="onb-dots"></div>
+        </div>
+        <div class="onb-body"></div>
+        <div class="onb-foot">
+          <button class="btn ghost onb-skip">Přeskočit</button>
+          <span class="spacer"></span>
+          <button class="btn ghost onb-back">Zpět</button>
+          <button class="btn primary onb-next">Dál</button>
+        </div>
+      </div>`;
+    root.querySelector('.onb-mark').appendChild(mark(34));
+    root.querySelector('.onb-skip').onclick = () => finish(true);
+    root.querySelector('.onb-back').onclick = () => { if (step > 0) { step--; render(); } };
+    root.querySelector('.onb-next').onclick = next;
+    document.body.appendChild(root);
+  }
+
+  function render() {
+    const box = root.querySelector('.onb-body');
+    box.textContent = '';
+    const dots = root.querySelector('.onb-dots');
+    dots.textContent = '';
+    STEPS.forEach((_, i) => {
+      const d = el('i', 'onb-dot' + (i === step ? ' on' : (i < step ? ' done' : '')));
+      dots.appendChild(d);
+    });
+    root.querySelector('.onb-back').style.visibility = step === 0 ? 'hidden' : '';
+    root.querySelector('.onb-skip').style.visibility =
+      step === STEPS.length - 1 ? 'hidden' : '';
+    root.querySelector('.onb-next').textContent =
+      step === STEPS.length - 1 ? 'Začít' : 'Dál';
+    ({vitej, vzhled, projekty, pamet, zaloha, hotovo})[STEPS[step]](box);
+  }
+
+  function head(title, sub) {
+    root.querySelector('.onb-title').textContent = title;
+    root.querySelector('.onb-sub').textContent = sub || '';
+  }
+
+  /* ── kroky ──────────────────────────────────────────────────────────────── */
+  function vitej(box) {
+    head('Claude Code Hub', 'Chvilka nastavení a pak už jen práce.');
+    box.appendChild(el('p', 'onb-lead',
+      'Každý projekt se otevře jako vlastní tab se skutečným terminálem. ' +
+      'Teď si nastavíme vzhled, kde máš projekty a kde bydlí paměť.'));
+    const list = el('ul', 'onb-check');
+    for (const [ok, text] of [
+      [!!state.doctor.bash, 'bash — bez něj se tab neotevře'],
+      [!!state.doctor.claude, 'Claude Code CLI'],
+      [!!state.doctor.clipboard, 'schránka (kopírování v tabu)'],
+      [!!state.obsidian, 'Obsidian (pro paměť, volitelné)'],
+    ]) {
+      const li = el('li', ok ? 'ok' : 'miss', text);
+      list.appendChild(li);
+    }
+    box.appendChild(list);
+  }
+
+  function vzhled(box) {
+    head('Vzhled', 'Přepne se hned, ať je vidět, do čeho jdeš.');
+    const wrap = el('div', 'onb-tiles');
+    const opts = [
+      ['dark', 'Tmavý', true],
+      ['light', 'Světlý', false],
+      ['system', 'Podle systému', null],
+    ];
+    const current = localStorage.getItem('hub-theme') || 'system';
+    for (const [key, label, dark] of opts) {
+      const t = el('button', 'onb-tile' + (current === key ? ' on' : ''));
+      t.appendChild(el('span', 'onb-swatch ' + key));
+      t.appendChild(el('span', null, label));
+      t.onclick = () => {
+        if (key === 'system') {
+          localStorage.removeItem('hub-theme');
+          io.setTheme(!matchMedia('(prefers-color-scheme: light)').matches, false);
+        } else {
+          io.setTheme(dark, true);
+        }
+        render();
+      };
+      wrap.appendChild(t);
+    }
+    box.appendChild(wrap);
+  }
+
+  function projekty(box) {
+    head('Projekty', 'Složky, ve kterých se hledají projekty do panelu.');
+    const list = el('div', 'onb-list');
+    const all = [...new Set([...chosen.dirs, ...(state.suggest_dirs || [])])];
+    if (!all.length) {
+      list.appendChild(el('div', 'empty', '(zatím žádná — přidej složku níž)'));
+    }
+    for (const dir of all) {
+      const row = el('label', 'onb-row');
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.checked = chosen.dirs.includes(dir);
+      cb.onchange = () => {
+        chosen.dirs = cb.checked ? [...new Set([...chosen.dirs, dir])]
+                                 : chosen.dirs.filter(d => d !== dir);
+      };
+      row.appendChild(cb);
+      row.appendChild(el('span', null, dir));
+      list.appendChild(row);
+    }
+    box.appendChild(list);
+    const add = el('button', 'actionbtn', '＋ Přidat složku…');
+    add.onclick = async () => {
+      const picked = await io.pickFolder();
+      if (picked) { chosen.dirs = [...new Set([...chosen.dirs, picked])]; render(); }
+    };
+    box.appendChild(add);
+  }
+
+  function pamet(box) {
+    head('Paměť', 'Poznámky, které si Claude nese mezi sezeními.');
+    box.appendChild(el('p', 'onb-lead',
+      'Paměť je obyčejná složka s markdownem — dá se otevřít v Obsidianu. ' +
+      'Teprve s ní fungují příkazy /save, /learn a /project.'));
+    const path = el('div', 'onb-path');
+    path.textContent = chosen.vault || '(nenastaveno)';
+    box.appendChild(path);
+    const row = el('div', 'onb-btns');
+    const pick = el('button', 'actionbtn', 'Vybrat složku…');
+    pick.onclick = async () => {
+      const picked = await io.pickFolder();
+      if (picked) { chosen.vault = picked; render(); }
+    };
+    const make = el('button', 'actionbtn', 'Založit novou');
+    make.onclick = () => {
+      chosen.vault = (state.home || '~') + '/Obsidian/Claude-Brain';
+      render();
+    };
+    row.appendChild(pick);
+    row.appendChild(make);
+    box.appendChild(row);
+  }
+
+  function zaloha(box) {
+    head('Záloha paměti', 'Aby poznámky nežily jen na jednom disku.');
+    const cloud = state.cloud || [];
+    const opts = [];
+    opts.push({
+      key: 'git', label: 'Do privátního repa na GitHubu',
+      note: state.doctor.git && state.vault_git.is_repo
+        ? 'Vault už v gitu je — jen se zapne automatické posílání.'
+        : 'Založí privátní repo a po každém sezení tam pošle změny.',
+      disabled: !state.doctor.git,
+    });
+    for (const c of cloud) {
+      opts.push({key: 'cloud:' + c.path, label: 'Přesunout do ' + c.name,
+                 note: c.path});
+    }
+    opts.push({
+      key: 'folder', label: 'Přesunout do vlastní složky…',
+      note: cloud.length ? 'Když máš cloud jinde.'
+                         : 'Žádného klienta (OneDrive, Dropbox…) jsem tu nenašel — ' +
+                           'když si ho doinstaluješ, ukaž sem na jeho složku.',
+    });
+    opts.push({key: 'later', label: 'Zatím ne', note: 'Dá se zapnout kdykoli později.'});
+
+    const list = el('div', 'onb-list');
+    for (const o of opts) {
+      const row = el('label', 'onb-row' + (o.disabled ? ' off' : ''));
+      const rb = el('input');
+      rb.type = 'radio';
+      rb.name = 'zaloha';
+      rb.disabled = !!o.disabled;
+      rb.checked = chosen.backup === o.key ||
+                   (o.key.startsWith('cloud:') && chosen.backup === 'cloud' &&
+                    chosen.cloudPath === o.key.slice(6));
+      rb.onchange = () => {
+        if (o.key.startsWith('cloud:')) {
+          chosen.backup = 'cloud';
+          chosen.cloudPath = o.key.slice(6);
+        } else {
+          chosen.backup = o.key;
+        }
+      };
+      row.appendChild(rb);
+      const col = el('span', 'onb-col');
+      col.appendChild(el('span', null, o.label));
+      col.appendChild(el('small', null, o.note));
+      row.appendChild(col);
+      list.appendChild(row);
+    }
+    box.appendChild(list);
+  }
+
+  function hotovo(box) {
+    head('Hotovo', 'Můžeme začít.');
+    const list = el('ul', 'onb-check');
+    list.appendChild(el('li', 'ok', 'projekty: ' +
+      (chosen.dirs.length ? chosen.dirs.join(', ') : '(žádné)')));
+    list.appendChild(el('li', chosen.vault ? 'ok' : 'miss',
+      'paměť: ' + (chosen.vault || 'vypnutá')));
+    const zal = {git: 'privátní repo na GitHubu', cloud: chosen.cloudPath,
+                 folder: 'vlastní složka', later: 'zatím ne'}[chosen.backup];
+    list.appendChild(el('li', chosen.backup === 'later' ? 'miss' : 'ok',
+      'záloha paměti: ' + zal));
+    box.appendChild(list);
+    box.appendChild(el('p', 'onb-lead',
+      'Kdykoli později: tlačítko ⚙ v hlavičce.'));
+  }
+
+  /* ── posun ──────────────────────────────────────────────────────────────── */
+  async function next() {
+    const btn = root.querySelector('.onb-next');
+    btn.disabled = true;
+    try {
+      if (STEPS[step] === 'projekty') {
+        await io.api('config', {project_dirs: chosen.dirs});
+      } else if (STEPS[step] === 'pamet' && chosen.vault) {
+        await io.api('vault', {action: 'create', path: chosen.vault});
+      } else if (STEPS[step] === 'zaloha') {
+        await applyBackup();
+      } else if (STEPS[step] === 'hotovo') {
+        await finish(false);
+        return;
+      }
+      step++;
+      render();
+    } catch (err) {
+      io.toast(err.message || String(err));
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function applyBackup() {
+    if (chosen.backup === 'git') {
+      const r = await io.api('vault', {action: 'git', repo: chosen.repo});
+      io.toast(r.ok ? 'Paměť je v privátním repu.' : ('Nepovedlo se: ' + r.detail));
+    } else if (chosen.backup === 'cloud' && chosen.cloudPath) {
+      const r = await io.api('vault', {action: 'move', path: chosen.cloudPath});
+      chosen.vault = r.path;
+      io.toast('Paměť přesunuta do ' + r.path);
+    } else if (chosen.backup === 'folder') {
+      const picked = await io.pickFolder();
+      if (!picked) return;
+      const r = await io.api('vault', {action: 'move', path: picked});
+      chosen.vault = r.path;
+      io.toast('Paměť přesunuta do ' + r.path);
+    }
+  }
+
+  async function finish(skipped) {
+    try {
+      await io.api('config', {onboarded: true});
+    } catch (_) { /* nastavení se nepovedlo uložit — průvodce přesto zavíráme */ }
+    close();
+    if (!skipped) io.toast('Nastaveno. Ať to jde od ruky.');
+    io.reload();
+  }
+
+  function close() {
+    if (root) root.remove();
+    root = null;
+  }
+
+  global.HubOnboarding = {open, close};
+
+})(window);
