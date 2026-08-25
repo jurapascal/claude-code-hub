@@ -39,7 +39,7 @@
 <header class="topbar">
   <div class="topbar-title">
     <svg class="ico brand-ico"><use href="#i-hub"/></svg>
-    <strong>Claude Code</strong><span class="topbar-sub">Hub</span>
+    <strong>Claude Code</strong><span class="topbar-badge">HUB</span>
   </div>
   <div class="topbar-actions">
     <button id="btn-refresh" class="iconbtn" title="Načíst projekty a paměť znovu (neaktualizuje aplikaci)">
@@ -54,21 +54,14 @@
 <div class="layout">
 
   <aside class="sidebar">
-    <div class="brand">
-      <div class="brand-name">CLAUDE CODE</div>
-      <div class="brand-sub">vyber projekt → otevře se jako tab</div>
+    <div class="section section-head">
+      <span>PROJEKTY</span><span class="section-count" id="projects-count"></span>
     </div>
-
-    <div class="section">PROJEKTY</div>
     <div class="searchwrap">
       <svg class="ico search-ico"><use href="#i-search"/></svg>
       <input id="search" type="search" placeholder="Hledat projekt…" autocomplete="off">
     </div>
     <div id="projects" class="cards"></div>
-
-    <button id="btn-browse" class="actionbtn">
-      <svg class="ico"><use href="#i-folder"/></svg> Otevřít jinou složku…
-    </button>
 
     <div id="memory-section" hidden>
       <div class="section">OBSIDIAN PAMĚŤ</div>
@@ -92,10 +85,11 @@
     </div>
     <div class="panes" id="panes">
       <div class="welcome" id="welcome">
-        <svg class="ico welcome-ico"><use href="#i-hub"/></svg>
+        <div class="welcome-scene" id="welcome-scene"></div>
         <div class="welcome-big">Claude Code <b>Hub</b></div>
         <div class="welcome-greet" id="welcome-greet"></div>
         <div class="welcome-actions" id="welcome-actions"></div>
+        <div class="welcome-cols" id="welcome-cols"></div>
         <div class="welcome-facts" id="welcome-facts"></div>
         <div class="welcome-warn" id="welcome-warn" hidden></div>
       </div>

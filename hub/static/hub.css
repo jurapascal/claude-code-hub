@@ -55,8 +55,12 @@ body { display: flex; flex-direction: column; }
   border-bottom: 1px solid var(--border);
 }
 .topbar-title { display: flex; align-items: center; gap: 8px; color: var(--fg-bright); }
-.brand-ico { color: var(--amber); font-size: 15px; }
-.topbar-sub { color: var(--dim); font-size: 11px; }
+.brand-ico { color: var(--amber); font-size: 19px; }
+.topbar-badge {
+  color: var(--amber); font-size: 9.5px; font-weight: 800; letter-spacing: 1.2px;
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
+  border-radius: 5px; padding: 1px 5px 2px; line-height: 1;
+}
 .topbar-actions { display: flex; gap: 2px; }
 
 .iconbtn {
@@ -82,14 +86,16 @@ body { display: flex; flex-direction: column; }
   overflow-y: auto;
   overflow-x: hidden;
 }
-.brand { padding: 16px 12px 4px; }
-.brand-name { color: var(--amber); font-weight: 700; font-size: 15px; letter-spacing: .04em; }
-.brand-sub { color: var(--dim); font-size: 11px; margin-top: 2px; }
-
 .section {
   color: var(--section);
   font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
   margin: 14px 12px 4px;
+}
+/* První sekce v panelu nemá nad sebou co odsazovat — hlavička appky stačí. */
+.sidebar > .section:first-child { margin-top: 12px; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; }
+.section-count {
+  color: var(--dim); font-size: 10px; font-weight: 600; letter-spacing: 0;
 }
 
 .searchwrap { position: relative; margin: 0 8px 4px; }
@@ -518,3 +524,83 @@ body { display: flex; flex-direction: column; }
 }
 .welcome-actions .btn { display: inline-flex; align-items: center; gap: 7px; }
 .welcome-facts { margin-top: 18px; font-size: 12px; color: var(--dim); }
+
+/* Verze v patičce vede rovnou do nastavení — jinak by to bylo jen číslo. */
+.footer-ver {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--dim); font: inherit;
+  border-bottom: 1px dotted color-mix(in srgb, var(--dim) 55%, transparent);
+}
+.footer-ver:hover { color: var(--amber); border-bottom-color: var(--amber); }
+
+/* ── správa projektů ─────────────────────────────────────────────────────── */
+
+.card.archived { opacity: .5; }
+.card-flag {
+  position: absolute; top: 8px; right: 8px;
+  width: 15px; height: 15px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 800; font-style: italic;
+  background: color-mix(in srgb, var(--amber) 22%, transparent);
+  color: var(--amber);
+}
+.projects-foot {
+  display: flex; gap: 12px; flex-wrap: wrap;
+  padding: 8px 12px 2px;
+}
+.linkbtn {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--dim); font-size: 11.5px;
+}
+.linkbtn:hover { color: var(--amber); }
+
+.ed-label, .ed-brief {
+  width: 100%; box-sizing: border-box;
+  background: var(--bg-card); color: var(--fg-bright);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 9px 11px; font-size: 13px; font-family: inherit;
+}
+.ed-brief { resize: vertical; line-height: 1.55; }
+.ed-label:focus, .ed-brief:focus { outline: none; border-color: var(--amber); }
+.set-note code {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 4px; padding: 0 4px; font-size: 11.5px;
+}
+
+/* ── karta projektu ──────────────────────────────────────────────────────── */
+.card { position: relative; cursor: pointer; }
+.card:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
+.card-path {
+  display: block; color: var(--section); font-size: 10.5px; margin-top: 2px;
+  font-family: ui-monospace, monospace; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.card-more {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 24px; height: 24px; border: none; border-radius: 6px;
+  background: none; color: var(--dim); cursor: pointer;
+  font-size: 15px; line-height: 1; opacity: 0; transition: opacity .12s;
+}
+.card:hover .card-more, .card:focus-within .card-more { opacity: 1; }
+.card-more:hover { background: var(--card-hover); color: var(--fg-bright); }
+.card-flag { right: 30px; }
+
+/* ── uvítání: scéna a přehled ────────────────────────────────────────────── */
+.welcome-scene { line-height: 0; margin-bottom: 2px; }
+.welcome-cols {
+  display: flex; gap: 34px; flex-wrap: wrap; justify-content: center;
+  margin-top: 26px; text-align: left;
+}
+.wcol { min-width: 190px; }
+.wcol-title {
+  color: var(--section); font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+  margin-bottom: 6px;
+}
+.wcol-item {
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  background: none; border: none; cursor: pointer; text-align: left;
+  padding: 5px 8px; border-radius: 7px; color: var(--fg); font-size: 12.5px;
+}
+.wcol-item:hover { background: var(--bg-card); color: var(--fg-bright); }
+.wcol-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wcol-note { color: var(--dim); font-size: 11px; flex: none; }

@@ -82,24 +82,159 @@ function renderProjects(filter) {
   const box = $('projects');
   const needle = (filter || '').trim().toLowerCase();
   box.textContent = '';
-  const shown = STATE.projects.filter(p => !needle || p.name.toLowerCase().includes(needle));
+  const showArchived = !!STATE.config.show_archived;
+  const all = STATE.projects.filter(p => showArchived || !p.archived);
+  const shown = all.filter(p => !needle ||
+    ((p.label || p.name).toLowerCase().includes(needle) ||
+     p.name.toLowerCase().includes(needle)));
+  const dirty = shown.filter(p => p.dirty).length;
+  const archived = STATE.projects.filter(p => p.archived).length;
+  $('projects-count').textContent =
+    shown.length + (dirty ? `  ·  ${dirty} rozdělaných` : '');
+
   if (!shown.length) {
     box.innerHTML = '<div class="empty">(nic nenalezeno)</div>';
-    return;
   }
   for (const p of shown) {
-    const meta = [p.type, p.branch, p.dirty ? `${p.dirty} změn` : ''].filter(Boolean).join('  ·  ');
-    const el = document.createElement('button');
-    el.className = 'card' + (p.dirty ? ' dirty' : '');
+    const meta = [p.type, p.branch, p.dirty ? `${p.dirty} změn` : '']
+      .filter(Boolean).join('  ·  ');
+    // Karta je div, ne button: uvnitř má vlastní tlačítko „⋯" a tlačítko
+    // v tlačítku je neplatné HTML, které prohlížeče rozhodí po svém.
+    const el = document.createElement('div');
+    el.className = 'card' + (p.dirty ? ' dirty' : '') + (p.archived ? ' archived' : '');
+    el.tabIndex = 0;
     el.innerHTML = `<span class="dot"></span><span class="card-col">
-        <span class="card-name"></span><span class="card-meta"></span></span>`;
-    el.querySelector('.card-name').textContent = p.name;
+        <span class="card-name"></span>
+        <span class="card-meta"></span>
+        <span class="card-path"></span></span>
+      <button class="card-more" title="Možnosti">⋯</button>`;
+    el.querySelector('.card-name').textContent = p.label || p.name;
     el.querySelector('.card-meta').textContent = meta;
-    el.title = p.path;
-    el.onclick = () => openTab({kind: 'project', path: p.path, title: p.name});
+    el.querySelector('.card-path').textContent = shortPath(p.path);
+    if (p.brief) {
+      const flag = document.createElement('span');
+      flag.className = 'card-flag';
+      flag.title = 'Má briefing v CLAUDE.md';
+      flag.textContent = 'i';
+      el.appendChild(flag);
+    }
+    el.title = p.path + (p.brief ? '\n\n' + p.brief.slice(0, 300) : '');
+    const open = () => openTab({kind: 'project', path: p.path,
+                                title: p.label || p.name});
+    el.onclick = (ev) => { if (!ev.target.closest('.card-more')) open(); };
+    el.onkeydown = (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); }
+    };
     el.oncontextmenu = (ev) => { ev.preventDefault(); projectMenu(ev, p); };
+    el.querySelector('.card-more').onclick = (ev) => {
+      ev.stopPropagation();
+      const box = ev.currentTarget.getBoundingClientRect();
+      projectMenu({clientX: box.left, clientY: box.bottom, preventDefault(){}}, p);
+    };
     box.appendChild(el);
   }
+
+  const foot = document.createElement('div');
+  foot.className = 'projects-foot';
+  const add = document.createElement('button');
+  add.className = 'linkbtn';
+  add.textContent = '＋ Přidat projekt';
+  add.onclick = addProject;
+  foot.appendChild(add);
+  if (archived) {
+    const t = document.createElement('button');
+    t.className = 'linkbtn';
+    t.textContent = showArchived ? 'skrýt archiv' : `archiv (${archived})`;
+    t.onclick = async () => {
+      await api('config', {show_archived: !showArchived});
+      await reload();
+    };
+    foot.appendChild(t);
+  }
+  box.appendChild(foot);
+}
+
+/* Domovská složka je u každé cesty stejná a jen zabírá místo. */
+function shortPath(path) {
+  const home = STATE.home || '';
+  const short = home && path.startsWith(home) ? '~' + path.slice(home.length) : path;
+  return short.length > 42 ? '…' + short.slice(-41) : short;
+}
+
+async function addProject() {
+  const picked = await pickFolder();
+  if (!picked) return;
+  try {
+    await api('project', {action: 'add', path: picked});
+    await reload();
+    toast('Přidáno: ' + picked);
+  } catch (err) { toast(err.message); }
+}
+
+/* Úprava projektu. Briefing je tu to hlavní: uloží se do CLAUDE.md projektu,
+   takže si ho Claude Code přečte sám, jakmile ten projekt otevřeš. */
+function editProject(p) {
+  const box = document.createElement('div');
+  box.className = 'onb';
+  box.innerHTML = `
+    <div class="onb-box">
+      <div class="onb-head"><div>
+        <div class="onb-title">Upravit projekt</div>
+        <div class="onb-sub"></div>
+      </div></div>
+      <div class="onb-body">
+        <div class="set-title">Název v panelu</div>
+        <input class="ed-label" type="text" placeholder="">
+        <div class="set-title" style="margin-top:16px">Briefing</div>
+        <div class="set-note">Napiš vlastními slovy, o co v projektu jde — stack,
+          hosting, klient, na co si dát pozor. Uloží se do
+          <code>CLAUDE.md</code> projektu, takže to Claude Code přečte sám,
+          jakmile projekt otevřeš.</div>
+        <textarea class="ed-brief" rows="9" placeholder="Např.: E-shop na vlastním PHP, Wedos hosting, deploy přes FTP…"></textarea>
+      </div>
+      <div class="onb-foot">
+        <button class="btn ghost ed-archive"></button>
+        <span class="spacer"></span>
+        <button class="btn ghost ed-cancel">Zrušit</button>
+        <button class="btn primary ed-save">Uložit</button>
+      </div>
+    </div>`;
+  box.querySelector('.onb-sub').textContent = p.path;
+  const label = box.querySelector('.ed-label');
+  const brief = box.querySelector('.ed-brief');
+  label.placeholder = p.name;
+  label.value = p.label || '';
+  brief.value = p.brief || '';
+  const arch = box.querySelector('.ed-archive');
+  arch.textContent = p.archived ? 'Vrátit z archivu' : 'Archivovat';
+  const close = () => box.remove();
+  box.querySelector('.ed-cancel').onclick = close;
+  box.addEventListener('click', (ev) => { if (ev.target === box) close(); });
+  arch.onclick = async () => {
+    try {
+      await api('project', {action: 'save', path: p.path, archived: !p.archived});
+      close();
+      await reload();
+      toast(p.archived ? 'Vráceno z archivu.' : 'Archivováno.');
+    } catch (err) { toast(err.message); }
+  };
+  box.querySelector('.ed-save').onclick = async () => {
+    const btn = box.querySelector('.ed-save');
+    btn.disabled = true;
+    try {
+      const r = await api('project', {action: 'save', path: p.path,
+                                      label: label.value, brief: brief.value});
+      close();
+      await reload();
+      toast(r.briefing && r.briefing.written
+        ? 'Uloženo — briefing je v CLAUDE.md projektu.' : 'Uloženo.');
+    } catch (err) {
+      toast(err.message);
+      btn.disabled = false;
+    }
+  };
+  document.body.appendChild(box);
+  (p.brief ? brief : label).focus();
 }
 
 function renderMemory() {
@@ -155,18 +290,109 @@ function renderActions() {
 function renderFooter() {
   const now = new Date();
   const date = `${now.getDate()}.${now.getMonth() + 1}.${now.getFullYear()}`;
-  $('footer').textContent = [STATE.user, date].filter(Boolean).join('  ·  ');
+  const foot = $('footer');
+  foot.textContent = '';
+  foot.appendChild(document.createTextNode(
+    [STATE.user, date].filter(Boolean).join('  ·  ') + '  ·  '));
+  // Verze je zároveň cesta do nastavení — tam se s ní stejně něco dělá.
+  const ver = document.createElement('button');
+  ver.className = 'footer-ver';
+  ver.textContent = 'v' + STATE.version.version;
+  ver.title = 'Nastavení a aktualizace';
+  ver.onclick = () => HubSettings.open({...hubIO(), state: STATE});
+  foot.appendChild(ver);
 }
 
 /* Uvítání. Není to jen ozdoba — je to jediná obrazovka, kterou člověk vidí,
-   než něco otevře, takže nese i to, co je dobré vědět hned: co se našlo,
-   kde je paměť a jestli něco chybí. */
+   než něco otevře, takže nese i to, co je dobré vědět hned: kde se naposledy
+   dělalo, co zůstalo rozdělané a jestli něco chybí. */
+const NS = 'http://www.w3.org/2000/svg';
+
+function dayPart(hour) {
+  if (hour < 5) return 'noc';
+  if (hour < 10) return 'rano';
+  if (hour < 18) return 'den';
+  if (hour < 22) return 'vecer';
+  return 'noc';
+}
+
+/* Scéna podle denní doby: slunce nad obzorem tím výš, čím je blíž poledni.
+   Kreslí se z proměnných motivu, aby seděla ve světlém i tmavém režimu. */
+function dayScene(part) {
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 280 96');
+  svg.setAttribute('width', '280');
+  svg.setAttribute('height', '96');
+  const add = (tag, attrs) => {
+    const n = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    svg.appendChild(n);
+    return n;
+  };
+
+  const noc = part === 'noc';
+  const y = {rano: 60, den: 34, vecer: 62, noc: 40}[part];
+  const disc = noc ? 'var(--dim)' : 'var(--amber)';
+
+  // záře kolem tělesa
+  const glow = add('radialGradient', {id: 'dayglow'});
+  for (const [offset, op] of [[0, '.30'], [1, '0']]) {
+    const stop = document.createElementNS(NS, 'stop');
+    stop.setAttribute('offset', offset);
+    stop.setAttribute('stop-color', disc);
+    stop.setAttribute('stop-opacity', op);
+    glow.appendChild(stop);
+  }
+  add('circle', {cx: 140, cy: y, r: 44, fill: 'url(#dayglow)'});
+
+  if (noc) {
+    // měsíc = kruh s odkrojeným kruhem, ne "banán" z cesty
+    const mask = document.createElementNS(NS, 'mask');
+    mask.setAttribute('id', 'moon');
+    for (const [cx, fill] of [[140, '#fff'], [150, '#000']]) {
+      const c = document.createElementNS(NS, 'circle');
+      c.setAttribute('cx', cx); c.setAttribute('cy', y);
+      c.setAttribute('r', 15); c.setAttribute('fill', fill);
+      mask.appendChild(c);
+    }
+    svg.appendChild(mask);
+    add('circle', {cx: 140, cy: y, r: 15, fill: disc, mask: 'url(#moon)'});
+    for (const [cx, cy, r] of [[92, 26, 1.6], [196, 32, 2], [72, 52, 1.3],
+                               [214, 58, 1.5], [116, 18, 1.2]]) {
+      add('circle', {cx, cy, r, fill: disc, opacity: '.5'});
+    }
+  } else {
+    add('circle', {cx: 140, cy: y, r: 15, fill: disc});
+    // paprsky ubývají, jak slunce klesá k obzoru
+    const rays = part === 'den' ? 8 : 5;
+    for (let i = 0; i < rays; i++) {
+      const a = (Math.PI * (i + 0.5)) / rays;
+      const x1 = 140 - Math.cos(a) * 23, y1 = y - Math.sin(a) * 23;
+      const x2 = 140 - Math.cos(a) * 31, y2 = y - Math.sin(a) * 31;
+      add('line', {x1, y1, x2, y2, stroke: disc, 'stroke-width': 2.5,
+                   'stroke-linecap': 'round', opacity: '.65'});
+    }
+  }
+
+  // obzor
+  add('line', {x1: 40, y1: 78, x2: 240, y2: 78, stroke: 'var(--border)',
+               'stroke-width': 2, 'stroke-linecap': 'round'});
+  add('line', {x1: 96, y1: 78, x2: 184, y2: 78, stroke: disc,
+               'stroke-width': 2, 'stroke-linecap': 'round', opacity: '.55'});
+  return svg;
+}
+
 function renderWelcome() {
   const hour = new Date().getHours();
-  const part = hour < 5 ? 'Dobrou noc' : hour < 10 ? 'Dobré ráno'
-             : hour < 18 ? 'Dobrý den' : 'Dobrý večer';
+  const part = dayPart(hour);
+  const pozdrav = {rano: 'Dobré ráno', den: 'Dobrý den',
+                   vecer: 'Dobrý večer', noc: 'Dobrou noc'}[part];
   const who = (STATE.user || '').split(/[\s.]/)[0];
-  $('welcome-greet').textContent = part + (who ? ', ' + who : '') + '.';
+  $('welcome-greet').textContent = pozdrav + (who ? ', ' + who : '') + '.';
+
+  const scene = $('welcome-scene');
+  scene.textContent = '';
+  scene.appendChild(dayScene(part));
 
   const box = $('welcome-actions');
   box.textContent = '';
@@ -191,9 +417,9 @@ function renderWelcome() {
     box.appendChild(b);
   }
 
+  renderWelcomeCols();
+
   const facts = [];
-  const count = (STATE.projects || []).length;
-  if (count) facts.push(count + ' projektů v panelu vlevo');
   const mem = STATE.memory || {};
   if (mem.enabled) {
     const total = (mem.counts.learnings || 0) + (mem.counts.errors || 0) +
@@ -202,6 +428,52 @@ function renderWelcome() {
   }
   facts.push('verze ' + STATE.version.version);
   $('welcome-facts').textContent = facts.join('  ·  ');
+}
+
+function kdy(ts) {
+  if (!ts) return '';
+  const dny = Math.floor((Date.now() / 1000 - ts) / 86400);
+  if (dny <= 0) return 'dnes';
+  if (dny === 1) return 'včera';
+  if (dny < 7) return `před ${dny} dny`;
+  if (dny < 60) return `před ${Math.floor(dny / 7)} týdny`;
+  return `před ${Math.floor(dny / 30)} měsíci`;
+}
+
+/* Dva sloupce: kde se naposledy dělalo a co zůstalo rozdělané. Obojí je
+   zkratka k tomu, co člověk stejně otevře jako první. */
+function renderWelcomeCols() {
+  const wrap = $('welcome-cols');
+  wrap.textContent = '';
+  const live = (STATE.projects || []).filter(p => !p.archived);
+  const recent = [...live].sort((a, b) => b.mtime - a.mtime).slice(0, 4);
+  const dirty = live.filter(p => p.dirty)
+    .sort((a, b) => b.dirty - a.dirty).slice(0, 4);
+
+  const column = (title, items, note) => {
+    if (!items.length) return null;
+    const col = document.createElement('div');
+    col.className = 'wcol';
+    col.appendChild(Object.assign(document.createElement('div'),
+      {className: 'wcol-title', textContent: title}));
+    for (const p of items) {
+      const b = document.createElement('button');
+      b.className = 'wcol-item';
+      b.innerHTML = '<span class="wcol-name"></span><span class="wcol-note"></span>';
+      b.querySelector('.wcol-name').textContent = p.label || p.name;
+      b.querySelector('.wcol-note').textContent = note(p);
+      b.title = p.path;
+      b.onclick = () => openTab({kind: 'project', path: p.path,
+                                 title: p.label || p.name});
+      col.appendChild(b);
+    }
+    return col;
+  };
+
+  const a = column('NAPOSLEDY', recent, p => kdy(p.mtime));
+  const b = column('ROZDĚLANÉ', dirty, p => p.dirty + ' změn');
+  if (a) wrap.appendChild(a);
+  if (b) wrap.appendChild(b);
 }
 
 function renderDoctor() {
@@ -471,7 +743,8 @@ function runSlash(cmd) {
 function projectMenu(ev, p) {
   const items = [
     {icon: 'i-terminal', label: 'Otevřít v Claude',
-     run: () => openTab({kind: 'project', path: p.path, title: p.name})},
+     run: () => openTab({kind: 'project', path: p.path, title: p.label || p.name})},
+    {icon: 'i-note', label: 'Upravit…', run: () => editProject(p)},
     {icon: 'i-deploy', label: p.deployable ? 'Deploy (FTP)' : 'Deploy',
      run: () => openTab({kind: 'deploy', path: p.path, title: 'deploy: ' + p.name})},
   ];
@@ -483,14 +756,36 @@ function projectMenu(ev, p) {
     {icon: 'i-terminal', label: 'Shell tady',
      run: () => openTab({kind: 'shell', path: p.path, title: p.name})},
     {icon: 'i-folder', label: 'Otevřít složku', run: () => openExternal(p.path)},
+    {icon: 'i-save', label: p.archived ? 'Vrátit z archivu' : 'Archivovat',
+     run: async () => {
+       await api('project', {action: 'save', path: p.path, archived: !p.archived});
+       await reload();
+     }},
+    {icon: 'i-close', label: 'Odebrat z Hubu', run: () => removeProject(p)},
   );
   showMenu(ev.clientX, ev.clientY, items);
 }
 
+/* Odebrání je jen o panelu — složka na disku zůstává. Kdyby to mazalo soubory,
+   byla by to poslední věc, kterou by kdo od launcheru čekal. */
+async function removeProject(p) {
+  if (!confirm(`Odebrat „${p.label || p.name}" z Hubu?\n\n` +
+               `Složka na disku zůstane, maže se jen z panelu:\n${p.path}`)) return;
+  try {
+    const r = await api('project', {action: 'remove', path: p.path});
+    if (r.rescanned) {
+      await api('project', {action: 'save', path: p.path, archived: true});
+      toast('Leží v nastavené složce, tak jsem ho aspoň archivoval.');
+    } else {
+      toast('Odebráno z panelu.');
+    }
+    await reload();
+  } catch (err) { toast(err.message); }
+}
+
 /* Nabídka se otevírá pod kurzorem, takže uvolnění téhož kliknutí, kterým ji
-   člověk vyvolal, dopadne rovnou na první položku a spustí ji — pravý klik pak
-   vypadá jako „vložilo se to samo a teprve pak vyskočila nabídka". Proto se
-   kreslí kousek vedle a chvíli po otevření kliknutí ignoruje. */
+   člověk vyvolal, dopadne rovnou na první položku a spustí ji. Proto se kreslí
+   kousek vedle a chvíli po otevření kliknutí ignoruje. */
 const MENU_ARM_MS = 300;
 let menuArmedAt = 0;
 
@@ -659,7 +954,6 @@ async function main() {
   $('btn-new-shell').onclick = () => openTab({kind: 'shell', path: '', title: 'terminál'});
   $('btn-new-claude').onclick = () =>
     openTab({kind: 'project', path: STATE.home, title: 'Claude Code'});
-  $('btn-browse').onclick = () => openPicker('');
   $('btn-brain').onclick = () => openExternal('', 'brain');
   $('modal-close').onclick = closePicker;
   $('modal-cancel').onclick = closePicker;

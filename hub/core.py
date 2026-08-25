@@ -332,6 +332,50 @@ def get_projects():
                 "branch": branch, "dirty": dirty_count,
                 "deployable": os.path.isfile(os.path.join(path, ".ftp-deploy.json")),
             })
+
+    # Ručně přidané složky se skenem nenajdou — leží mimo nastavené cesty.
+    known = {p["path"] for p in projects}
+    for extra in CONFIG.get("extra_projects") or []:
+        path = os.path.expanduser(extra)
+        if not os.path.isdir(path) or path in known:
+            continue
+        branch, dirty_count = "", 0
+        if os.path.isdir(os.path.join(path, ".git")) and GIT:
+            branch = run([GIT, "branch", "--show-current"], cwd=path)
+            status = run([GIT, "status", "--porcelain"], cwd=path)
+            dirty_count = len(status.split("\n")) if status else 0
+        projects.append({
+            "name": os.path.basename(path.rstrip("/\\")) or path, "path": path,
+            "type": "Git" if branch else "Složka", "branch": branch,
+            "dirty": dirty_count, "manual": True,
+            "deployable": os.path.isfile(os.path.join(path, ".ftp-deploy.json")),
+        })
+
+    meta = load_projects()
+    for proj in projects:
+        # Kdy se na projektu naposledy dělalo. `.git` je nepoužitelné — dotkne
+        # se ho každý `git status`, který si pro panel pouštíme sami, takže by
+        # všechny projekty vycházely jako „právě teď". Bereme proto obsah
+        # pracovní kopie, a jen z první úrovně: procházet celý strom by
+        # u velkých repozitářů stálo víc, než kolik ten údaj vydá.
+        newest = 0
+        try:
+            for name in os.listdir(proj["path"]):
+                if name in (".git", "node_modules", "vendor", ".venv"):
+                    continue
+                try:
+                    newest = max(newest, os.path.getmtime(
+                        os.path.join(proj["path"], name)))
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        proj["mtime"] = int(newest)
+        info = meta.get(os.path.abspath(proj["path"]), {})
+        proj["label"] = info.get("label", "")
+        proj["brief"] = info.get("brief", "")
+        proj["archived"] = bool(info.get("archived"))
+    projects.sort(key=lambda p: (p["archived"], (p["label"] or p["name"]).lower()))
     return projects
 
 
@@ -474,6 +518,95 @@ def suggest_project_dirs():
                   "git", "src", "www")]
         cands += ["/opt/lampp/htdocs", "/var/www/html"]
     return [p for p in cands if os.path.isdir(p)]
+
+
+# ── Projekty: štítky, briefing, archiv ──────────────────────────────────────
+# Panel se plní skenem složek, ale co si o projektu myslí člověk, z disku
+# vyčíst nejde. Drží se to vedle, klíčované cestou, aby se skenování a poznámky
+# navzájem nepřepisovaly.
+PROJECTS_PATH = os.path.join(CLAUDE_DIR, "hub-projects.json")
+
+BRIEF_START = "<!-- hub:briefing -->"
+BRIEF_END = "<!-- /hub:briefing -->"
+
+
+def load_projects():
+    try:
+        with open(PROJECTS_PATH, encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_projects(data):
+    os.makedirs(CLAUDE_DIR, exist_ok=True)
+    tmp = PROJECTS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    os.replace(tmp, PROJECTS_PATH)
+
+
+def project_meta(path):
+    return load_projects().get(os.path.abspath(path), {})
+
+
+def set_project_meta(path, updates):
+    """Uloží štítek/briefing/archivaci k projektu. Prázdné hodnoty klíč smažou."""
+    path = os.path.abspath(os.path.expanduser(path))
+    data = load_projects()
+    entry = dict(data.get(path, {}))
+    for key, value in updates.items():
+        if value in ("", None, False) and key != "archived":
+            entry.pop(key, None)
+        else:
+            entry[key] = value
+    if entry:
+        data[path] = entry
+    else:
+        data.pop(path, None)
+    save_projects(data)
+    return entry
+
+
+def write_briefing(path, text):
+    """Vloží briefing do CLAUDE.md projektu, aby ho Claude Code sám přečetl.
+
+    Do cizího obsahu se nesahá: blok je ohraničený značkami a při dalším uložení
+    se jen vymění. Když CLAUDE.md ještě není, založí se.
+    """
+    path = os.path.abspath(os.path.expanduser(path))
+    target = os.path.join(path, "CLAUDE.md")
+    block = f"{BRIEF_START}\n## O projektu\n\n{text.strip()}\n{BRIEF_END}"
+    try:
+        existing = ""
+        if os.path.isfile(target):
+            with open(target, encoding="utf-8") as fh:
+                existing = fh.read()
+        if BRIEF_START in existing and BRIEF_END in existing:
+            head = existing.split(BRIEF_START)[0]
+            tail = existing.split(BRIEF_END, 1)[1]
+            new = head + block + tail
+        elif existing.strip():
+            new = existing.rstrip() + "\n\n" + block + "\n"
+        else:
+            new = block + "\n"
+        if not text.strip():           # briefing smazán → vyhodit i blok
+            if BRIEF_START in existing and BRIEF_END in existing:
+                new = (existing.split(BRIEF_START)[0].rstrip() + "\n" +
+                       existing.split(BRIEF_END, 1)[1].lstrip())
+                new = new.strip() + "\n" if new.strip() else ""
+            else:
+                return {"ok": True, "written": False}
+        if new.strip():
+            with open(target, "w", encoding="utf-8") as fh:
+                fh.write(new)
+        elif os.path.isfile(target):
+            os.remove(target)          # zbyl by prázdný soubor
+        return {"ok": True, "written": True, "file": target}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:200]}
 
 
 # ── Existující Obsidian paměť ────────────────────────────────────────────────

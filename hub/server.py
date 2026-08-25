@@ -295,7 +295,8 @@ class Handler(BaseHTTPRequestHandler):
                 "onboarded": bool(core.CONFIG.get("onboarded")),
                 "config": {"project_dirs": core.CONFIG.get("project_dirs") or [],
                            "brain_dir": core.CONFIG.get("brain_dir") or "",
-                           "newtab": core.CONFIG.get("newtab") or {}},
+                           "newtab": core.CONFIG.get("newtab") or {},
+                           "show_archived": bool(core.CONFIG.get("show_archived"))},
                 "cloud": core.cloud_folders(),
                 "vaults": core.obsidian_vaults(),
                 "memory_link": core.memory_link_path(),
@@ -354,7 +355,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": f"Nepodařilo se uložit: {exc}"}, 500)
         if name == "config":
             allowed = ("project_dirs", "brain_dir", "onboarded", "vault_autosync",
-                       "newtab")
+                       "newtab", "extra_projects", "show_archived")
             updates = {k: v for k, v in payload.items() if k in allowed}
             if not updates:
                 return self._json({"error": "Nic k uložení."}, 400)
@@ -364,6 +365,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": f"Konfig nejde zapsat: {exc}"}, 500)
             return self._json({"ok": True, "brain_dir": core.BRAIN,
                                "project_dirs": core.PROJECT_DIRS})
+        if name == "project":
+            return self._project(payload)
         if name == "vault":
             return self._vault(payload)
         if name == "update-check":
@@ -375,6 +378,52 @@ class Handler(BaseHTTPRequestHandler):
         if name == "update-status":
             return self._json(core.update_state())
         return self._json({"error": "unknown"}, 404)
+
+    def _project(self, payload):
+        """Štítek, briefing, archivace, přidání a odebrání projektu.
+
+        „Odebrat" znamená odebrat z Hubu — na složku se nesahá. Mazat cizí
+        práci z launcheru je poslední věc, kterou by kdo čekal.
+        """
+        action = payload.get("action")
+        path = os.path.abspath(os.path.expanduser(str(payload.get("path", ""))))
+        if not path or path == os.path.abspath(os.sep):
+            return self._json({"error": "Chybí cesta."}, 400)
+        try:
+            if action == "save":
+                updates = {}
+                for key in ("label", "brief"):
+                    if key in payload:
+                        updates[key] = str(payload[key]).strip()
+                if "archived" in payload:
+                    updates["archived"] = bool(payload["archived"])
+                core.set_project_meta(path, updates)
+                written = None
+                if "brief" in updates and os.path.isdir(path):
+                    written = core.write_briefing(path, updates["brief"])
+                return self._json({"ok": True, "briefing": written})
+            if action == "add":
+                if not os.path.isdir(path):
+                    return self._json({"error": "Taková složka není."}, 400)
+                extra = list(core.CONFIG.get("extra_projects") or [])
+                if path not in extra:
+                    extra.append(path)
+                    core.save_config({"extra_projects": extra})
+                return self._json({"ok": True, "path": path})
+            if action == "remove":
+                extra = [p for p in (core.CONFIG.get("extra_projects") or [])
+                         if os.path.abspath(os.path.expanduser(p)) != path]
+                core.save_config({"extra_projects": extra})
+                data = core.load_projects()
+                data.pop(path, None)
+                core.save_projects(data)
+                # Uvnitř nastavených složek ho sken najde znovu — pak zbývá archiv.
+                still = any(os.path.abspath(p["path"]) == path
+                            for p in core.get_projects())
+                return self._json({"ok": True, "rescanned": still})
+        except Exception as exc:
+            return self._json({"error": f"Nepovedlo se: {exc}"}, 500)
+        return self._json({"error": "Neznámá akce."}, 400)
 
     def _vault(self, payload):
         """Založit / vybrat / přesunout vault, nebo z něj udělat git zálohu."""

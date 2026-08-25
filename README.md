@@ -42,6 +42,15 @@ dělá jednu aplikaci:
   Obsidian si seznam vede) i stáhnout ho z gitu. Kdykoli později totéž pod ⚙.
 - **Dvě „+" tlačítka** — nový tab s Claude Code, nebo holý terminál. V nastavení
   se dá kterékoli schovat.
+- **Správa projektů** — u každého `⋯` s možnostmi: přejmenovat, archivovat,
+  odebrat z panelu (složka na disku zůstane). Přidat se dá i složka mimo
+  nastavené cesty.
+- **Briefing projektu** — napíšeš vlastními slovy, o co jde, a uloží se do
+  `CLAUDE.md` projektu, takže si to Claude Code přečte sám, jakmile ho otevřeš.
+  Do cizího obsahu se nesahá, blok je ohraničený značkami. `/brief` z něj pak
+  vytáhne strukturovaná fakta do poznámky v paměti.
+- **Uvítání** — scéna podle denní doby, kde se naposledy dělalo a co zůstalo
+  rozdělané.
 - **Dark/light** — řídí se motivem systému, přepínač v hlavičce.
 - **Obsidian paměť (volitelné)** — když máš vault, panel ukáže poslední poznámky
   (learnings/errors/wins) a klikem je otevře v Obsidianu. Bez vaultu se sekce
