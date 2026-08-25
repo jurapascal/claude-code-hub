@@ -180,14 +180,54 @@
     box.appendChild(el('p', 'onb-lead',
       'Paměť je obyčejná složka s markdownem — dá se otevřít v Obsidianu. ' +
       'Teprve s ní fungují příkazy /save, /learn a /project.'));
+
+    // Napojit existující vault je nejčastější případ: kdo Obsidian používá,
+    // už poznámky někde má a nechce začínat znovu.
+    const vaults = state.vaults || [];
+    if (vaults.length) {
+      box.appendChild(el('div', 'set-title', 'Našel jsem tyhle Obsidian vaulty'));
+      const list = el('div', 'onb-list');
+      for (const v of vaults) {
+        const row = el('label', 'onb-row');
+        const rb = el('input');
+        rb.type = 'radio';
+        rb.name = 'vault';
+        rb.checked = chosen.vault === v.path;
+        rb.onchange = () => { chosen.vault = v.path; renderPath(); };
+        row.appendChild(rb);
+        const col = el('span', 'onb-col');
+        col.appendChild(el('span', null, v.name));
+        col.appendChild(el('small', null, v.path + ' · ' +
+          (v.has_memory ? v.notes + ' poznámek' : 'zatím bez paměti — založí se')));
+        row.appendChild(col);
+        list.appendChild(row);
+      }
+      box.appendChild(list);
+    }
+
     const path = el('div', 'onb-path');
+    path.id = 'onb-vault-path';
     path.textContent = chosen.vault || '(nenastaveno)';
     box.appendChild(path);
+
     const row = el('div', 'onb-btns');
-    const pick = el('button', 'actionbtn', 'Vybrat složku…');
+    const pick = el('button', 'actionbtn', 'Vybrat jinou složku…');
     pick.onclick = async () => {
       const picked = await io.pickFolder();
       if (picked) { chosen.vault = picked; render(); }
+    };
+    const clone = el('button', 'actionbtn', 'Stáhnout z gitu…');
+    clone.onclick = async () => {
+      const repo = prompt('Adresa repa s pamětí (owner/repo nebo URL):', '');
+      if (!repo) return;
+      try {
+        const r = await io.api('vault', {action: 'clone', repo: repo.trim()});
+        chosen.vault = r.path;
+        io.toast('Paměť stažena do ' + r.path);
+        await io.refreshState();
+        state = io.state;
+        render();
+      } catch (err) { io.toast(err.message); }
     };
     const make = el('button', 'actionbtn', 'Založit novou');
     make.onclick = () => {
@@ -195,8 +235,14 @@
       render();
     };
     row.appendChild(pick);
+    row.appendChild(clone);
     row.appendChild(make);
     box.appendChild(row);
+  }
+
+  function renderPath() {
+    const node = document.getElementById('onb-vault-path');
+    if (node) node.textContent = chosen.vault || '(nenastaveno)';
   }
 
   function zaloha(box) {
@@ -274,7 +320,10 @@
       if (STEPS[step] === 'projekty') {
         await io.api('config', {project_dirs: chosen.dirs});
       } else if (STEPS[step] === 'pamet' && chosen.vault) {
-        await io.api('vault', {action: 'create', path: chosen.vault});
+        // Existující složku jen napojíme; create by jinak přepsal rozcestník.
+        const known = (state.vaults || []).some(v => v.path === chosen.vault);
+        await io.api('vault',
+          {action: known ? 'use' : 'create', path: chosen.vault});
       } else if (STEPS[step] === 'zaloha') {
         await applyBackup();
       } else if (STEPS[step] === 'hotovo') {

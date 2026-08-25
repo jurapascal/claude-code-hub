@@ -70,6 +70,7 @@
     body.textContent = '';
     body.appendChild(vzhled());
     body.appendChild(projekty());
+    body.appendChild(taby());
     body.appendChild(pamet());
     body.appendChild(aktualizace());
   }
@@ -128,6 +129,27 @@
     return box;
   }
 
+  function taby() {
+    const box = section('Tlačítka nových tabů',
+      'Co má být vedle tabů. Kdo jede jen v Claude Code, nechce vedle sebe ' +
+      'pořád tlačítko na holý shell — a naopak.');
+    const cfg = state.config.newtab || {};
+    const list = el('div', 'onb-list');
+    for (const [key, label] of [['claude', 'Otevřít Claude Code'],
+                                ['shell', 'Otevřít terminál']]) {
+      const row = el('label', 'onb-row');
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.checked = cfg[key] !== false;
+      cb.onchange = () => save({newtab: {...cfg, [key]: cb.checked}});
+      row.appendChild(cb);
+      row.appendChild(el('span', null, label));
+      list.appendChild(row);
+    }
+    box.appendChild(list);
+    return box;
+  }
+
   function pamet() {
     const box = section('Paměť',
       'Složka s poznámkami, které si Claude nese mezi sezeními.');
@@ -155,6 +177,34 @@
       line.appendChild(b);
     }
     box.appendChild(line);
+
+    const vaults = (state.vaults || []).filter(v => v.path !== state.config.brain_dir);
+    if (vaults.length) {
+      box.appendChild(el('div', 'set-note', 'Napojit jiný Obsidian vault:'));
+      const list = el('div', 'onb-list');
+      for (const v of vaults) {
+        const row = el('div', 'onb-row');
+        const col = el('span', 'onb-col');
+        col.appendChild(el('span', null, v.name));
+        col.appendChild(el('small', null, v.path + ' · ' +
+          (v.has_memory ? v.notes + ' poznámek' : 'zatím bez paměti')));
+        row.appendChild(col);
+        row.appendChild(el('span', 'spacer'));
+        const b = el('button', 'btn ghost', 'Napojit');
+        b.onclick = async () => {
+          try {
+            await io.api('vault', {action: 'use', path: v.path});
+            io.toast('Paměť napojena: ' + v.path);
+            await io.refreshState();
+            state = io.state;
+            render();
+          } catch (err) { io.toast(err.message); }
+        };
+        row.appendChild(b);
+        list.appendChild(row);
+      }
+      box.appendChild(list);
+    }
 
     const move = el('button', 'actionbtn', 'Přesunout paměť do jiné složky…');
     move.onclick = async () => {

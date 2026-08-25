@@ -367,6 +367,41 @@ else { Write-Info 'bez Obsidian vaultu — paměťové příkazy a panel paměti
 # skillů to potřebují, aby /newsletter a spol. hledaly projekty na správném místě.
 $ProjectDirsList = (@($cfg.project_dirs) | ForEach-Object { To-Slash $_ }) -join ', '
 
+# ── Skilly do vaultu ─────────────────────────────────────────────────────────
+# Hotové postupy, ze kterých si Claude sám vybírá. Existující složku nikdy
+# nepřepisujeme — kdo si tam něco napsal, o to nesmí přijít.
+$SkillsRepo = if ($env:HUB_SKILLS_REPO) { $env:HUB_SKILLS_REPO }
+              else { 'jurapascal/claude-brain-skills' }
+
+function Count-Skills($path) {
+    if (-not (Test-Path $path)) { return 0 }
+    return @(Get-ChildItem $path -Recurse -Filter 'SKILL.md' -ErrorAction SilentlyContinue).Count
+}
+
+if (-not $HasVault) {
+    # bez vaultu nemají kam
+} elseif ((Test-Path $BrainSkills) -and
+          @(Get-ChildItem $BrainSkills -Force -ErrorAction SilentlyContinue).Count -gt 0) {
+    if (Test-Path (Join-Path $BrainSkills '.git')) {
+        Write-Info 'aktualizuju skilly'
+        if (Test-Cmd git) { git -C $BrainSkills pull --ff-only --quiet 2>$null | Out-Null }
+        Write-Ok "skilly aktuální ($(Count-Skills $BrainSkills))"
+    } else {
+        Write-Ok "skilly už máš ($(Count-Skills $BrainSkills)) — nechávám je být"
+    }
+} elseif (-not (Test-Cmd git)) {
+    Write-Info 'skilly přeskočeny — chybí git'
+} else {
+    Write-Info 'stahuju skilly (hotové postupy, ze kterých si Claude vybírá)'
+    try {
+        git clone --quiet --depth 1 "https://github.com/$SkillsRepo.git" $BrainSkills 2>$null | Out-Null
+        if (Test-Path $BrainSkills) { Write-Ok "skilly: $(Count-Skills $BrainSkills) v $BrainSkills" }
+        else { Write-Warn 'stažení nevyšlo' }
+    } catch {
+        Write-Warn "stažení nevyšlo — ručně: git clone https://github.com/$SkillsRepo.git `"$BrainSkills`""
+    }
+}
+
 # ── 7. Aplikace do ~\.claude ─────────────────────────────────────────────────
 New-Item -ItemType Directory -Force -Path (Join-Path $ClaudeDir 'hooks') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $ClaudeDir 'skills') | Out-Null

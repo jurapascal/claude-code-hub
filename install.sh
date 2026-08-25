@@ -354,6 +354,44 @@ else
     info "bez Obsidian vaultu — paměťové příkazy a panel paměti se přeskočí"
 fi
 
+# ── 3b. Skilly do vaultu ─────────────────────────────────────────────────────
+# 571 hotových postupů, ze kterých si Claude sám vybírá. Existující složku
+# nikdy nepřepisujeme — kdo si tam něco napsal, o to nesmí přijít.
+SKILLS_REPO="${HUB_SKILLS_REPO:-jurapascal/claude-brain-skills}"
+
+install_skills() {
+    local target="$1"
+    if [ -d "$target/.git" ]; then
+        git -C "$target" pull --ff-only --quiet 2>/dev/null && return 0
+        return 1
+    fi
+    git clone --quiet --depth 1 "https://github.com/$SKILLS_REPO.git" "$target"
+}
+
+if $MINIMAL; then
+    info "--minimal: skilly nestahuju"
+elif ! $HAS_VAULT; then
+    :   # bez vaultu nemají kam
+elif [ -d "$BRAIN_SKILLS" ] && [ -n "$(ls -A "$BRAIN_SKILLS" 2>/dev/null)" ]; then
+    if [ -d "$BRAIN_SKILLS/.git" ]; then
+        info "aktualizuju skilly"
+        install_skills "$BRAIN_SKILLS" >/dev/null 2>&1 \
+            && ok "skilly aktuální ($(find "$BRAIN_SKILLS" -name SKILL.md | wc -l))" \
+            || warn "skilly se nepodařilo aktualizovat"
+    else
+        ok "skilly už máš ($(find "$BRAIN_SKILLS" -name SKILL.md 2>/dev/null | wc -l)) — nechávám je být"
+    fi
+elif ! command -v git >/dev/null 2>&1; then
+    info "skilly přeskočeny — chybí git"
+else
+    info "stahuju skilly ${D}(hotové postupy, ze kterých si Claude vybírá)${R}"
+    if install_skills "$BRAIN_SKILLS" >/dev/null 2>&1; then
+        ok "skilly: $(find "$BRAIN_SKILLS" -name SKILL.md | wc -l) v $BRAIN_SKILLS"
+    else
+        warn "stažení nevyšlo — ručně: git clone https://github.com/$SKILLS_REPO.git $BRAIN_SKILLS"
+    fi
+fi
+
 # ── 4. Aplikace do ~/.claude ─────────────────────────────────────────────────
 mkdir -p "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/skills" "$ICON_DIR" "$APP_DIR"
 

@@ -38,7 +38,10 @@ dělá jednu aplikaci:
   events; hub je bere na sebe (`hub/static/ime.js`), protože xterm.js je při rychlejším
   psaní slepuje a do řádku pak teče nashromážděný balast.
 - **Průvodce prvním spuštěním** — vzhled, složky s projekty, kde bydlí paměť
-  a jak se zálohuje. Kdykoli později totéž pod ⚙ v hlavičce.
+  a jak se zálohuje. Umí napojit **existující Obsidian vault** (najde si ho sám,
+  Obsidian si seznam vede) i stáhnout ho z gitu. Kdykoli později totéž pod ⚙.
+- **Dvě „+" tlačítka** — nový tab s Claude Code, nebo holý terminál. V nastavení
+  se dá kterékoli schovat.
 - **Dark/light** — řídí se motivem systému, přepínač v hlavičce.
 - **Obsidian paměť (volitelné)** — když máš vault, panel ukáže poslední poznámky
   (learnings/errors/wins) a klikem je otevře v Obsidianu. Bez vaultu se sekce
@@ -133,6 +136,7 @@ sama** — otázka navíc byla hlavní důvod, proč instalace nebyla rychlá:
 | **GitHub CLI** | `winget install GitHub.cli` / apt / dnf / pacman / snap / brew, pak `gh auth login` + `gh auth setup-git` |
 | **Playwright MCP** | prohlížeč pro Claude Code (~115 MB, potřebuje Node.js 20+) |
 | **hooky** | `Stop` (uloží stav session) a `SessionStart` (načte kategorie skillů z vaultu a stav minulé session) do `settings.json` |
+| **skilly** | 571 hotových postupů z [claude-brain-skills](https://github.com/jurapascal/claude-brain-skills) do vaultu — existující složku nikdy nepřepíše |
 
 Zeptá se jen na to, co uhádnout nejde:
 

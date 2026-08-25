@@ -175,6 +175,14 @@ function renderDoctor() {
   warn.innerHTML = problems.join('<hr style="border:none;border-top:1px solid var(--border);margin:8px 0">');
 }
 
+/* Které „+" tlačítko se ukazuje. Kdo jede jen v Claude Code, nechce vedle sebe
+   pořád tlačítko na holý shell — a naopak. */
+function renderNewTabButtons() {
+  const cfg = STATE.config.newtab || {};
+  $('btn-new-claude').hidden = cfg.claude === false;
+  $('btn-new-shell').hidden = cfg.shell === false;
+}
+
 async function reload() {
   STATE = await api('state');
   renderProjects($('search').value);
@@ -182,6 +190,7 @@ async function reload() {
   renderActions();
   renderFooter();
   renderDoctor();
+  renderNewTabButtons();
   applyTheme();
 }
 
@@ -239,7 +248,7 @@ function createTab({kind, path, title, id}) {
   };
   el.ondblclick = (ev) => { if (!ev.target.closest('.tab-close')) startRename(tab); };
   wireDrag(el, tab);
-  $('tabbar').insertBefore(el, $('btn-newtab'));
+  $('tabbar').insertBefore(el, $('btn-new-claude'));
   tab.el = el;
 
   TABS.push(tab);
@@ -600,7 +609,9 @@ async function main() {
   $('btn-refresh').onclick = () => reload();
   $('btn-theme').onclick = () => setTheme(!DARK, true);
   $('btn-settings').onclick = () => HubSettings.open({...hubIO(), state: STATE});
-  $('btn-newtab').onclick = () => openTab({kind: 'shell', path: '', title: 'shell'});
+  $('btn-new-shell').onclick = () => openTab({kind: 'shell', path: '', title: 'terminál'});
+  $('btn-new-claude').onclick = () =>
+    openTab({kind: 'project', path: STATE.home, title: 'Claude Code'});
   $('btn-browse').onclick = () => openPicker('');
   $('btn-brain').onclick = () => openExternal('', 'brain');
   $('modal-close').onclick = closePicker;

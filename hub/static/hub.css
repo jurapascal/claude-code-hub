@@ -225,9 +225,9 @@ body { display: flex; flex-direction: column; }
 
 .tabplus {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 36px; flex: none;
+  min-width: 36px; flex: none; padding: 0 10px; gap: 2px;
   background: none; border: none;
-  color: var(--amber); font-size: 15px; cursor: pointer;
+  color: var(--amber); font-size: 15px; cursor: pointer; white-space: nowrap;
 }
 .tabplus:hover { background: var(--card-hover); }
 
@@ -504,3 +504,7 @@ body { display: flex; flex-direction: column; }
 .set-status.ok   { border-color: var(--green); color: var(--green); }
 .set-status.warn { border-color: var(--amber); color: var(--amber); }
 .set-update { border-color: var(--amber) !important; color: var(--amber) !important; }
+
+/* Dvě „+" tlačítka vedle sebe potřebují popisek, jinak se nepozná, které je které. */
+.tabplus span { font-size: 12px; margin-left: 5px; }
+.tabplus[hidden] { display: none; }

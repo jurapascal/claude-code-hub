@@ -294,8 +294,11 @@ class Handler(BaseHTTPRequestHandler):
                 "obsidian": core.has_obsidian(),
                 "onboarded": bool(core.CONFIG.get("onboarded")),
                 "config": {"project_dirs": core.CONFIG.get("project_dirs") or [],
-                           "brain_dir": core.CONFIG.get("brain_dir") or ""},
+                           "brain_dir": core.CONFIG.get("brain_dir") or "",
+                           "newtab": core.CONFIG.get("newtab") or {}},
                 "cloud": core.cloud_folders(),
+                "vaults": core.obsidian_vaults(),
+                "memory_link": core.memory_link_path(),
                 "suggest_dirs": core.suggest_project_dirs(),
                 "home": core.HOME,
                 "version": core.version_info(),
@@ -350,7 +353,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 return self._json({"error": f"Nepodařilo se uložit: {exc}"}, 500)
         if name == "config":
-            allowed = ("project_dirs", "brain_dir", "onboarded", "vault_autosync")
+            allowed = ("project_dirs", "brain_dir", "onboarded", "vault_autosync",
+                       "newtab")
             updates = {k: v for k, v in payload.items() if k in allowed}
             if not updates:
                 return self._json({"error": "Nic k uložení."}, 400)
@@ -384,13 +388,24 @@ class Handler(BaseHTTPRequestHandler):
                     with open(index, "w", encoding="utf-8") as fh:
                         fh.write(core.EMPTY_MEMORY_INDEX)
                 core.save_config({"brain_dir": path})
-                return self._json({"ok": True, "path": core.BRAIN})
+                link = core.link_memory(path)
+                return self._json({"ok": True, "path": core.BRAIN, **link})
             if action == "use":
                 if not os.path.isdir(path):
                     return self._json({"error": "Taková složka není."}, 400)
                 core.save_config({"brain_dir": path})
+                link = core.link_memory(path)
                 return self._json({"ok": True, "path": core.BRAIN,
-                                   "has_memory": core.HAS_BRAIN})
+                                   "has_memory": core.HAS_BRAIN, **link})
+            if action == "clone":
+                repo = str(payload.get("repo", "")).strip()
+                if not repo:
+                    return self._json({"error": "Chybí adresa repa."}, 400)
+                parent = path or os.path.join(core.HOME, "Obsidian")
+                target = core.clone_vault(repo, parent)
+                core.save_config({"brain_dir": target})
+                link = core.link_memory(target)
+                return self._json({"ok": True, "path": target, **link})
             if action == "move":
                 return self._json({"ok": True, **core.move_vault(path)})
             if action == "git":

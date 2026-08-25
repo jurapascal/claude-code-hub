@@ -476,6 +476,127 @@ def suggest_project_dirs():
     return [p for p in cands if os.path.isdir(p)]
 
 
+# ── Existující Obsidian paměť ────────────────────────────────────────────────
+# Obsidian si seznam vaultů vede sám; je to nejspolehlivější zdroj, protože
+# ví i o těch, které leží mimo obvyklé složky.
+OBSIDIAN_CONFIGS = [
+    "~/.config/obsidian/obsidian.json",                                  # nativní
+    "~/.var/app/md.obsidian.Obsidian/config/obsidian/obsidian.json",     # flatpak
+    "~/snap/obsidian/current/.config/obsidian/obsidian.json",            # snap
+    "~/Library/Application Support/obsidian/obsidian.json",              # macOS
+]
+
+
+def obsidian_vaults():
+    """Vaulty, o kterých na tomhle stroji víme. Nejdřív ty od Obsidianu."""
+    found, seen = [], set()
+
+    def add(path, source):
+        path = os.path.abspath(os.path.expanduser(path))
+        if path in seen or not os.path.isdir(path):
+            return
+        seen.add(path)
+        found.append({
+            "path": path,
+            "name": os.path.basename(path),
+            "source": source,
+            # Paměť hubu žije v podsložce memory/ — když tam je, je vault
+            # rovnou použitelný; když ne, dá se založit.
+            "notes": len([n for n in os.listdir(os.path.join(path, "memory"))
+                          if n.endswith(".md")])
+                     if os.path.isdir(os.path.join(path, "memory")) else 0,
+            "has_memory": os.path.isdir(os.path.join(path, "memory")),
+        })
+
+    configs = list(OBSIDIAN_CONFIGS)
+    if IS_WINDOWS and os.environ.get("APPDATA"):
+        configs.insert(0, os.path.join(os.environ["APPDATA"], "obsidian",
+                                       "obsidian.json"))
+    for cfg in configs:
+        try:
+            with open(os.path.expanduser(cfg), encoding="utf-8") as fh:
+                data = json.load(fh)
+            for entry in (data.get("vaults") or {}).values():
+                if entry.get("path"):
+                    add(entry["path"], "Obsidian")
+        except Exception:
+            continue
+
+    # Záloha pro toho, kdo Obsidian nemá nainstalovaný, ale složku už má.
+    import glob
+    for pattern in ("~/Obsidian/*", "~/Documents/Obsidian/*", "~/obsidian/*",
+                    "~/Nextcloud/*", "~/Dropbox/*", "~/OneDrive/*"):
+        for path in sorted(glob.glob(os.path.expanduser(pattern))):
+            if os.path.isdir(os.path.join(path, ".obsidian")) or \
+                    os.path.isdir(os.path.join(path, "memory")):
+                add(path, "na disku")
+    return found
+
+
+def memory_link_path():
+    """Kam Claude Code ukládá vlastní paměť pro domovskou složku."""
+    slug = HOME.replace("\\", "/").replace(":", "").replace("/", "-")
+    return os.path.join(CLAUDE_DIR, "projects", slug, "memory")
+
+
+def link_memory(vault):
+    """Napojí paměť Claude Code na vault. Vrací popis toho, co se stalo.
+
+    Samotný `brain_dir` v konfigu řídí jen hub — vlastní paměť si Claude Code
+    hledá v `~/.claude/projects/<slug>/memory`. Teprve tenhle symlink z toho
+    udělá jedno a totéž, což je celý smysl „napojit existující paměť".
+    """
+    vault = os.path.abspath(os.path.expanduser(vault))
+    memory = os.path.join(vault, "memory")
+    os.makedirs(memory, exist_ok=True)
+    index = os.path.join(memory, "MEMORY.md")
+    if not os.path.isfile(index):
+        with open(index, "w", encoding="utf-8") as fh:
+            fh.write(EMPTY_MEMORY_INDEX)
+
+    link = memory_link_path()
+    os.makedirs(os.path.dirname(link), exist_ok=True)
+    moved = ""
+    if os.path.islink(link):
+        if os.path.realpath(link) == os.path.realpath(memory):
+            return {"linked": link, "target": memory, "moved": ""}
+        os.unlink(link)
+    elif os.path.isdir(link):
+        # Skutečná složka s poznámkami se nemaže — odsune se stranou.
+        if os.listdir(link):
+            import datetime
+            moved = f"{link}-backup-{datetime.datetime.now():%Y%m%d-%H%M%S}"
+            shutil.move(link, moved)
+        else:
+            os.rmdir(link)
+    elif os.path.exists(link):
+        os.unlink(link)
+    os.symlink(memory, link)
+    return {"linked": link, "target": memory, "moved": moved}
+
+
+def clone_vault(repo, parent):
+    """Naklonuje vault z gitu. repo = owner/repo nebo celá URL."""
+    parent = os.path.abspath(os.path.expanduser(parent))
+    name = os.path.basename(repo.rstrip("/")).replace(".git", "")
+    target = os.path.join(parent, name)
+    if os.path.exists(target):
+        raise ValueError(f"{target} už existuje.")
+    if not GIT:
+        raise ValueError("Na stroji není git.")
+    os.makedirs(parent, exist_ok=True)
+    url = repo if ("://" in repo or repo.startswith("git@")) \
+        else f"https://github.com/{repo}.git"
+    if shutil.which("gh") and "://" not in repo and not repo.startswith("git@"):
+        cmd = ["gh", "repo", "clone", repo, target]     # umí i privátní repo
+    else:
+        cmd = [GIT, "clone", "--quiet", url, target]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if r.returncode != 0:
+        raise ValueError((r.stderr or "klonování nevyšlo").strip()[:300])
+    return target
+
+
 # ── Paměť v cloudu ───────────────────────────────────────────────────────────
 # Vault je obyčejná složka s markdownem, takže „napojení na cloud" znamená
 # jediné: ať leží uvnitř složky, kterou už nějaký klient synchronizuje.
