@@ -287,6 +287,15 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, body, ctype)
 
     def _api(self, name, query, payload=None):
+        try:
+            return self._api_inner(name, query, payload)
+        except Exception as exc:
+            # Bez tohohle by chyba skončila jen ve stacktrace, který nikdo
+            # nevidí — okno na Windows nemá konzoli.
+            core.log_error(f"/api/{name} selhalo", exc)
+            return self._json({"error": f"Chyba serveru: {exc}"}, 500)
+
+    def _api_inner(self, name, query, payload=None):
         payload = payload or {}
         if name == "state":
             counts, recent = core.get_memory()
@@ -395,6 +404,20 @@ class Handler(BaseHTTPRequestHandler):
         if name == "update":
             started = core.start_update()
             return self._json({"started": started, **core.update_state()})
+        if name == "log":
+            if "text" in payload:
+                # Chyby ze stránky patří do stejného souboru jako ty ze serveru,
+                # jinak by se problém hledal na dvou místech.
+                core.log(f"stránka: {str(payload['text'])[:500]}",
+                         payload.get("level") or "error")
+                return self._json({"ok": True})
+            return self._json({"lines": core.log_tail(
+                int(query.get("lines", ["300"])[0] or 300))})
+        if name == "log-clear":
+            core.log_clear()
+            return self._json({"ok": True})
+        if name == "report":
+            return self._json({"text": core.report_bundle()})
         if name == "stats":
             # První výpočet čte skoro gigabajt přepisů, takže na pozadí;
             # další už jedou z mezipaměti a vrátí se hned.
@@ -589,12 +612,15 @@ class Handler(BaseHTTPRequestHandler):
                                    msg.get("title", "shell"),
                                    int(msg.get("cols", 80)), int(msg.get("rows", 24)))
             except (pty_backend.PtyUnavailable, core.BashMissing) as exc:
+                core.log_error("tab se nepodařilo otevřít", exc)
                 conn.send_json({"t": "error", "ref": msg.get("ref"), "d": str(exc)})
                 return
             except Exception as exc:
+                core.log_error("tab se nepodařilo otevřít", exc)
                 conn.send_json({"t": "error", "ref": msg.get("ref"),
                                 "d": f"Nepodařilo se otevřít terminál: {exc}"})
                 return
+            core.log(f"tab otevřen: {session.kind} {session.path or '~'}")
             conn.send_json({"t": "opened", "ref": msg.get("ref"), **session.info()})
             session.attach(conn)
         elif kind == "attach" and session:

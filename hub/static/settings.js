@@ -73,6 +73,7 @@
     body.appendChild(taby());
     body.appendChild(pamet());
     body.appendChild(aktualizace());
+    body.appendChild(logy());
   }
 
   function vzhled() {
@@ -363,6 +364,69 @@
     btns.appendChild(check);
     btns.appendChild(doIt);
     box.appendChild(btns);
+    return box;
+  }
+
+  function logy() {
+    const box = section('Logy',
+      'Co se v aplikaci dělo — starty, otevřené taby, běhy na pozadí a chyby. ' +
+      'Leží to v ~/.claude/hub.log a nikam se to samo neposílá.');
+    const view = el('pre', 'log-view', 'Načítám…');
+    box.appendChild(view);
+
+    const btns = el('div', 'onb-btns');
+    const refresh = el('button', 'actionbtn', 'Načíst znovu');
+    const copy = el('button', 'actionbtn', 'Zkopírovat hlášení');
+    const save = el('button', 'actionbtn', 'Uložit hlášení do souboru');
+    const clear = el('button', 'actionbtn', 'Vymazat log');
+
+    const load = async () => {
+      view.textContent = 'Načítám…';
+      try {
+        const r = await io.api('log?lines=400');
+        const lines = r.lines || [];
+        view.textContent = '';
+        if (!lines.length) { view.textContent = '(log je prázdný)'; return; }
+        for (const line of lines) {
+          const row = el('span', 'log-line');
+          if (/\bERROR\b/.test(line)) row.classList.add('err');
+          else if (/\bWARN\b/.test(line)) row.classList.add('warn');
+          row.textContent = line;
+          view.appendChild(row);
+        }
+        view.scrollTop = view.scrollHeight;   // konec je to zajímavé
+      } catch (err) {
+        view.textContent = 'Nepovedlo se: ' + err.message;
+      }
+    };
+
+    refresh.onclick = load;
+    copy.onclick = async () => {
+      try {
+        const r = await io.api('report');
+        await io.api('clipboard', {text: r.text, which: 'clipboard'});
+        io.toast('Hlášení je ve schránce — stačí vložit.');
+      } catch (err) { io.toast('Nepovedlo se: ' + err.message); }
+    };
+    save.onclick = async () => {
+      try {
+        const r = await io.api('report');
+        // Uloží se stejnou cestou jako přiložené obrázky, takže se pak dá
+        // rovnou přetáhnout nebo poslat.
+        const data = btoa(unescape(encodeURIComponent(r.text)));
+        const out = await io.api('upload', {name: 'hlaseni-hub.txt', data});
+        io.toast('Uloženo: ' + out.path);
+      } catch (err) { io.toast('Nepovedlo se: ' + err.message); }
+    };
+    clear.onclick = async () => {
+      if (!confirm('Vymazat log?')) return;
+      try { await io.api('log-clear', {}); await load(); }
+      catch (err) { io.toast(err.message); }
+    };
+
+    for (const b of [refresh, copy, save, clear]) btns.appendChild(b);
+    box.appendChild(btns);
+    load();
     return box;
   }
 

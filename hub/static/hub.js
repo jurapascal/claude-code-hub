@@ -1103,7 +1103,10 @@ function hubIO() {
     get state() { return STATE; },
     api,
     setTheme,
+    // Obě jména schválně: části UI vznikaly postupně a půlka volá toast(),
+    // půlka notice(). Jedno chybějící jméno zabilo hlášku o zkopírovaném logu.
     toast,
+    notice: toast,
     pickFolder,
     reload,
     refreshState: async () => { STATE = await api('state'); },
@@ -1112,6 +1115,24 @@ function hubIO() {
 }
 
 /* ── boot ─────────────────────────────────────────────────────────────────── */
+/* Chyby ze stránky posíláme do stejného logu jako ty ze serveru — jinak by se
+   problém hledal na dvou místech a jedno z nich by nikdo neotevřel. */
+function reportToLog(text) {
+  try {
+    fetch(`/api/log?t=${encodeURIComponent(TOKEN)}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text: String(text).slice(0, 500), level: 'error'}),
+    }).catch(() => {});
+  } catch (_) { /* logování nesmí být důvod další chyby */ }
+}
+
+window.addEventListener('error', (ev) => {
+  reportToLog(`${ev.message} @ ${ev.filename}:${ev.lineno}`);
+});
+window.addEventListener('unhandledrejection', (ev) => {
+  reportToLog('neodchycené odmítnutí: ' + (ev.reason && ev.reason.message || ev.reason));
+});
+
 async function main() {
   const saved = localStorage.getItem('hub-theme');
   DARK = saved ? saved === 'dark'

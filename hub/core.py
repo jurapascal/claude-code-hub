@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 
 IS_WINDOWS = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
@@ -68,20 +69,86 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0
 
 
 LOG_PATH = os.path.join(CLAUDE_DIR, "hub.log")
+LOG_MAX = 1_000_000          # přes megabajt už se v tom nikdo nevyzná
+LOG_KEEP = os.path.join(CLAUDE_DIR, "hub.log.1")
+_LOG_LOCK = threading.Lock()
 
 
-def log(message):
-    """Append one line to ~/.claude/hub.log.
+def log(message, level="info"):
+    """Zapíše řádek do ~/.claude/hub.log.
 
-    The Windows shortcut runs pythonw.exe, which has no console at all — without
-    this a failed start leaves nothing behind to look at.
+    Zástupce na Windows běží přes pythonw.exe, který nemá konzoli — bez tohohle
+    by po nepovedeném startu nezbylo vůbec nic ke čtení. Proto se sem logují
+    i chyby z obsluhy požadavků a z běhů na pozadí, a proto se to dá vypsat
+    přímo v aplikaci.
+
+    Soubor se po megabajtu odloží stranou; drží se jeden předchozí, takže
+    historie nezmizí, ale ani neroste donekonečna.
     """
     try:
         import datetime
-        with open(LOG_PATH, "a", encoding="utf-8") as fh:
-            fh.write(f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S}  {message}\n")
+        line = (f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S}  "
+                f"{level.upper():<5} {message}\n")
+        with _LOG_LOCK:
+            try:
+                if os.path.getsize(LOG_PATH) > LOG_MAX:
+                    os.replace(LOG_PATH, LOG_KEEP)
+            except OSError:
+                pass
+            os.makedirs(CLAUDE_DIR, exist_ok=True)
+            with open(LOG_PATH, "a", encoding="utf-8") as fh:
+                fh.write(line)
     except Exception:
-        pass
+        pass          # log, který shodí aplikaci, je horší než žádný
+
+
+def log_error(message, exc=None):
+    if exc is not None:
+        message = f"{message}: {type(exc).__name__}: {exc}"
+    log(message, "error")
+
+
+def log_tail(lines=300):
+    """Posledních `lines` řádků logu, i přes odložený soubor."""
+    out = []
+    for path in (LOG_KEEP, LOG_PATH):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                out.extend(fh.read().splitlines())
+        except OSError:
+            continue
+    return out[-lines:]
+
+
+def log_clear():
+    for path in (LOG_PATH, LOG_KEEP):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    log("log vymazán z aplikace")
+
+
+def report_bundle():
+    """Jeden text pro nahlášení problému: co je na stroji + poslední log.
+
+    Cesty a jména projektů v tom být můžou — je to soubor pro člověka, ne pro
+    odeslání někam ven, a aplikace ho nikam sama neposílá.
+    """
+    import datetime
+    info = doctor()
+    head = [
+        "Claude Code Hub — hlášení",
+        f"pořízeno   {datetime.datetime.now():%Y-%m-%d %H:%M:%S}",
+        f"verze      {version()}",
+        "",
+        "Prostředí",
+        "-" * 44,
+    ]
+    for key, value in info.items():
+        head.append(f"  {key:<18} {value}")
+    head += ["", "Log (posledních 300 řádků)", "-" * 44]
+    return "\n".join(head + log_tail(300)) + "\n"
 
 
 # ── Running helper programs ──────────────────────────────────────────────────
@@ -1193,11 +1260,21 @@ def start_job(name, fn):
         _JOBS[name] = {"running": True, "done": False, "result": None,
                        "step": "začínám…"}
 
+    log(f"úloha {name}: start")
+
     def worker():
+        started = time.time()
         try:
             result = fn()
         except Exception as exc:          # pojistka, ať stav nezůstane viset
+            log_error(f"úloha {name} spadla", exc)
             result = {"ok": False, "detail": str(exc)[:300]}
+        took = time.time() - started
+        if isinstance(result, dict) and result.get("ok") is False:
+            log(f"úloha {name}: neúspěch za {took:.1f}s — "
+                f"{str(result.get('detail'))[:200]}", "warn")
+        else:
+            log(f"úloha {name}: hotovo za {took:.1f}s")
         with _JOBS_LOCK:
             _JOBS[name] = {"running": False, "done": True, "result": result,
                            "step": ""}

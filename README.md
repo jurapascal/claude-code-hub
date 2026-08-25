@@ -341,6 +341,17 @@ assets/                   ikona (.png pro Linux, .ico pro Windows)
 assets/vault/MEMORY.md    rozcestník paměti pro nově založený vault
 ```
 
+## Když něco nehraje
+
+⚙ → **Logy**: co se v aplikaci dělo — starty, otevřené taby, běhy na pozadí,
+chyby ze serveru i ze stránky (obojí končí ve stejném souboru, aby se problém
+nehledal na dvou místech). Tlačítko **Zkopírovat hlášení** dá do schránky
+prostředí i posledních 300 řádků logu; **Uložit hlášení** z toho udělá soubor.
+Aplikace nikam nic sama neposílá.
+
+Soubor leží v `~/.claude/hub.log` a po megabajtu se odloží stranou
+(`hub.log.1`), takže neroste donekonečna.
+
 ## Bezpečnost
 
 Hub umí spouštět shell, takže stojí za to vědět, čím je to ohraničené: server

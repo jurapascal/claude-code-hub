@@ -706,3 +706,15 @@ body { display: flex; flex-direction: column; }
 .wst-col { flex: 1 1 0; height: 100%; display: flex; align-items: flex-end; justify-content: center; }
 .wst-bar { width: 100%; max-width: 9px; background: var(--chart); border-radius: 3px 3px 0 0; }
 .wst-cap { margin-top: 6px; font-size: 10.5px; color: var(--section); }
+
+/* ── logy ────────────────────────────────────────────────────────────────── */
+.log-view {
+  max-height: 240px; overflow: auto; margin: 0 0 12px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 12px;
+  font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.55;
+  color: var(--dim); white-space: pre-wrap; word-break: break-word;
+}
+.log-line { display: block; }
+.log-line.err { color: var(--red); }
+.log-line.warn { color: var(--amber); }
