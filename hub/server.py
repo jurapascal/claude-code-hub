@@ -311,6 +311,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": core.open_path(target)})
         if name == "listdir":
             return self._json(listdir(query.get("path", [""])[0]))
+        if name == "clipboard":
+            which = (payload.get("which") or query.get("which", ["clipboard"])[0])
+            if which not in ("clipboard", "primary"):
+                which = "clipboard"
+            if "text" in payload:                  # POST = zápis
+                return self._json({"ok": core.clipboard_write(
+                    str(payload["text"]), which)})
+            text = core.clipboard_read(which)      # GET = čtení
+            if text is None:
+                return self._json(
+                    {"error": "Na tomhle stroji chybí nástroj na schránku "
+                              "(xclip / wl-clipboard)."}, 501)
+            return self._json({"text": text})
         if name == "upload":
             try:
                 raw = base64.b64decode(payload.get("data", ""), validate=True)

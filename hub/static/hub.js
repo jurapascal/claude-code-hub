@@ -218,7 +218,13 @@ function createTab({kind, path, title, id}) {
   term.onData(toPty);
   // Diacritics arrive from the GTK input method as composition events, which
   // xterm.js mishandles badly enough to corrupt the line — see ime.js.
-  tab.releaseIME = HubIME.install(term, toPty);
+  tab.releaseIME = HubIME.install(term);
+  // WebKitGTK nepustí stránku ke schránce, tak se na ni sahá přes náš server.
+  tab.releaseClipboard = HubClipboard.install(term, {
+    read: (which) => api('clipboard?which=' + which).then(r => r.text || ''),
+    write: (text, which) => api('clipboard', {text, which}),
+    notice: toast,
+  });
   wireFiles(tab);
 
   const el = document.createElement('button');
@@ -272,6 +278,7 @@ function refit(tab) {
 function closeTab(tab) {
   if (tab.id) send({t: 'close', id: tab.id});
   if (tab.releaseIME) tab.releaseIME();
+  if (tab.releaseClipboard) tab.releaseClipboard();
   tab.term.dispose();
   tab.el.remove();
   tab.pane.remove();
@@ -362,11 +369,16 @@ function wireFiles(tab) {
   // it would otherwise paste the file's *name* as text. Plain text pastes are
   // left alone — those xterm does right.
   pane.addEventListener('paste', (ev) => {
-    const files = ev.clipboardData && ev.clipboardData.files;
-    if (!files || !files.length) return;
+    const cd = ev.clipboardData;
+    if (!cd || !cd.files || !cd.files.length) return;
+    // Text má přednost: zkopírovaný soubor ze správce souborů nese vedle sebe
+    // i svoje jméno jako text, a kdo kopíroval text, čeká text. Sáhneme po
+    // souborech jen tehdy, když na schránce nic textového není — to je případ
+    // screenshotu. (Vkládání textu už jednou padlo na tom, že to bylo obráceně.)
+    if (cd.getData && cd.getData('text/plain')) return;
     ev.preventDefault();
     ev.stopPropagation();
-    attachFiles(tab, files);
+    attachFiles(tab, cd.files);
   }, true);
   pane.addEventListener('dragover', (ev) => {
     if (!ev.dataTransfer || ![...ev.dataTransfer.types].includes('Files')) return;
@@ -419,6 +431,13 @@ function projectMenu(ev, p) {
   showMenu(ev.clientX, ev.clientY, items);
 }
 
+/* Nabídka se otevírá pod kurzorem, takže uvolnění téhož kliknutí, kterým ji
+   člověk vyvolal, dopadne rovnou na první položku a spustí ji — pravý klik pak
+   vypadá jako „vložilo se to samo a teprve pak vyskočila nabídka". Proto se
+   kreslí kousek vedle a chvíli po otevření kliknutí ignoruje. */
+const MENU_ARM_MS = 300;
+let menuArmedAt = 0;
+
 function showMenu(x, y, items) {
   const menu = $('ctxmenu');
   menu.textContent = '';
@@ -426,13 +445,23 @@ function showMenu(x, y, items) {
     const el = document.createElement('button');
     el.innerHTML = icon(item.icon) + '<span></span>';
     el.querySelector('span').textContent = item.label;
-    el.onclick = () => { hideMenu(); item.run(); };
+    el.onclick = (ev) => {
+      if (Date.now() - menuArmedAt < MENU_ARM_MS) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;                       // pořád doznívá kliknutí, které ji otevřelo
+      }
+      hideMenu();
+      item.run();
+    };
     menu.appendChild(el);
   }
   menu.hidden = false;
+  menuArmedAt = Date.now();
   const box = menu.getBoundingClientRect();
-  menu.style.left = Math.min(x, innerWidth - box.width - 8) + 'px';
-  menu.style.top = Math.min(y, innerHeight - box.height - 8) + 'px';
+  // +3 px, ať kurzor nestojí přímo na první položce
+  menu.style.left = Math.min(x + 3, innerWidth - box.width - 8) + 'px';
+  menu.style.top = Math.min(y + 3, innerHeight - box.height - 8) + 'px';
 }
 
 function hideMenu() { $('ctxmenu').hidden = true; }
@@ -553,7 +582,11 @@ async function main() {
     if (!localStorage.getItem('hub-theme')) setTheme(ev.matches, false);
   });
 
-  document.addEventListener('click', hideMenu);
+  // Stejné doznívající kliknutí by nabídku hned zase zavřelo, než ji stihne
+  // člověk vidět.
+  document.addEventListener('click', () => {
+    if (Date.now() - menuArmedAt >= MENU_ARM_MS) hideMenu();
+  });
   document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') { hideMenu(); closePicker(); }
   });

@@ -426,6 +426,81 @@ def _prune_images():
         pass
 
 
+# ── Systémová schránka ───────────────────────────────────────────────────────
+# WebKitGTK (okno hubu na Linuxu) odmítá navigator.clipboard bez uživatelského
+# gesta a document.execCommand('copy') tam vrací false, takže se v tabu nedalo
+# kopírovat vůbec. Hub ale běží jako místní proces, takže na schránku dosáhne
+# přímo — a rovnou i na PRIMARY, na kterou je člověk na Linuxu zvyklý.
+def _clipboard_tools(which):
+    """(příkaz pro čtení, příkaz pro zápis) pro tenhle stroj, nebo (None, None)."""
+    primary = which == "primary"
+    if IS_WINDOWS:
+        if primary:
+            return None, None                      # Windows PRIMARY nezná
+        return (["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
+                ["clip"])
+    if IS_MAC:
+        if primary:
+            return None, None
+        return (["pbpaste"], ["pbcopy"])
+    if shutil.which("wl-copy") and shutil.which("wl-paste"):
+        sel = ["--primary"] if primary else []
+        return (["wl-paste", "--no-newline"] + sel, ["wl-copy"] + sel)
+    if shutil.which("xclip"):
+        target = "primary" if primary else "clipboard"
+        return (["xclip", "-selection", target, "-o"],
+                ["xclip", "-selection", target, "-i"])
+    if shutil.which("xsel"):
+        flag = "--primary" if primary else "--clipboard"
+        return (["xsel", flag, "-o"], ["xsel", flag, "-i"])
+    return None, None
+
+
+def clipboard_read(which="clipboard"):
+    read_cmd, _ = _clipboard_tools(which)
+    if not read_cmd:
+        return None
+    try:
+        r = subprocess.run(read_cmd, capture_output=True, timeout=4,
+                           creationflags=_NO_WINDOW)
+        return r.stdout.decode("utf-8", "replace")
+    except Exception:
+        return None
+
+
+def clipboard_write(text, which="clipboard"):
+    """Zapíše text do schránky. True, když se to povedlo.
+
+    Pod X (a tedy i XWayland) drží obsah výběru **proces, který ho zapsal** —
+    `xclip -i` se proto po zápisu odpojí a běží dál, dokud výběr někdo
+    nepřepíše. Čekat na jeho konec by znamenalo čekat až do timeoutu a pak
+    hlásit neúspěch u zápisu, který ve skutečnosti prošel. `clip` na Windows
+    a `pbcopy` na macOS se naopak ukončí hned, takže krátké čekání rozliší
+    obojí: TimeoutExpired tady znamená „drží výběr", ne chybu.
+    """
+    _, write_cmd = _clipboard_tools(which)
+    if not write_cmd:
+        return False
+    try:
+        proc = subprocess.Popen(write_cmd, stdin=subprocess.PIPE,
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                creationflags=_NO_WINDOW)
+    except Exception:
+        return False
+    try:
+        proc.communicate(input=text.encode("utf-8"), timeout=1.0)
+        return proc.returncode == 0
+    except subprocess.TimeoutExpired:
+        return True          # drží výběr, jak má
+    except Exception:
+        return False
+
+
+def has_clipboard():
+    return _clipboard_tools("clipboard")[0] is not None
+
+
 def installed_skills():
     """Slash commands actually installed in ~/.claude/skills/."""
     try:
@@ -469,5 +544,6 @@ def doctor():
         "wrapper": WRAPPER if os.path.isfile(WRAPPER) else "",
         "ftp_deploy": FTP_DEPLOY if os.path.isfile(FTP_DEPLOY) else "",
         "brain": BRAIN if HAS_BRAIN else "",
+        "clipboard": (_clipboard_tools("clipboard")[1] or [""])[0],
         "project_dirs": PROJECT_DIRS,
     }

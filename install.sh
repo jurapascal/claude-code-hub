@@ -138,6 +138,22 @@ install_obsidian() {
     return 1
 }
 
+install_clipboard() {
+    # Na Wayland sedí wl-clipboard, pod X xclip; obojí je malé, tak ať je co je.
+    local pkgs="wl-clipboard xclip"
+    [ "${XDG_SESSION_TYPE:-}" = "x11" ] && pkgs="xclip wl-clipboard"
+    for pkg in $pkgs; do
+        if command -v apt-get >/dev/null 2>&1 && apt-get install -s "$pkg" >/dev/null 2>&1; then
+            sudo apt-get install -y "$pkg" && return 0
+        elif command -v dnf >/dev/null 2>&1; then
+            sudo dnf install -y "$pkg" && return 0
+        elif command -v pacman >/dev/null 2>&1; then
+            sudo pacman -S --noconfirm "$pkg" && return 0
+        fi
+    done
+    return 1
+}
+
 install_gh() {
     if [ "$(uname)" = "Darwin" ]; then
         command -v brew >/dev/null 2>&1 && brew install gh && return 0
@@ -205,6 +221,15 @@ else
         info "doinstalovávám Obsidian ${D}(paměť: /save, /learn, /project)${R}"
         if install_obsidian >/dev/null 2>&1; then ok "Obsidian nainstalován"
         else warn "nevyšlo — stáhni ho z https://obsidian.md/download"; fi
+    fi
+
+    # Bez tohohle se v tabu nedá kopírovat: WebKitGTK stránku ke schránce
+    # nepustí, takže na ni sahá server hubu — a potřebuje k tomu nástroj.
+    if [ "$(uname)" != "Darwin" ] && ! command -v wl-copy >/dev/null 2>&1 \
+            && ! command -v xclip >/dev/null 2>&1 && ! command -v xsel >/dev/null 2>&1; then
+        info "doinstalovávám nástroj na schránku ${D}(kopírování v tabu)${R}"
+        if install_clipboard >/dev/null 2>&1; then ok "schránka připravena"
+        else warn "nevyšlo — doinstaluj ručně: apt install wl-clipboard  (nebo xclip)"; fi
     fi
 
     if command -v gh >/dev/null 2>&1; then
