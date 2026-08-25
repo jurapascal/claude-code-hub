@@ -270,7 +270,14 @@ class Handler(BaseHTTPRequestHandler):
         # posixpath.normpath + strip leading separators keeps this inside STATIC_DIR
         rel = posixpath.normpath("/" + relpath).lstrip("/")
         full = os.path.join(STATIC_DIR, *rel.split("/"))
-        if not os.path.isfile(full) or not os.path.abspath(full).startswith(STATIC_DIR):
+        # Porovnání přes commonpath, ne startswith: to by pustilo i sourozence
+        # jménem `static-cokoliv`, který do aplikace nepatří.
+        full = os.path.abspath(full)
+        try:
+            inside = os.path.commonpath([full, STATIC_DIR]) == STATIC_DIR
+        except ValueError:                       # jiný disk na Windows
+            inside = False
+        if not inside or not os.path.isfile(full):
             return self._send(404, b"404")
         ctype = mimetypes.guess_type(full)[0] or "application/octet-stream"
         if ctype.startswith("text/") or ctype in ("application/javascript",):
@@ -391,6 +398,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "Chybí cesta."}, 400)
         try:
             if action == "save":
+                # Zapisovat CLAUDE.md kamkoli na disk není potřeba — omezíme se
+                # na složky, které hub zná jako projekty.
+                known = {os.path.abspath(pr["path"]) for pr in core.get_projects()}
+                if path not in known:
+                    return self._json(
+                        {"error": "Tuhle složku hub nezná jako projekt."}, 400)
                 updates = {}
                 for key in ("label", "brief"):
                     if key in payload:

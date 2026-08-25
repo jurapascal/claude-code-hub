@@ -120,6 +120,22 @@ Zástupce **Claude Code** v nabídce Start spouští `pythonw.exe`, takže se ve
 neotevírá černá konzole; kdyby okno zůstalo prázdné, důvod je v
 `%USERPROFILE%\.claude\hub.log`.
 
+### Windows — co k tomu patří
+
+| Co | Proč |
+|---|---|
+| **Git for Windows** | dodává `bash.exe`, na kterém stojí každý tab a všechny slash příkazy — bez něj se tab neotevře |
+| **pywinpty** | ConPTY terminál; instalačka ho doinstaluje sama |
+| **Python 3.9+** | běh aplikace |
+
+Zástupce **Claude Code** v nabídce Start spouští `pythonw.exe`, takže se vedle
+okna neotevírá černá konzole. Schránka jede přes `Get-Clipboard` a `clip`;
+`PRIMARY` (výběr myší) Windows nezná, takže tam prostřední tlačítko nevkládá.
+Napojení paměti používá **křižovatku** (`mklink /J`), ne symlink — ten by chtěl
+práva správce nebo vývojářský režim.
+
+Kdyby okno zůstalo prázdné, důvod je v `%USERPROFILE%\.claude\hub.log`.
+
 ### Z klonu
 
 ```bash
@@ -310,6 +326,13 @@ assets/hub-wordmark.svg   logo se jménem (řídí se motivem čtenáře)
 assets/                   ikona (.png pro Linux, .ico pro Windows)
 assets/vault/MEMORY.md    rozcestník paměti pro nově založený vault
 ```
+
+## Bezpečnost
+
+Hub umí spouštět shell, takže stojí za to vědět, čím je to ohraničené: server
+poslouchá jen na `127.0.0.1`, na náhodném portu a na token. Co revize našla a co
+se s tím udělalo — hlavně spuštění cizího příkazu přes jméno složky — je
+v [SECURITY.md](SECURITY.md).
 
 ## Co v repu záměrně není
 

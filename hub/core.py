@@ -10,6 +10,7 @@ bash-based slash command work unchanged on all three platforms.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -228,17 +229,30 @@ def child_env():
 
 
 # ── Opening things in the desktop's default app ──────────────────────────────
+# Odkazy z výpisu terminálu chodí sem, a výpis může pocházet z cizího repa.
+# Systémový handler otevře leccos — `file://…​.desktop` se pod ním klidně spustí —
+# takže se pouští jen schémata, u kterých je jasné, co udělají.
+SAFE_SCHEMES = ("http://", "https://", "mailto:", "obsidian://")
+
+
 def open_path(path):
-    """Open a folder, file or URI with the system default handler."""
+    """Otevře složku, soubor nebo URI výchozí aplikací. False = neotevřeno."""
+    path = str(path)
+    if "://" in path.split("?", 1)[0] or path.startswith("mailto:"):
+        if not path.startswith(SAFE_SCHEMES):
+            log(f"open_path odmítl schéma: {path[:80]}")
+            return False
+    elif not os.path.exists(path):
+        return False
     try:
         if IS_WINDOWS:
-            if "://" in path:
+            if "://" in path or path.startswith("mailto:"):
                 subprocess.Popen(["cmd", "/c", "start", "", path], shell=False,
                                  creationflags=_NO_WINDOW)
             else:
                 os.startfile(path)  # noqa: S606 — the whole point of this function
         elif IS_MAC:
-            subprocess.Popen(["open", path])
+            subprocess.Popen(["open", "--", path])
         else:
             subprocess.Popen(["xdg-open", path],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -545,6 +559,10 @@ def save_projects(data):
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(data, fh, ensure_ascii=False, indent=2)
         fh.write("\n")
+    try:
+        os.chmod(tmp, 0o600)      # briefingy bývají o klientech
+    except OSError:
+        pass
     os.replace(tmp, PROJECTS_PATH)
 
 
@@ -667,16 +685,65 @@ def obsidian_vaults():
 
 
 def memory_link_path():
-    """Kam Claude Code ukládá vlastní paměť pro domovskou složku."""
-    slug = HOME.replace("\\", "/").replace(":", "").replace("/", "-")
-    return os.path.join(CLAUDE_DIR, "projects", slug, "memory")
+    """Kam Claude Code ukládá vlastní paměť pro domovskou složku.
+
+    Jméno složky je odvozené z cesty, ale hádat ho je krajní řešení — když už
+    ji Claude Code jednou založil, použijeme tu jeho. Na Windows se navíc do
+    jména promítá i disk, takže dohad by mohl sedět jen náhodou.
+    """
+    projects = os.path.join(CLAUDE_DIR, "projects")
+    home_real = os.path.realpath(HOME)
+    try:
+        for name in os.listdir(projects):
+            candidate = os.path.join(projects, name, "memory")
+            # existující složka pro domovský adresář pozná podle jména
+            plain = name.replace("-", "").lower()
+            if plain and plain == home_real.replace(os.sep, "").replace(
+                    "/", "").replace(":", "").lower():
+                return candidate
+    except OSError:
+        pass
+    slug = home_real.replace("\\", "/").replace(":", "").replace("/", "-")
+    return os.path.join(projects, slug, "memory")
+
+
+def _make_link(target, link):
+    """Symlink, a na Windows křižovatka, když symlink nejde.
+
+    Symlink na Windows chce buď práva správce, nebo zapnutý vývojářský režim —
+    křižovatka (junction) nechce nic a pro složku dělá totéž.
+    """
+    try:
+        os.symlink(target, link, target_is_directory=True)
+        return "symlink"
+    except (OSError, NotImplementedError, AttributeError):
+        if not IS_WINDOWS:
+            raise
+    r = subprocess.run(["cmd", "/c", "mklink", "/J", link, target],
+                       capture_output=True, text=True, creationflags=_NO_WINDOW)
+    if r.returncode != 0:
+        raise OSError((r.stderr or r.stdout or "mklink selhal").strip()[:200])
+    return "junction"
+
+
+def _is_link(path):
+    """islink() na Windows křižovatku nepozná, ale readlink() ji přečte."""
+    if os.path.islink(path):
+        return True
+    if IS_WINDOWS and os.path.isdir(path):
+        try:
+            os.readlink(path)
+            return True
+        except OSError:
+            return False
+    return False
 
 
 def link_memory(vault):
     """Napojí paměť Claude Code na vault. Vrací popis toho, co se stalo.
 
     Samotný `brain_dir` v konfigu řídí jen hub — vlastní paměť si Claude Code
-    hledá v `~/.claude/projects/<slug>/memory`. Teprve tenhle symlink z toho
+    hledá v `~/.claude/projects/<slug>/memory`. Teprve tenhle odkaz z toho
     udělá jedno a totéž, což je celý smysl „napojit existující paměť".
     """
     vault = os.path.abspath(os.path.expanduser(vault))
@@ -690,10 +757,13 @@ def link_memory(vault):
     link = memory_link_path()
     os.makedirs(os.path.dirname(link), exist_ok=True)
     moved = ""
-    if os.path.islink(link):
+    if _is_link(link):
         if os.path.realpath(link) == os.path.realpath(memory):
-            return {"linked": link, "target": memory, "moved": ""}
-        os.unlink(link)
+            return {"linked": link, "target": memory, "moved": "", "how": "beze změny"}
+        try:
+            os.unlink(link)
+        except OSError:
+            os.rmdir(link)                 # křižovatka se ruší jako složka
     elif os.path.isdir(link):
         # Skutečná složka s poznámkami se nemaže — odsune se stranou.
         if os.listdir(link):
@@ -704,14 +774,17 @@ def link_memory(vault):
             os.rmdir(link)
     elif os.path.exists(link):
         os.unlink(link)
-    os.symlink(memory, link)
-    return {"linked": link, "target": memory, "moved": moved}
+    how = _make_link(memory, link)
+    return {"linked": link, "target": memory, "moved": moved, "how": how}
 
 
 def clone_vault(repo, parent):
     """Naklonuje vault z gitu. repo = owner/repo nebo celá URL."""
+    repo = _check_repo(repo)
     parent = os.path.abspath(os.path.expanduser(parent))
     name = os.path.basename(repo.rstrip("/")).replace(".git", "")
+    if not name or name in (".", ".."):
+        raise ValueError("Z adresy nejde odvodit jméno složky.")
     target = os.path.join(parent, name)
     if os.path.exists(target):
         raise ValueError(f"{target} už existuje.")
@@ -721,9 +794,9 @@ def clone_vault(repo, parent):
     url = repo if ("://" in repo or repo.startswith("git@")) \
         else f"https://github.com/{repo}.git"
     if shutil.which("gh") and "://" not in repo and not repo.startswith("git@"):
-        cmd = ["gh", "repo", "clone", repo, target]     # umí i privátní repo
+        cmd = ["gh", "repo", "clone", "--", repo, target]   # umí i privátní repo
     else:
-        cmd = [GIT, "clone", "--quiet", url, target]
+        cmd = [GIT, "clone", "--quiet", "--", url, target]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if r.returncode != 0:
         raise ValueError((r.stderr or "klonování nevyšlo").strip()[:300])
@@ -836,12 +909,18 @@ def vault_git_state():
     return True, run([GIT, "remote", "get-url", "origin"], cwd=BRAIN) if GIT else ""
 
 
+NAME_RE = re.compile(r"^[A-Za-z0-9][\w.-]{0,99}$")
+
+
 def vault_git_setup(repo_name):
     """Založí z vaultu privátní repo na GitHubu a pošle tam první commit.
 
     Vrací (ok, hlášku). Nikdy nevyhazuje — onboarding musí umět pokračovat
     i když tohle nevyjde.
     """
+    repo_name = str(repo_name).strip()
+    if not NAME_RE.match(repo_name):
+        return False, "Jméno repa smí být jen písmena, číslice, tečka a pomlčka."
     if not GIT:
         return False, "Na stroji není git."
     if not shutil.which("gh"):
@@ -873,8 +952,8 @@ def vault_git_setup(repo_name):
         existing = run([GIT, "remote", "get-url", "origin"], cwd=BRAIN)
         if not existing:
             r = subprocess.run(
-                ["gh", "repo", "create", repo_name, "--private",
-                 "--source", ".", "--push"],
+                ["gh", "repo", "create", "--private",
+                 "--source", ".", "--push", "--", repo_name],
                 cwd=BRAIN, capture_output=True, text=True, timeout=300)
             if r.returncode != 0:
                 return False, (r.stderr or r.stdout or "gh repo create selhalo").strip()[:300]
@@ -1037,7 +1116,18 @@ def _fetch_source():
             archive = os.path.join(tmp, "hub.tgz")
             urllib.request.urlretrieve(url, archive)
             with tarfile.open(archive) as tf:
-                tf.extractall(tmp)
+                # extractall bez filtru umí zapsat i mimo cílovou složku,
+                # když archiv obsahuje `../` nebo absolutní cesty.
+                try:
+                    tf.extractall(tmp, filter="data")        # Python 3.12+
+                except TypeError:
+                    for member in tf.getmembers():
+                        dest = os.path.realpath(os.path.join(tmp, member.name))
+                        if not dest.startswith(os.path.realpath(tmp) + os.sep):
+                            raise ValueError("archiv chtěl zapsat mimo složku")
+                        if member.issym() or member.islnk():
+                            raise ValueError("archiv obsahuje odkazy")
+                    tf.extractall(tmp)
             inner = [os.path.join(tmp, n) for n in os.listdir(tmp)
                      if os.path.isdir(os.path.join(tmp, n))]
             if not inner:
@@ -1152,7 +1242,13 @@ def clipboard_read(which="clipboard"):
     try:
         r = subprocess.run(read_cmd, capture_output=True, timeout=4,
                            creationflags=_NO_WINDOW)
-        return r.stdout.decode("utf-8", "replace")
+        text = r.stdout.decode("utf-8", "replace")
+        if IS_WINDOWS:
+            # Get-Clipboard vrací řádky s CRLF a jeden navíc na konci
+            text = text.replace("\r\n", "\n")
+            if text.endswith("\n"):
+                text = text[:-1]
+        return text
     except Exception:
         return None
 
@@ -1202,11 +1298,23 @@ def installed_skills():
 # ── Terminal command builders ────────────────────────────────────────────────
 # Every tab is a bash session, on every platform. Paths are converted to the
 # shell's own form so the same snippet works under Git Bash too.
+def sh_quote(text):
+    """Uzavře řetězec tak, aby ho bash vzal doslova.
+
+    Do příkazu pro tab se skládají cesty ze skenu složek, a ty nemusí být
+    nevinné: složka pojmenovaná `projekt$(rm -rf ~)x` — což vznikne třeba
+    naklonováním cizího repa — by se v dvojitých uvozovkách vyhodnotila a
+    spustila ve chvíli, kdy na ni člověk v panelu klikne. Jednoduché uvozovky
+    to zastaví; jediné, co v nich má význam, je apostrof sám.
+    """
+    return "'" + str(text).replace("'", "'\\''") + "'"
+
+
 def cmd_project(path, slash=""):
-    p = to_shell_path(path)
-    w = to_shell_path(WRAPPER)
-    arg = f' "{slash}"' if slash else ""
-    return (f'cd "{p}" && bash "{w}"{arg}; '
+    p = sh_quote(to_shell_path(path))
+    w = sh_quote(to_shell_path(WRAPPER))
+    arg = f" {sh_quote(slash)}" if slash else ""
+    return (f'cd {p} && bash {w}{arg}; '
             f'echo; echo "[ session ukončena — tab zůstává jako shell ]"; exec bash')
 
 
@@ -1218,7 +1326,8 @@ def cmd_deploy(path):
     """FTP script when the project has .ftp-deploy.json, otherwise the /deploy skill."""
     if os.path.isfile(os.path.join(path, ".ftp-deploy.json")) and \
             os.path.isfile(FTP_DEPLOY):
-        return (f'bash "{to_shell_path(FTP_DEPLOY)}" "{to_shell_path(path)}"; '
+        return (f'bash {sh_quote(to_shell_path(FTP_DEPLOY))} '
+                f'{sh_quote(to_shell_path(path))}; '
                 f'echo; echo "[ deploy hotový — tab zůstává jako shell ]"; exec bash')
     return cmd_project(path, "/deploy")
 
