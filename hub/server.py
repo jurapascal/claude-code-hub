@@ -329,6 +329,19 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     target = os.path.join(core.MEMORY_DIR, fname)
             return self._json({"ok": core.open_path(target)})
+        if name == "image":
+            raw = os.path.abspath(os.path.expanduser(
+                query.get("path", [""])[0]))
+            try:
+                inside = os.path.commonpath(
+                    [raw, core.IMAGE_DIR]) == core.IMAGE_DIR
+            except ValueError:
+                inside = False
+            if not inside or not os.path.isfile(raw):
+                return self._send(404, b"404")
+            ctype = mimetypes.guess_type(raw)[0] or "application/octet-stream"
+            with open(raw, "rb") as fh:
+                return self._send(200, fh.read(), ctype)
         if name == "listdir":
             return self._json(listdir(query.get("path", [""])[0]))
         if name == "clipboard":
@@ -384,6 +397,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"started": started, **core.update_state()})
         if name == "update-status":
             return self._json(core.update_state())
+        if name == "job":
+            return self._json(core.job_state(
+                query.get("name", ["vault"])[0]))
         return self._json({"error": "unknown"}, 404)
 
     def _project(self, payload):
@@ -405,7 +421,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(
                         {"error": "Tuhle složku hub nezná jako projekt."}, 400)
                 updates = {}
-                for key in ("label", "brief"):
+                for key in ("label", "brief", "group", "repo", "image"):
                     if key in payload:
                         updates[key] = str(payload[key]).strip()
                 if "archived" in payload:
@@ -471,13 +487,17 @@ class Handler(BaseHTTPRequestHandler):
                 core.save_config({"brain_dir": target})
                 link = core.link_memory(target)
                 return self._json({"ok": True, "path": target, **link})
+            # Přesun i první push trvají; držet na nich požadavek znamená, že
+            # se stránka zasekne a po zavření okna se výsledek nemá kam vrátit.
             if action == "move":
-                return self._json({"ok": True, **core.move_vault(path)})
+                started = core.start_job(
+                    "vault", lambda: {"ok": True, **core.move_vault(path)})
+                return self._json({"started": started, **core.job_state("vault")})
             if action == "git":
                 name = str(payload.get("repo") or "claude-brain").strip()
-                ok, detail = core.vault_git_setup(name)
-                return self._json({"ok": ok, "detail": detail},
-                                  200 if ok else 400)
+                started = core.start_job("vault", lambda: dict(
+                    zip(("ok", "detail"), core.vault_git_setup(name))))
+                return self._json({"started": started, **core.job_state("vault")})
         except ValueError as exc:
             return self._json({"error": str(exc)}, 400)
         except Exception as exc:

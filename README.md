@@ -42,9 +42,10 @@ dělá jednu aplikaci:
   Obsidian si seznam vede) i stáhnout ho z gitu. Kdykoli později totéž pod ⚙.
 - **Dvě „+" tlačítka** — nový tab s Claude Code, nebo holý terminál. V nastavení
   se dá kterékoli schovat.
-- **Správa projektů** — u každého `⋯` s možnostmi: přejmenovat, archivovat,
-  odebrat z panelu (složka na disku zůstane). Přidat se dá i složka mimo
-  nastavené cesty.
+- **Správa projektů** — u každého `⋯` s možnostmi: přejmenovat, zařadit do
+  skupiny, dát fotku, přiřadit GitHub repo (samo se načte z `git remote`),
+  archivovat, odebrat z panelu (složka na disku zůstane). Přidat se dá i složka
+  mimo nastavené cesty.
 - **Briefing projektu** — napíšeš vlastními slovy, o co jde, a uloží se do
   `CLAUDE.md` projektu, takže si to Claude Code přečte sám, jakmile ho otevřeš.
   Do cizího obsahu se nesahá, blok je ohraničený značkami. `/brief` z něj pak

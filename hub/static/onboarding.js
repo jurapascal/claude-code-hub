@@ -325,7 +325,8 @@
         await io.api('vault',
           {action: known ? 'use' : 'create', path: chosen.vault});
       } else if (STEPS[step] === 'zaloha') {
-        await applyBackup();
+        // Nepovedenou zálohu nepřeskakujeme — ať je vidět, co se stalo.
+        if (!await applyBackup()) return;
       } else if (STEPS[step] === 'hotovo') {
         await finish(false);
         return;
@@ -339,21 +340,67 @@
     }
   }
 
+  /* Záloha běží na serveru na pozadí a stav se odečítá — dřív to byl jeden
+     dlouhý požadavek a průvodce na něm zůstal viset. */
+  function backupStatus(text, kind) {
+    let node = root.querySelector('.onb-job');
+    if (!node) {
+      node = el('div', 'set-status onb-job');
+      root.querySelector('.onb-body').appendChild(node);
+    }
+    node.className = 'set-status onb-job ' + (kind || 'busy');
+    node.textContent = text;
+  }
+
+  async function waitForVault() {
+    for (;;) {
+      await new Promise(r => setTimeout(r, 900));
+      let st;
+      try {
+        st = await io.api('job?name=vault');
+      } catch (err) {
+        backupStatus('Ztratil jsem spojení: ' + err.message, 'warn');
+        return false;
+      }
+      if (st.running) {
+        backupStatus('Zálohuju… ' + (st.step || ''), 'busy');
+        continue;
+      }
+      const r = st.result || {};
+      if (!r.ok) {
+        backupStatus(r.detail || 'Zálohu se nepovedlo nastavit.', 'warn');
+        return false;
+      }
+      if (r.path) chosen.vault = r.path;
+      backupStatus('✓ ' + (r.path ? 'Paměť přesunuta do ' + r.path
+                                  : 'Paměť je v privátním repu.'), 'ok');
+      await io.refreshState();
+      state = io.state;
+      return true;
+    }
+  }
+
   async function applyBackup() {
+    if (chosen.backup === 'later') return true;
+    let payload = null;
     if (chosen.backup === 'git') {
-      const r = await io.api('vault', {action: 'git', repo: chosen.repo});
-      io.toast(r.ok ? 'Paměť je v privátním repu.' : ('Nepovedlo se: ' + r.detail));
+      payload = {action: 'git', repo: chosen.repo};
     } else if (chosen.backup === 'cloud' && chosen.cloudPath) {
-      const r = await io.api('vault', {action: 'move', path: chosen.cloudPath});
-      chosen.vault = r.path;
-      io.toast('Paměť přesunuta do ' + r.path);
+      payload = {action: 'move', path: chosen.cloudPath};
     } else if (chosen.backup === 'folder') {
       const picked = await io.pickFolder();
-      if (!picked) return;
-      const r = await io.api('vault', {action: 'move', path: picked});
-      chosen.vault = r.path;
-      io.toast('Paměť přesunuta do ' + r.path);
+      if (!picked) return true;          // rozmyslel si to, jdeme dál
+      payload = {action: 'move', path: picked};
     }
+    if (!payload) return true;
+    backupStatus('Zálohuju…', 'busy');
+    try {
+      await io.api('vault', payload);
+    } catch (err) {
+      backupStatus('Nepodařilo se spustit: ' + err.message, 'warn');
+      return false;
+    }
+    return waitForVault();
   }
 
   async function finish(skipped) {

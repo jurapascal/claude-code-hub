@@ -167,9 +167,24 @@
       b.onclick = async () => {
         b.disabled = true;
         b.textContent = 'Zakládám…';
-        const r = await io.api('vault', {action: 'git', repo: 'claude-brain'})
-          .catch(e => ({ok: false, detail: e.message}));
-        io.toast(r.ok ? 'Paměť je v privátním repu.' : ('Nepovedlo se: ' + r.detail));
+        try {
+          await io.api('vault', {action: 'git', repo: 'claude-brain'});
+        } catch (err) {
+          io.toast('Nepodařilo se spustit: ' + err.message);
+          b.disabled = false;
+          return;
+        }
+        // Běží to na pozadí, tak se ptáme na stav — jinak by tlačítko viselo.
+        for (;;) {
+          await new Promise(r => setTimeout(r, 900));
+          const st = await io.api('job?name=vault').catch(() => null);
+          if (!st) break;
+          if (st.running) { b.textContent = st.step || 'Zakládám…'; continue; }
+          const r = st.result || {};
+          io.toast(r.ok ? 'Paměť je v privátním repu.'
+                        : ('Nepovedlo se: ' + (r.detail || '')));
+          break;
+        }
         await io.refreshState();
         state = io.state;
         render();
@@ -211,8 +226,19 @@
       const picked = await io.pickFolder();
       if (!picked) return;
       try {
-        const r = await io.api('vault', {action: 'move', path: picked});
-        io.toast('Paměť přesunuta do ' + r.path);
+        await io.api('vault', {action: 'move', path: picked});
+        move.disabled = true;
+        for (;;) {
+          await new Promise(r => setTimeout(r, 900));
+          const st = await io.api('job?name=vault').catch(() => null);
+          if (!st) break;
+          if (st.running) { move.textContent = st.step || 'Přesouvám…'; continue; }
+          const r = st.result || {};
+          io.toast(r.ok ? ('Paměť přesunuta do ' + r.path)
+                        : ('Nepovedlo se: ' + (r.detail || '')));
+          break;
+        }
+        move.disabled = false;
         await io.refreshState();
         state = io.state;
         render();

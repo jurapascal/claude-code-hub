@@ -95,15 +95,30 @@ function renderProjects(filter) {
   if (!shown.length) {
     box.innerHTML = '<div class="empty">(nic nenalezeno)</div>';
   }
+  // Skupiny drží pohromadě, co k sobě patří; bez skupiny se nic nenadpisuje.
+  let lastGroup = null;
   for (const p of shown) {
+    const group = p.group || '';
+    if (group !== lastGroup) {
+      lastGroup = group;
+      if (group) {
+        const h = document.createElement('div');
+        h.className = 'group-head';
+        h.textContent = group;
+        box.appendChild(h);
+      }
+    }
     const meta = [p.type, p.branch, p.dirty ? `${p.dirty} změn` : '']
       .filter(Boolean).join('  ·  ');
-    // Karta je div, ne button: uvnitř má vlastní tlačítko „⋯" a tlačítko
+    // Karta je div, ne button: uvnitř má vlastní tlačítka a tlačítko
     // v tlačítku je neplatné HTML, které prohlížeče rozhodí po svém.
     const el = document.createElement('div');
-    el.className = 'card' + (p.dirty ? ' dirty' : '') + (p.archived ? ' archived' : '');
+    el.className = 'card' + (p.dirty ? ' dirty' : '') + (p.archived ? ' archived' : '')
+                 + (p.image ? ' has-photo' : '');
     el.tabIndex = 0;
-    el.innerHTML = `<span class="dot"></span><span class="card-col">
+    el.innerHTML = `<span class="dot"></span>
+      <span class="card-thumb"></span>
+      <span class="card-col">
         <span class="card-name"></span>
         <span class="card-meta"></span>
         <span class="card-path"></span></span>
@@ -111,6 +126,15 @@ function renderProjects(filter) {
     el.querySelector('.card-name').textContent = p.label || p.name;
     el.querySelector('.card-meta').textContent = meta;
     el.querySelector('.card-path').textContent = shortPath(p.path);
+    const thumb = el.querySelector('.card-thumb');
+    if (p.image) {
+      const img = document.createElement('img');
+      img.src = imageUrl(p.image);
+      img.alt = '';
+      thumb.appendChild(img);
+    } else {
+      thumb.remove();
+    }
     if (p.brief) {
       const flag = document.createElement('span');
       flag.className = 'card-flag';
@@ -118,7 +142,9 @@ function renderProjects(filter) {
       flag.textContent = 'i';
       el.appendChild(flag);
     }
-    el.title = p.path + (p.brief ? '\n\n' + p.brief.slice(0, 300) : '');
+    el.title = [p.path, p.repo ? 'github: ' + p.repo : '',
+                p.brief ? '\n' + p.brief.slice(0, 300) : '']
+      .filter(Boolean).join('\n');
     const open = () => openTab({kind: 'project', path: p.path,
                                 title: p.label || p.name});
     el.onclick = (ev) => { if (!ev.target.closest('.card-more')) open(); };
@@ -128,8 +154,8 @@ function renderProjects(filter) {
     el.oncontextmenu = (ev) => { ev.preventDefault(); projectMenu(ev, p); };
     el.querySelector('.card-more').onclick = (ev) => {
       ev.stopPropagation();
-      const box = ev.currentTarget.getBoundingClientRect();
-      projectMenu({clientX: box.left, clientY: box.bottom, preventDefault(){}}, p);
+      const b = ev.currentTarget.getBoundingClientRect();
+      projectMenu({clientX: b.left, clientY: b.bottom, preventDefault(){}}, p);
     };
     box.appendChild(el);
   }
@@ -183,14 +209,32 @@ function editProject(p) {
         <div class="onb-sub"></div>
       </div></div>
       <div class="onb-body">
-        <div class="set-title">Název v panelu</div>
-        <input class="ed-label" type="text" placeholder="">
+        <div class="ed-grid">
+          <label><span>Název v panelu</span>
+            <input class="ed-label" type="text"></label>
+          <label><span>Skupina</span>
+            <input class="ed-group" type="text" list="ed-groups"
+                   placeholder="např. Klienti, Vlastní, Archiv"></label>
+        </div>
+        <datalist id="ed-groups"></datalist>
+        <label class="ed-full"><span>GitHub repo</span>
+          <input class="ed-repo" type="text" placeholder="owner/repo"></label>
+        <div class="set-title" style="margin-top:16px">Fotka projektu</div>
+        <div class="ed-photo">
+          <div class="ed-thumb"></div>
+          <div class="ed-photo-btns">
+            <button class="btn ghost ed-pick">Vybrat obrázek…</button>
+            <button class="btn ghost ed-drop">Odebrat</button>
+          </div>
+          <input class="ed-file" type="file" accept="image/*" hidden>
+        </div>
         <div class="set-title" style="margin-top:16px">Briefing</div>
         <div class="set-note">Napiš vlastními slovy, o co v projektu jde — stack,
           hosting, klient, na co si dát pozor. Uloží se do
           <code>CLAUDE.md</code> projektu, takže to Claude Code přečte sám,
           jakmile projekt otevřeš.</div>
-        <textarea class="ed-brief" rows="9" placeholder="Např.: E-shop na vlastním PHP, Wedos hosting, deploy přes FTP…"></textarea>
+        <textarea class="ed-brief" rows="8"
+          placeholder="Např.: E-shop na vlastním PHP, Wedos hosting, deploy přes FTP…"></textarea>
       </div>
       <div class="onb-foot">
         <button class="btn ghost ed-archive"></button>
@@ -200,15 +244,57 @@ function editProject(p) {
       </div>
     </div>`;
   box.querySelector('.onb-sub').textContent = p.path;
-  const label = box.querySelector('.ed-label');
-  const brief = box.querySelector('.ed-brief');
-  label.placeholder = p.name;
-  label.value = p.label || '';
-  brief.value = p.brief || '';
-  const arch = box.querySelector('.ed-archive');
+  const q = (sel) => box.querySelector(sel);
+  q('.ed-label').placeholder = p.name;
+  q('.ed-label').value = p.label || '';
+  q('.ed-group').value = p.group || '';
+  q('.ed-repo').value = p.repo || '';
+  q('.ed-brief').value = p.brief || '';
+
+  // našeptávač skupin z toho, co už existuje
+  const groups = [...new Set(STATE.projects.map(x => x.group).filter(Boolean))];
+  for (const g of groups) {
+    const o = document.createElement('option');
+    o.value = g;
+    q('#ed-groups').appendChild(o);
+  }
+
+  let image = p.image || '';
+  const paintThumb = () => {
+    const t = q('.ed-thumb');
+    t.textContent = '';
+    if (image) {
+      const img = document.createElement('img');
+      img.src = imageUrl(image);
+      t.appendChild(img);
+    } else {
+      t.textContent = 'bez fotky';
+    }
+    q('.ed-drop').hidden = !image;
+  };
+  paintThumb();
+  q('.ed-pick').onclick = () => q('.ed-file').click();
+  q('.ed-drop').onclick = () => { image = ''; paintThumb(); };
+  q('.ed-file').onchange = async (ev) => {
+    const file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    q('.ed-pick').disabled = true;
+    try {
+      const data = await fileToBase64(file);
+      const r = await api('upload', {name: file.name || 'projekt.png', data});
+      image = r.path;
+      paintThumb();
+    } catch (err) {
+      toast('Obrázek se nepodařilo nahrát: ' + err.message);
+    } finally {
+      q('.ed-pick').disabled = false;
+    }
+  };
+
+  const arch = q('.ed-archive');
   arch.textContent = p.archived ? 'Vrátit z archivu' : 'Archivovat';
   const close = () => box.remove();
-  box.querySelector('.ed-cancel').onclick = close;
+  q('.ed-cancel').onclick = close;
   box.addEventListener('click', (ev) => { if (ev.target === box) close(); });
   arch.onclick = async () => {
     try {
@@ -218,12 +304,16 @@ function editProject(p) {
       toast(p.archived ? 'Vráceno z archivu.' : 'Archivováno.');
     } catch (err) { toast(err.message); }
   };
-  box.querySelector('.ed-save').onclick = async () => {
-    const btn = box.querySelector('.ed-save');
+  q('.ed-save').onclick = async () => {
+    const btn = q('.ed-save');
     btn.disabled = true;
     try {
-      const r = await api('project', {action: 'save', path: p.path,
-                                      label: label.value, brief: brief.value});
+      const r = await api('project', {
+        action: 'save', path: p.path,
+        label: q('.ed-label').value, brief: q('.ed-brief').value,
+        group: q('.ed-group').value, repo: q('.ed-repo').value.trim(),
+        image,
+      });
       close();
       await reload();
       toast(r.briefing && r.briefing.written
@@ -234,7 +324,11 @@ function editProject(p) {
     }
   };
   document.body.appendChild(box);
-  (p.brief ? brief : label).focus();
+  q('.ed-label').focus();
+}
+
+function imageUrl(path) {
+  return `/api/image?t=${encodeURIComponent(TOKEN)}&path=${encodeURIComponent(path)}`;
 }
 
 function renderMemory() {
@@ -748,6 +842,10 @@ function projectMenu(ev, p) {
     {icon: 'i-deploy', label: p.deployable ? 'Deploy (FTP)' : 'Deploy',
      run: () => openTab({kind: 'deploy', path: p.path, title: 'deploy: ' + p.name})},
   ];
+  if (p.repo) {
+    items.push({icon: 'i-push', label: 'Otevřít na GitHubu',
+      run: () => openExternal('https://github.com/' + p.repo)});
+  }
   if (STATE.skills.includes('project')) {
     items.push({icon: 'i-note', label: 'Poznámka do paměti (/project)',
       run: () => openTab({kind: 'slash:project', path: p.path, title: 'note: ' + p.name})});

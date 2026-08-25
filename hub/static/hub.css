@@ -604,3 +604,39 @@ body { display: flex; flex-direction: column; }
 .wcol-item:hover { background: var(--bg-card); color: var(--fg-bright); }
 .wcol-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wcol-note { color: var(--dim); font-size: 11px; flex: none; }
+
+/* ── skupiny, fotky, editor ──────────────────────────────────────────────── */
+.group-head {
+  color: var(--section); font-size: 10px; font-weight: 700; letter-spacing: 1.4px;
+  margin: 12px 12px 4px; padding-top: 6px; border-top: 1px solid var(--border);
+}
+.cards > .group-head:first-child { border-top: none; padding-top: 0; margin-top: 4px; }
+.card-thumb {
+  flex: none; width: 34px; height: 34px; border-radius: 7px; overflow: hidden;
+  background: var(--bg-card); border: 1px solid var(--border);
+}
+.card-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.ed-grid { display: flex; gap: 12px; flex-wrap: wrap; }
+.ed-grid label, .ed-full { flex: 1 1 200px; display: block; }
+.ed-full { margin-top: 12px; }
+.onb-body label > span {
+  display: block; font-size: 12px; font-weight: 600; color: var(--fg-bright);
+  margin-bottom: 4px;
+}
+.onb-body input[type="text"] {
+  width: 100%; box-sizing: border-box;
+  background: var(--bg-card); color: var(--fg-bright);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 9px 11px; font-size: 13px; font-family: inherit;
+}
+.onb-body input[type="text"]:focus { outline: none; border-color: var(--amber); }
+.ed-photo { display: flex; align-items: center; gap: 12px; }
+.ed-thumb {
+  width: 76px; height: 76px; flex: none; border-radius: 9px; overflow: hidden;
+  background: var(--bg-card); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--dim); font-size: 10.5px; text-align: center;
+}
+.ed-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.ed-photo-btns { display: flex; gap: 8px; flex-wrap: wrap; }

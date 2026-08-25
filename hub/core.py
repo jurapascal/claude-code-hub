@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 
 IS_WINDOWS = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
@@ -336,15 +337,18 @@ def get_projects():
                 ptype = "Node"
             else:
                 ptype = "Git"
-            branch, dirty_count = "", 0
+            branch, dirty_count, remote = "", 0, ""
             if is_git and GIT:
                 branch = run([GIT, "branch", "--show-current"], cwd=path)
                 status = run([GIT, "status", "--porcelain"], cwd=path)
                 dirty_count = len(status.split("\n")) if status else 0
+                remote = github_slug(run([GIT, "remote", "get-url", "origin"],
+                                         cwd=path))
             projects.append({
                 "name": d, "path": path, "type": ptype,
                 "branch": branch, "dirty": dirty_count,
                 "deployable": os.path.isfile(os.path.join(path, ".ftp-deploy.json")),
+                "remote": remote,
             })
 
     # Ručně přidané složky se skenem nenajdou — leží mimo nastavené cesty.
@@ -388,8 +392,13 @@ def get_projects():
         info = meta.get(os.path.abspath(proj["path"]), {})
         proj["label"] = info.get("label", "")
         proj["brief"] = info.get("brief", "")
+        proj["group"] = info.get("group", "")
+        proj["image"] = info.get("image", "")
+        # Ručně zadané repo přebíjí to z gitu — někdo může chtít ukázat jinam.
+        proj["repo"] = info.get("repo") or proj.get("remote", "")
         proj["archived"] = bool(info.get("archived"))
-    projects.sort(key=lambda p: (p["archived"], (p["label"] or p["name"]).lower()))
+    projects.sort(key=lambda p: (p["archived"], (p["group"] or "").lower(),
+                                 (p["label"] or p["name"]).lower()))
     return projects
 
 
@@ -542,6 +551,15 @@ PROJECTS_PATH = os.path.join(CLAUDE_DIR, "hub-projects.json")
 
 BRIEF_START = "<!-- hub:briefing -->"
 BRIEF_END = "<!-- /hub:briefing -->"
+
+
+def github_slug(url):
+    """Z git adresy udělá `owner/repo`, nebo prázdno, když to není GitHub."""
+    url = (url or "").strip()
+    if not url:
+        return ""
+    m = re.search(r"github\.com[:/]+([^/]+)/(.+?)(?:\.git)?/?$", url)
+    return f"{m.group(1)}/{m.group(2)}" if m else ""
 
 
 def load_projects():
@@ -941,14 +959,17 @@ def vault_git_setup(repo_name):
 
     try:
         if not os.path.isdir(os.path.join(BRAIN, ".git")):
+            job_step("vault", "zakládám repo…")
             subprocess.run([GIT, "init", "-q"], cwd=BRAIN, check=True,
                            capture_output=True, timeout=30)
+        job_step("vault", "přidávám poznámky…")
         subprocess.run([GIT, "add", "-A"], cwd=BRAIN, check=True,
                        capture_output=True, timeout=120)
         # Prázdný commit projde taky — jde o to mít co pushnout.
         subprocess.run([GIT, "commit", "-q", "--allow-empty",
                         "-m", "paměť: první záloha"],
                        cwd=BRAIN, capture_output=True, timeout=120)
+        job_step("vault", "posílám na GitHub…")
         existing = run([GIT, "remote", "get-url", "origin"], cwd=BRAIN)
         if not existing:
             r = subprocess.run(
@@ -1140,34 +1161,54 @@ def _fetch_source():
         return False, f"stažení nevyšlo: {exc}"[:300]
 
 
-# Aktualizace trvá i minuty (klon + instalačka). Držet na ní otevřený HTTP
-# požadavek znamená, že se stránka po reloadu nebo zavření okna nikdy nedozví,
-# jak dopadla — přesně to se stalo. Běží proto na pozadí a stav se odečítá.
-_UPDATE = {"running": False, "done": False, "result": None, "step": ""}
+# Cokoli, co trvá déle než okamžik, se nesmí dělat uvnitř HTTP požadavku:
+# stránka na něm visí, a když se okno mezitím zavře nebo načte znovu, výsledek
+# se nemá kam vrátit. Přesně to se stalo u aktualizace i u zálohy paměti do
+# gitu (`gh repo create --push` na patnáctimegovém vaultu chvíli trvá).
+# Běží proto na pozadí pod jménem a stav se odečítá.
+_JOBS = {}
+_JOBS_LOCK = threading.Lock()
 
 
-def update_state():
-    return dict(_UPDATE)
+def job_state(name):
+    with _JOBS_LOCK:
+        return dict(_JOBS.get(name) or
+                    {"running": False, "done": False, "result": None, "step": ""})
 
 
-def start_update():
-    """Spustí aktualizaci na pozadí. Vrací False, když už jedna běží."""
-    import threading
-    if _UPDATE["running"]:
-        return False
-    _UPDATE.update({"running": True, "done": False, "result": None,
-                    "step": "stahuju zdroj…"})
+def job_step(name, text):
+    with _JOBS_LOCK:
+        if name in _JOBS:
+            _JOBS[name]["step"] = text
+
+
+def start_job(name, fn):
+    """Spustí fn() na pozadí pod jménem. False, když už jedna běží."""
+    with _JOBS_LOCK:
+        if (_JOBS.get(name) or {}).get("running"):
+            return False
+        _JOBS[name] = {"running": True, "done": False, "result": None,
+                       "step": "začínám…"}
 
     def worker():
         try:
-            result = update_hub()
-        except Exception as exc:                     # pojistka, ať stav nezůstane viset
+            result = fn()
+        except Exception as exc:          # pojistka, ať stav nezůstane viset
             result = {"ok": False, "detail": str(exc)[:300]}
-        _UPDATE.update({"running": False, "done": True, "result": result,
-                        "step": ""})
+        with _JOBS_LOCK:
+            _JOBS[name] = {"running": False, "done": True, "result": result,
+                           "step": ""}
 
     threading.Thread(target=worker, daemon=True).start()
     return True
+
+
+def update_state():
+    return job_state("update")
+
+
+def start_update():
+    return start_job("update", update_hub)
 
 
 def update_hub():
@@ -1176,7 +1217,7 @@ def update_hub():
     ok, detail = _fetch_source()
     if not ok:
         return {"ok": False, "detail": detail}
-    _UPDATE["step"] = "instaluju…"
+    job_step("update", "instaluju…")
     installer = os.path.join(SRC_DIR, "install.sh")
     if IS_WINDOWS:
         installer = os.path.join(SRC_DIR, "install.ps1")
