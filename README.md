@@ -32,6 +32,11 @@ dělá jednu aplikaci:
   zobrazí, jen když je odpovídající příkaz nainstalovaný.
 - **Reload nezabíjí session** — terminály běží v serveru, ne ve stránce. Když se okno
   načte znovu, hub se připojí zpátky k běžícím Claude session a dohraje jejich výpis.
+- **Obrázky** — screenshot ze schránky (Ctrl+V) nebo soubor přetažený do tabu se uloží
+  a do promptu se vypíše jeho cesta, takže si ho Claude rovnou přečte.
+- **Diakritika** — háčky a čárky chodí přes vstupní metodu systému jako composition
+  events; hub je bere na sebe (`hub/static/ime.js`), protože xterm.js je při rychlejším
+  psaní slepuje a do řádku pak teče nashromážděný balast.
 - **Dark/light** — řídí se motivem systému, přepínač v hlavičce.
 - **Obsidian paměť (volitelné)** — když máš vault, panel ukáže poslední poznámky
   (learnings/errors/wins) a klikem je otevře v Obsidianu. Bez vaultu se sekce
@@ -80,50 +85,68 @@ sudo apt install gir1.2-webkit2-4.1     # nebo prostě chromium
 
 ## Instalace
 
-### Linux / macOS
+Jeden řádek, ať už na stroji je cokoli:
 
 ```bash
-git clone https://github.com/jurapascal/claude-code-hub.git
-cd claude-code-hub
-bash install.sh
+curl -fsSL https://raw.githubusercontent.com/jurapascal/claude-code-hub/main/get.sh | bash
 ```
+
+Stáhne repo do `~/.claude/hub-src` a spustí instalačku. Podruhé spuštěný stejný
+příkaz hub **zaktualizuje**.
 
 ### Windows
 
 V PowerShellu (**bez** práv správce):
 
 ```powershell
-git clone https://github.com/jurapascal/claude-code-hub.git
-cd claude-code-hub
-powershell -ExecutionPolicy Bypass -File install.ps1
+irm https://raw.githubusercontent.com/jurapascal/claude-code-hub/main/get.ps1 | iex
 ```
 
-Instalačka nabídne doinstalovat, co chybí (Python, Git for Windows, Claude Code CLI,
-Obsidian, GitHub CLI — všechno přes `winget`), sama přidá `pywinpty`, vyrobí zástupce
-**Claude Code** v nabídce Start a volitelně na ploše. Zástupce spouští `pythonw.exe`,
-takže se vedle okna neotevírá černá konzole; kdyby okno zůstalo prázdné, důvod je
-v `%USERPROFILE%\.claude\hub.log`.
+Zástupce **Claude Code** v nabídce Start spouští `pythonw.exe`, takže se vedle okna
+neotevírá černá konzole; kdyby okno zůstalo prázdné, důvod je v
+`%USERPROFILE%\.claude\hub.log`.
 
-### Obě platformy
+### Z klonu
 
-Instalátor se zeptá (s předvyplněnou detekcí), kde máš projekty a jestli máš Obsidian
-vault, zapíše to do `~/.claude/hub-config.json`, nakopíruje appku do `~/.claude/`
-a vyrenderuje slash příkazy. Existující soubory zálohuje (`*.backup-<datum>`) a do
-`~/.claude/settings.json` nesahá.
+```bash
+git clone https://github.com/jurapascal/claude-code-hub.git
+cd claude-code-hub
+bash install.sh                                          # Linux / macOS
+powershell -ExecutionPolicy Bypass -File install.ps1     # Windows
+```
 
-Na čerstvém stroji cestou nabídne i to, bez čeho by hub sice běžel, ale nebylo by
-s ním co dělat — vždycky otázkou, nikdy potichu:
+### Co instalačka udělá
 
-| Nabídne | Co udělá |
+Zapíše, kde máš projekty a paměť, do `~/.claude/hub-config.json`, nakopíruje appku
+do `~/.claude/` a vyrenderuje slash příkazy. Existující soubory zálohuje
+(`*.backup-<datum>`).
+
+Všechno, bez čeho by hub sice běžel, ale nebylo by s ním co dělat, **doinstaluje
+sama** — otázka navíc byla hlavní důvod, proč instalace nebyla rychlá:
+
+| Nasadí | Co udělá |
 |---|---|
 | **Obsidian** | `winget install Obsidian.Obsidian`, na Linuxu flatpak z Flathubu (jinak snap), na macOS `brew --cask` |
-| **prázdný vault** | když žádný nenajde: `~/Obsidian/Claude-Brain` s `memory/`, `skills/` a rozcestníkem `MEMORY.md` — teprve tím se zapnou `/save`, `/learn`, `/project`, `/skill` |
+| **vault** | naklonuje ten tvůj z gitu, nebo založí `~/Obsidian/Claude-Brain` s `memory/`, `skills/` a rozcestníkem `MEMORY.md` — teprve tím se zapnou `/save`, `/learn`, `/project`, `/skill` |
 | **GitHub CLI** | `winget install GitHub.cli` / apt / dnf / pacman / snap / brew, pak `gh auth login` + `gh auth setup-git` |
 | **Playwright MCP** | prohlížeč pro Claude Code (~115 MB, potřebuje Node.js 20+) |
-| **přihlášení** | spustí `claude`, projdeš `/login` a dáš `/exit` |
+| **hooky** | `Stop` (uloží stav session) a `SessionStart` (načte kategorie skillů z vaultu a stav minulé session) do `settings.json` |
 
-`--yes` (resp. `-Yes`) = bez otázek, jen detekce — v tom režimu se nic z tabulky
-neinstaluje, jen se vypíše, co chybí.
+Zeptá se jen na to, co uhádnout nejde:
+
+- **kde máš paměť** — adresa vault repa, nebo Enter a založí prázdný,
+- **bypass režim** — jestli má Claude přestat ptát se na potvrzení u každého
+  příkazu a úpravy souboru. Rychlejší, ale běží bez brzdy; zapínej to jen na
+  vlastním stroji. Kdykoli později `/permissions`.
+- **přihlášení** do GitHubu a do Claude Code.
+
+`settings.json` je tvůj: instalačka do něj jen **přidá**, co chybí, předtím ho
+zazálohuje a vlastního hooku na stejnou událost se nedotkne. Rozbitý JSON nechá být.
+
+| Přepínač | Co udělá |
+|---|---|
+| `--yes` / `-Yes` | bez otázek — doinstaluje, co jde, přihlášení a bypass přeskočí |
+| `--minimal` | jen hub: nic nedoinstalovává, do `settings.json` nesahá |
 
 Když něco nehraje:
 
@@ -210,6 +233,8 @@ i typ (Git / Node / PHP / Shopify).
 ## Obsah repa
 
 ```
+get.sh                    jednořádková instalace (curl … | bash) — stáhne repo a spustí install.sh
+get.ps1                   totéž pro Windows (irm … | iex)
 install.sh                instalačka pro Linux/macOS
 make-zip.sh               balíček k rozeslání (ZIP + návod pro příjemce, bez gitu a GitHubu)
 install.ps1               instalačka pro Windows (winget, zástupci, pywinpty)
@@ -220,11 +245,14 @@ hub/pty_backend.py        pty: stdlib na Linux/macOS, pywinpty na Windows
 hub/window.py             hostitel okna: chromium --app → WebKitGTK → prohlížeč
 hub/static/               UI (index.html, hub.css, hub.js) + přibalený xterm.js
 claude-wrapper.sh         boot sekvence před spuštěním claude + restart po ctrl+c
+hub/static/ime.js         vstup s diakritikou — composition events místo xterm.js
 hooks/save-session.py     Stop hook — uloží stav projektů do session-state.md
+hooks/session-start.py    SessionStart hook — kategorie skillů z vaultu + stav minulé session
+tools/settings_merge.py   přidá hooky (a volitelně bypass) do settings.json, se zálohou
 skills/<jméno>/SKILL.md   šablony slash příkazů ({{MEMORY_DIR}} apod. doplní instalátor)
 legacy/claude-hub-gtk.py  původní GTK 3 + VTE verze (Linux only, už se neinstaluje)
 hub-config.example.json   vzor konfigurace
-settings.example.json     vzor zapojení Stop hooku (bez jakýchkoli klíčů)
+settings.example.json     vzor zapojení hooků (bez jakýchkoli klíčů)
 assets/                   ikona (.png pro Linux, .ico pro Windows)
 assets/vault/MEMORY.md    rozcestník paměti pro nově založený vault
 ```

@@ -363,6 +363,10 @@ $HasVault = (Test-Path $MemoryDir)
 if ($HasVault) { Write-Ok "paměť: $MemoryDir" }
 else { Write-Info 'bez Obsidian vaultu — paměťové příkazy a panel paměti se přeskočí' }
 
+# Co skutečně stojí v konfigu (i když ho instalačka teď nepsala) — šablony
+# skillů to potřebují, aby /newsletter a spol. hledaly projekty na správném místě.
+$ProjectDirsList = (@($cfg.project_dirs) | ForEach-Object { To-Slash $_ }) -join ', '
+
 # ── 7. Aplikace do ~\.claude ─────────────────────────────────────────────────
 New-Item -ItemType Directory -Force -Path (Join-Path $ClaudeDir 'hooks') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $ClaudeDir 'skills') | Out-Null
@@ -378,7 +382,12 @@ function Copy-Tracked($from, $to) {
 
 Copy-Tracked (Join-Path $Src 'claude-hub.py')         (Join-Path $ClaudeDir 'claude-hub.py')
 Copy-Tracked (Join-Path $Src 'claude-wrapper.sh')     (Join-Path $ClaudeDir 'claude-wrapper.sh')
-Copy-Tracked (Join-Path $Src 'hooks\save-session.py') (Join-Path $ClaudeDir 'hooks\save-session.py')
+Copy-Tracked (Join-Path $Src 'hooks\save-session.py')  (Join-Path $ClaudeDir 'hooks\save-session.py')
+Copy-Tracked (Join-Path $Src 'hooks\session-start.py') (Join-Path $ClaudeDir 'hooks\session-start.py')
+# tools\ potřebuje sekce 10 (merge settings.json) i pozdější spuštění ručně
+$toolsDest = Join-Path $ClaudeDir 'tools'
+if (Test-Path $toolsDest) { Remove-Item $toolsDest -Recurse -Force }
+Copy-Item (Join-Path $Src 'tools') $toolsDest -Recurse -Force
 # hub\ je celý náš — nahrazuje se vcelku, aby po updatu nezůstaly staré soubory
 $hubDest = Join-Path $ClaudeDir 'hub'
 if (Test-Path $hubDest) { Remove-Item $hubDest -Recurse -Force }
@@ -402,7 +411,8 @@ foreach ($dir in Get-ChildItem -Path (Join-Path $Src 'skills') -Directory) {
     $target = Join-Path $ClaudeDir "skills\$($dir.Name)"
     New-Item -ItemType Directory -Force -Path $target | Out-Null
     (Get-Content $skillFile -Raw -Encoding UTF8).
-        Replace('{{MEMORY_DIR}}',  (To-Slash $MemoryDir)).
+        Replace('{{MEMORY_DIR}}',   (To-Slash $MemoryDir)).
+        Replace('{{PROJECT_DIRS}}', $ProjectDirsList).
         Replace('{{SKILLS_DIR}}',  (To-Slash $BrainSkills)).
         Replace('{{CLAUDE_DIR}}',  (To-Slash $ClaudeDir)).
         Replace('{{FTP_DEPLOY}}',  (To-Slash (Join-Path $ClaudeDir 'ftp-deploy.sh'))).
@@ -434,19 +444,36 @@ if (Ask-YesNo 'Přidat zástupce i na plochu?') {
     Write-Ok 'zástupce na ploše'
 }
 
-# ── 10. Hook na ukládání session (settings.json nesaháme) ─────────────────────
-$settings = Join-Path $ClaudeDir 'settings.json'
-if ((Test-Path $settings) -and (Select-String -Path $settings -Pattern 'save-session.py' -Quiet)) {
-    Write-Ok 'Stop hook (save-session.py) je v settings.json zapojený'
-} else {
-    Write-Warn "Volitelné: přidej si do $settings blok 'hooks':"
-    $hookCmd = (To-Slash $Python) + ' ' + (To-Slash (Join-Path $ClaudeDir 'hooks\save-session.py'))
-    Write-Dim '"hooks": { "Stop": [ { "hooks": [ { "type": "command",'
-    Write-Dim "    `"command`": `"$hookCmd`", `"timeout`": 10 } ] } ] }"
+# ── 10. Hooky a režim oprávnění v settings.json ──────────────────────────────
+# settings.json je uživatelův (klíče, model, vlastní hooky), takže se do něj
+# nesází šablona — tools\settings_merge.py přidá jen to, co chybí, a předtím
+# udělá zálohu. Stejný skript používá i linuxová instalačka.
+$mergeArgs = @((Join-Path $ClaudeDir 'tools\settings_merge.py'),
+               '--claude-dir', $ClaudeDir, '--python', $Python, '--hooks')
+
+if ($Interactive) {
+    Write-Host ''
+    Write-Info 'Zapnout bypass režim? Claude pak nebude ptát na potvrzení u každého'
+    Write-Dim  'příkazu a úpravy souboru — rychlejší práce, ale běží bez brzdy.'
+    Write-Dim  'Zapni jen na vlastním stroji, kde víš, co ti Claude spouští.'
+    Write-Dim  'Kdykoli později: /permissions v Claude Code.'
+    if (Ask-YesNo 'Zapnout bypass režim?') { $mergeArgs += '--bypass' }
 }
 
-# ── 11. Playwright MCP (volitelné) ───────────────────────────────────────────
-# Prohlížeč pro Claude Code. Poprvé stahuje ~115 MB, takže se ptáme.
+try {
+    & $Python @mergeArgs 2>&1 | ForEach-Object {
+        if     ($_ -match '^chyba:')            { Write-Warn ($_ -replace '^chyba: ', '') }
+        elseif ($_ -match 'vlastní hook')       { Write-Warn $_ }
+        elseif ($_ -match 'nechávám být|beze změny|^už ') { Write-Ok $_ }
+        else                                    { Write-Info $_ }
+    }
+} catch {
+    Write-Warn "settings.json se nepodařilo upravit: $($_.Exception.Message)"
+}
+
+# ── 11. Playwright MCP ───────────────────────────────────────────────────────
+# Prohlížeč pro Claude Code. Poprvé stahuje ~115 MB, ale patří k výbavě, takže
+# se nasazuje sám — jen se to nahlásí.
 # Everything here is optional, and nothing in it may colour the install red.
 # `node` a `npx` hledáme přes Get-Command -CommandType Application (skutečné .exe,
 # ne alias ani funkce z profilu) a voláme je plnou cestou; bez nich se celá sekce
@@ -514,7 +541,8 @@ if (-not $ClaudeCli) {
     Write-Ok 'playwright MCP už je zaregistrovaný'
 } elseif ($nodeMajor -lt 20) {
     Write-Warn "Playwright MCP přeskočen — chce Node.js 20+ (teď: $nodeMajor)"
-} elseif (Ask-YesNo 'Přidat Playwright MCP? (prohlížeč pro Claude Code, stáhne ~115 MB)') {
+} else {
+    Write-Info 'přidávám Playwright MCP (prohlížeč pro Claude Code, stáhne ~115 MB)'
     & $ClaudeCli mcp add playwright -s user -- npx '@playwright/mcp@latest' --browser chromium
     Write-Info 'stahuju prohlížeč (~115 MB, stahuje se jen co chybí)…'
     & $NpxExe -y '@playwright/mcp@latest' install-browser chrome-for-testing

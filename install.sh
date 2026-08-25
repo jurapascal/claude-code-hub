@@ -6,9 +6,15 @@
 # toho vyrenderuje aplikaci i slash příkazy. Nic nepřepíše bez zálohy
 # a do ~/.claude/settings.json nesahá.
 #
+# Ve výchozím režimu doinstaluje všechno, co k hubu patří (Obsidian, GitHub CLI,
+# Playwright MCP, hooky) a ptá se jen na to, co uhádnout nejde: kde máš paměť,
+# jestli chceš bypass režim a jestli se má hned přihlásit.
+#
 # Windows má vlastní install.ps1.
 #
-# Použití: bash install.sh [--yes]     (--yes = bez otázek, jen detekce)
+# Použití: bash install.sh [--yes] [--minimal]
+#     --yes      bez otázek — doinstaluje, co jde, přihlášení a bypass přeskočí
+#     --minimal  jen hub: nic nedoinstalovává, do settings.json nesahá
 set -u
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,8 +26,19 @@ CLONED_VAULT=""
 CONFIG="$CLAUDE_DIR/hub-config.json"
 
 ASSUME_YES=false
-[ "${1:-}" = "--yes" ] && ASSUME_YES=true
-[ -t 0 ] || ASSUME_YES=true   # bez terminálu se neptáme
+MINIMAL=false
+for arg in "$@"; do
+    case "$arg" in
+        --yes) ASSUME_YES=true ;;
+        --minimal) MINIMAL=true ;;
+    esac
+done
+# Přes `curl … | bash` je na stdin skript, ne klávesnice. Terminál uživatele
+# je pořád na /dev/tty, takže se dá ptát dál.
+# Zkouška v subshellu: existence /dev/tty nestačí (bez řídicího terminálu se
+# otevřít nedá) a chybu neúspěšného `exec <` už nejde umlčet po faktu.
+if [ ! -t 0 ] && (exec < /dev/tty) 2>/dev/null; then exec < /dev/tty; fi
+[ -t 0 ] || ASSUME_YES=true   # opravdu bez terminálu se neptáme
 
 A="\033[38;5;208m"; G="\033[38;5;114m"; Y="\033[38;5;180m"; D="\033[2m"; R="\033[0m"
 ok()   { echo -e "  ${G}✓${R} $1"; }
@@ -42,6 +59,21 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 ok "Python 3 ($(python3 --version 2>&1 | cut -d' ' -f2))"
+
+# Diakritika: tab, který naběhne pod LANG=C, ořeže každý znak s háčkem. Hub si
+# UTF-8 locale dopočítá sám (hub/core.py), tady jde jen o to říct, když ho
+# systém nemá vůbec z čeho vzít.
+case "${LC_ALL:-${LANG:-}}" in
+    *UTF-8*|*utf8*|*UTF8*|*utf-8*) ok "locale: ${LC_ALL:-$LANG}" ;;
+    *)
+        if locale -a 2>/dev/null | grep -qiE '(^|\.)(c|C)\.utf-?8$|utf-?8$'; then
+            info "locale je ${LC_ALL:-${LANG:-nenastavené}} — hub si pro taby vynutí UTF-8 sám"
+        else
+            warn "na stroji není žádné UTF-8 locale — čeština se bude v terminálu lámat"
+            echo -e "     ${D}Debian/Ubuntu: sudo locale-gen cs_CZ.UTF-8 && sudo update-locale${R}"
+        fi
+        ;;
+esac
 
 # Okno: chromium v --app režimu, nebo WebKitGTK, jinak zůstane obyčejná záložka.
 WINDOW_HOST=""
@@ -162,25 +194,25 @@ detect_vault() {
 }
 
 echo ""
-if have_obsidian; then
-    ok "Obsidian"
+if $MINIMAL; then
+    info "--minimal: Obsidian ani gh nedoinstalovávám"
 else
-    warn "Obsidian není nainstalovaný — v něm žije paměť (/save, /learn, /project)"
-    if ask "Nainstalovat Obsidian?"; then
-        if install_obsidian; then ok "Obsidian nainstalován"
-        else warn "instalace nevyšla — stáhni ho z https://obsidian.md/download"; fi
+    # Doinstalovává se bez ptaní: obojí k hubu patří (paměť, push) a otázka
+    # navíc byla hlavní důvod, proč instalace nebyla „rychlá".
+    if have_obsidian; then
+        ok "Obsidian"
     else
-        echo -e "     ${D}Ručně: https://obsidian.md/download${R}"
+        info "doinstalovávám Obsidian ${D}(paměť: /save, /learn, /project)${R}"
+        if install_obsidian >/dev/null 2>&1; then ok "Obsidian nainstalován"
+        else warn "nevyšlo — stáhni ho z https://obsidian.md/download"; fi
     fi
-fi
 
-if command -v gh >/dev/null 2>&1; then
-    ok "GitHub CLI ($(command -v gh))"
-else
-    warn "GitHub CLI ('gh') není — bez něj se z tohohle stroje nepushuje na GitHub"
-    if ask "Nainstalovat gh?"; then
-        if install_gh; then ok "gh nainstalován"
-        else warn "instalace nevyšla — návod: https://github.com/cli/cli#installation"; fi
+    if command -v gh >/dev/null 2>&1; then
+        ok "GitHub CLI ($(command -v gh))"
+    else
+        info "doinstalovávám GitHub CLI ${D}(klonování a push)${R}"
+        if install_gh >/dev/null 2>&1; then ok "gh nainstalován"
+        else warn "nevyšlo — návod: https://github.com/cli/cli#installation"; fi
     fi
 fi
 if command -v gh >/dev/null 2>&1 && ! gh auth status >/dev/null 2>&1; then
@@ -268,6 +300,17 @@ PYEOF
     ok "konfig zapsán: $CONFIG"
 fi
 
+# Co skutečně stojí v konfigu (i když ho instalačka teď nepsala) — šablony
+# skillů to potřebují, aby /newsletter a spol. hledaly projekty na správném místě.
+PROJECT_DIRS_LIST="$(python3 -c "
+import json, os, sys
+try:
+    cfg = json.load(open(sys.argv[1]))
+except Exception:
+    cfg = {}
+dirs = [os.path.expanduser(d) for d in cfg.get('project_dirs') or []]
+print(', '.join(d for d in dirs if os.path.isdir(d)))" "$CONFIG" 2>/dev/null)"
+
 VAULT="$(python3 -c "
 import json, os, sys
 try:
@@ -301,12 +344,13 @@ copy() {  # copy <zdroj> <cíl> — existující jiný soubor zazálohuje
 copy "$SRC/claude-hub.py"          "$CLAUDE_DIR/claude-hub.py"
 copy "$SRC/claude-wrapper.sh"      "$CLAUDE_DIR/claude-wrapper.sh"
 copy "$SRC/hooks/save-session.py"  "$CLAUDE_DIR/hooks/save-session.py"
+copy "$SRC/hooks/session-start.py" "$CLAUDE_DIR/hooks/session-start.py"
 # hub/ je celý náš — nahrazuje se vcelku, aby po updatu nezůstaly staré soubory
 rm -rf "$CLAUDE_DIR/hub"
 cp -r "$SRC/hub" "$CLAUDE_DIR/hub"
 find "$CLAUDE_DIR/hub" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null
 chmod +x "$CLAUDE_DIR/claude-hub.py" "$CLAUDE_DIR/claude-wrapper.sh" \
-         "$CLAUDE_DIR/hooks/save-session.py"
+         "$CLAUDE_DIR/hooks/save-session.py" "$CLAUDE_DIR/hooks/session-start.py"
 ok "aplikace v $CLAUDE_DIR"
 
 # ── 5. Slash příkazy ─────────────────────────────────────────────────────────
@@ -326,6 +370,7 @@ for dir in "$SRC"/skills/*/; do
     fi
     mkdir -p "$CLAUDE_DIR/skills/$name"
     sed -e "s|{{MEMORY_DIR}}|$MEMORY_DIR|g" \
+        -e "s|{{PROJECT_DIRS}}|$PROJECT_DIRS_LIST|g" \
         -e "s|{{SKILLS_DIR}}|$BRAIN_SKILLS|g" \
         -e "s|{{CLAUDE_DIR}}|$CLAUDE_DIR|g" \
         -e "s|{{FTP_DEPLOY}}|$CLAUDE_DIR/ftp-deploy.sh|g" \
@@ -361,11 +406,32 @@ chmod +x "$APP_DIR/claude-code-hub.desktop"
 update-desktop-database "$APP_DIR" >/dev/null 2>&1
 ok "položka v nabídce aplikací: Claude Code"
 
-# ── 7. Hook na ukládání session (settings.json nesaháme) ─────────────────────
-if grep -q "save-session.py" "$CLAUDE_DIR/settings.json" 2>/dev/null; then
-    ok "Stop hook (save-session.py) je v settings.json zapojený"
+# ── 7. Hooky a režim oprávnění v settings.json ───────────────────────────────
+# settings.json je uživatelův (klíče, model, vlastní hooky), takže se do něj
+# nesází šablona — tools/settings_merge.py přidá jen to, co chybí, a předtím
+# udělá zálohu. Vlastního hooku na stejnou událost se nedotkne.
+BYPASS_FLAG=""
+if ! $MINIMAL && ! $ASSUME_YES; then
+    echo ""
+    info "Zapnout ${A}bypass režim${R}? ${D}Claude pak nebude ptát na potvrzení u každého${R}"
+    echo -e "     ${D}příkazu a úpravy souboru — rychlejší práce, ale běží bez brzdy.${R}"
+    echo -e "     ${D}Zapni jen na vlastním stroji, kde víš, co ti Claude spouští.${R}"
+    echo -e "     ${D}Kdykoli později: /permissions v Claude Code.${R}"
+    ask "Zapnout bypass režim?" && BYPASS_FLAG="--bypass"
+fi
+
+if $MINIMAL; then
+    info "--minimal: do settings.json nesahám"
 else
-    warn "Volitelné: přidej si do $CLAUDE_DIR/settings.json blok 'hooks' ze settings.example.json"
+    python3 "$SRC/tools/settings_merge.py" --claude-dir "$CLAUDE_DIR" \
+        --python python3 --hooks $BYPASS_FLAG 2>&1 | while read -r line; do
+            case "$line" in
+                chyba:*)  warn "${line#chyba: }" ;;
+                *"nechávám být"*|*"beze změny"*|*"už "*) ok "$line" ;;
+                *"vlastní hook"*) warn "$line" ;;
+                *) info "$line" ;;
+            esac
+        done
 fi
 
 # ── 8. Playwright MCP (volitelné) ────────────────────────────────────────────
@@ -394,22 +460,18 @@ add_playwright_mcp() {
 }
 
 NODE_MAJOR="$(node -v 2>/dev/null | sed 's/^v//; s/\..*//')"
-if ! command -v claude >/dev/null 2>&1; then
+echo ""
+if $MINIMAL; then
+    info "--minimal: Playwright MCP přeskočen"
+elif ! command -v claude >/dev/null 2>&1; then
     info "Playwright MCP přeskočen — chybí Claude Code CLI"
 elif claude mcp get playwright >/dev/null 2>&1; then
     ok "playwright MCP už je zaregistrovaný"
 elif [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 20 ]; then
     warn "Playwright MCP přeskočen — chce Node.js 20+ (teď: ${NODE_MAJOR:-žádný})"
-elif $ASSUME_YES; then
-    info "Playwright MCP přeskočen (--yes) — přidáš ho: claude mcp add playwright -s user -- npx @playwright/mcp@latest --browser chromium"
+    echo -e "     ${D}Doinstaluj Node 20+ a spusť instalačku znovu.${R}"
 else
-    echo ""
-    info "Přidat Playwright MCP? ${D}(prohlížeč pro Claude Code, stáhne ~115 MB)${R}"
-    read -r -p "     [a/N]: " ANSWER
-    case "$ANSWER" in
-        [aAyY]*) add_playwright_mcp ;;
-        *) info "přeskočeno — kdykoli později: claude mcp add playwright -s user -- npx @playwright/mcp@latest --browser chromium" ;;
-    esac
+    add_playwright_mcp
 fi
 
 # ── 9. Přihlášení do Claude Code ─────────────────────────────────────────────
