@@ -285,6 +285,8 @@ DARK = {
     "BG_CARD": "#1b2129", "FG": "#d0d0d0", "FG_BRIGHT": "#e6edf3",
     "DIM": "#8b949e", "GREEN": "#3fb950", "RED": "#f85149",
     "CARD_HOVER": "#242b35", "BORDER": "#30363d", "SECTION": "#6e7681",
+    # Krok pro grafy: prošel pásem světlosti i kontrastem na tmavém podkladu.
+    "CHART": "#cf752e",
     # 16-colour terminal palette (Afterglow)
     "TERM_PALETTE": [
         "#151515", "#ac4142", "#7e8e50", "#e5b567", "#6c99bb", "#9f4e85",
@@ -297,6 +299,7 @@ LIGHT = {
     "BG_CARD": "#ffffff", "FG": "#24292f", "FG_BRIGHT": "#1f2328",
     "DIM": "#656d76", "GREEN": "#1a7f37", "RED": "#cf222e",
     "CARD_HOVER": "#eef1f4", "BORDER": "#d0d7de", "SECTION": "#8c959f",
+    "CHART": "#bc5c1c",
     # 16-colour terminal palette (GitHub Light)
     "TERM_PALETTE": [
         "#24292e", "#cf222e", "#116329", "#953800", "#0969da", "#8250df",

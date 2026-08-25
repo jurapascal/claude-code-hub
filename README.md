@@ -50,8 +50,11 @@ dělá jednu aplikaci:
   `CLAUDE.md` projektu, takže si to Claude Code přečte sám, jakmile ho otevřeš.
   Do cizího obsahu se nesahá, blok je ohraničený značkami. `/brief` z něj pak
   vytáhne strukturovaná fakta do poznámky v paměti.
-- **Uvítání** — scéna podle denní doby, kde se naposledy dělalo a co zůstalo
-  rozdělané.
+- **Uvítání** — scéna podle denní doby, kde se naposledy dělalo, co zůstalo
+  rozdělané a pár čísel o používání.
+- **Statistiky** — kolik tokenů, kdy během dne píšeš, které projekty berou
+  nejvíc, a commity z GitHubu. Počítá se z toho, co si Claude Code ukládá do
+  `~/.claude`; nic se nikam neposílá.
 - **Dark/light** — řídí se motivem systému, přepínač v hlavičce.
 - **Obsidian paměť (volitelné)** — když máš vault, panel ukáže poslední poznámky
   (learnings/errors/wins) a klikem je otevře v Obsidianu. Bez vaultu se sekce
@@ -315,6 +318,8 @@ hub/static/ime.js         vstup s diakritikou — composition events místo xter
 hub/static/clipboard.js   schránka přes server (WebKitGTK stránku k ní nepustí)
 hub/static/onboarding.js  průvodce prvním spuštěním
 hub/static/settings.js    nastavení a aktualizace aplikace
+hub/static/stats.js       statistiky používání
+hub/stats.py              počítání statistik z ~/.claude (přírůstkově, s mezipamětí)
 hooks/save-session.py     Stop hook — uloží stav projektů do session-state.md
 hooks/session-start.py    SessionStart hook — kategorie skillů z vaultu + stav minulé session
 tools/settings_merge.py   přidá hooky (a volitelně bypass) do settings.json, se zálohou

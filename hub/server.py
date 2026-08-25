@@ -24,7 +24,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import core, pty_backend
+from . import core, pty_backend, stats
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -395,6 +395,17 @@ class Handler(BaseHTTPRequestHandler):
         if name == "update":
             started = core.start_update()
             return self._json({"started": started, **core.update_state()})
+        if name == "stats":
+            # První výpočet čte skoro gigabajt přepisů, takže na pozadí;
+            # další už jedou z mezipaměti a vrátí se hned.
+            cached = core.job_state("stats")
+            if cached.get("running"):
+                return self._json({"running": True, "step": cached.get("step", "")})
+            if query.get("refresh") or not (cached.get("result") or {}).get("tokens"):
+                core.start_job("stats", lambda: stats.collect(
+                    progress=lambda m: core.job_step("stats", m)))
+                return self._json({"running": True, "step": "počítám…"})
+            return self._json({"running": False, **(cached.get("result") or {})})
         if name == "update-status":
             return self._json(core.update_state())
         if name == "job":

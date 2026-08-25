@@ -40,6 +40,7 @@ const CSS_VARS = {
   AMBER: '--amber', BG: '--bg', BG_SIDEBAR: '--bg-sidebar', BG_CARD: '--bg-card',
   FG: '--fg', FG_BRIGHT: '--fg-bright', DIM: '--dim', GREEN: '--green',
   RED: '--red', CARD_HOVER: '--card-hover', BORDER: '--border', SECTION: '--section',
+  CHART: '--chart',
 };
 
 function palette() { return DARK ? STATE.palette.dark : STATE.palette.light; }
@@ -512,6 +513,7 @@ function renderWelcome() {
   }
 
   renderWelcomeCols();
+  renderWelcomeStats();
 
   const facts = [];
   const mem = STATE.memory || {};
@@ -522,6 +524,78 @@ function renderWelcome() {
   }
   facts.push('verze ' + STATE.version.version);
   $('welcome-facts').textContent = facts.join('  ·  ');
+}
+
+/* Statistiky na úvodu: jen pár čísel a poslední měsíc, zbytek je pod ⧉.
+   Načítá se až po vykreslení a mimo hlavní tok — první výpočet čte skoro
+   gigabajt přepisů a úvodní obrazovka na něj čekat nesmí. */
+let welcomeStatsLoaded = false;
+
+async function renderWelcomeStats(force) {
+  if (welcomeStatsLoaded && !force) return;
+  const box = $('welcome-stats');
+  let data;
+  for (let i = 0; i < 30; i++) {
+    try {
+      data = await api('stats');
+    } catch (_) { return; }
+    if (!data.running) break;
+    await new Promise(r => setTimeout(r, 1200));
+  }
+  if (!data || data.running || !data.tokens) return;
+  welcomeStatsLoaded = true;
+
+  box.textContent = '';
+  const t = data.tokens;
+  const gh = data.github || {};
+  const row = document.createElement('div');
+  row.className = 'wst-row';
+  const add = (value, label) => {
+    const b = document.createElement('button');
+    b.className = 'wst-tile';
+    b.innerHTML = '<span class="wst-value"></span><span class="wst-label"></span>';
+    b.querySelector('.wst-value').textContent = value;
+    b.querySelector('.wst-label').textContent = label;
+    b.onclick = () => HubStats.open(hubIO());
+    row.appendChild(b);
+  };
+  add(statNum(t.out), 'napsaných tokenů');
+  add(statNum(data.prompts), 'zpráv');
+  add(String(data.sessions), 'sezení');
+  if (gh.ok) add(String(gh.commits_year), 'commitů za rok');
+  box.appendChild(row);
+
+  // Posledních 30 dnů — jedna série, měří velikost, proto bez legendy.
+  const days = (data.days || []).slice(-30);
+  if (days.length > 3) {
+    const max = Math.max(1, ...days.map(d => d.prompts));
+    const chart = document.createElement('div');
+    chart.className = 'wst-spark';
+    chart.title = 'Odeslané zprávy za posledních ' + days.length + ' dnů';
+    for (const d of days) {
+      const col = document.createElement('span');
+      col.className = 'wst-col';
+      const bar = document.createElement('span');
+      bar.className = 'wst-bar';
+      bar.style.height = Math.max(d.prompts ? 8 : 0, d.prompts / max * 100) + '%';
+      col.title = `${d.day}: ${d.prompts} zpráv`;
+      col.appendChild(bar);
+      chart.appendChild(col);
+    }
+    box.appendChild(chart);
+    const cap = document.createElement('div');
+    cap.className = 'wst-cap';
+    cap.textContent = 'posledních ' + days.length + ' dnů  ·  klikni pro celé statistiky';
+    box.appendChild(cap);
+  }
+  box.hidden = false;
+}
+
+function statNum(n) {
+  if (n >= 1e9) return (n / 1e9).toFixed(1).replace('.', ',') + ' mld';
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace('.', ',') + ' M';
+  if (n >= 1e3) return Math.round(n / 1e3) + ' tis.';
+  return String(n || 0);
 }
 
 function kdy(ts) {
@@ -1049,6 +1123,7 @@ async function main() {
   $('btn-refresh').onclick = () => reload();
   $('btn-theme').onclick = () => setTheme(!DARK, true);
   $('btn-settings').onclick = () => HubSettings.open({...hubIO(), state: STATE});
+  $('btn-stats').onclick = () => HubStats.open(hubIO());
   $('btn-new-shell').onclick = () => openTab({kind: 'shell', path: '', title: 'terminál'});
   $('btn-new-claude').onclick = () =>
     openTab({kind: 'project', path: STATE.home, title: 'Claude Code'});
