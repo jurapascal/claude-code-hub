@@ -311,6 +311,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": core.open_path(target)})
         if name == "listdir":
             return self._json(listdir(query.get("path", [""])[0]))
+        if name == "upload":
+            try:
+                raw = base64.b64decode(payload.get("data", ""), validate=True)
+            except Exception:
+                return self._json({"error": "Poškozená data."}, 400)
+            if not raw:
+                return self._json({"error": "Prázdný soubor."}, 400)
+            if len(raw) > core.MAX_UPLOAD:
+                return self._json(
+                    {"error": f"Soubor je větší než "
+                              f"{core.MAX_UPLOAD // (1024 * 1024)} MB."}, 413)
+            try:
+                return self._json({"path": core.save_upload(
+                    payload.get("name", ""), raw)})
+            except Exception as exc:
+                return self._json({"error": f"Nepodařilo se uložit: {exc}"}, 500)
         return self._json({"error": "unknown"}, 404)
 
     # ---- websocket ----

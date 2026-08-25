@@ -214,7 +214,12 @@ function createTab({kind, path, title, id}) {
   term.open(pane);
 
   const tab = {ref, id: id || null, title, kind, path, term, fit, pane, exited: false};
-  term.onData(d => { if (tab.id) send({t: 'in', id: tab.id, d}); });
+  const toPty = (d) => { if (tab.id) send({t: 'in', id: tab.id, d}); };
+  term.onData(toPty);
+  // Diacritics arrive from the GTK input method as composition events, which
+  // xterm.js mishandles badly enough to corrupt the line — see ime.js.
+  tab.releaseIME = HubIME.install(term, toPty);
+  wireFiles(tab);
 
   const el = document.createElement('button');
   el.className = 'tab';
@@ -266,6 +271,7 @@ function refit(tab) {
 
 function closeTab(tab) {
   if (tab.id) send({t: 'close', id: tab.id});
+  if (tab.releaseIME) tab.releaseIME();
   tab.term.dispose();
   tab.el.remove();
   tab.pane.remove();
@@ -311,6 +317,72 @@ function wireDrag(el, tab) {
     const order = [...$('tabbar').querySelectorAll('.tab')];
     TABS.sort((a, b) => order.indexOf(a.el) - order.indexOf(b.el));
   };
+}
+
+/* ── pasted and dropped files ─────────────────────────────────────────────── */
+/* A screenshot on the clipboard has no path, and a dropped file's real path is
+ * deliberately hidden from the page — but a path is the only thing a terminal
+ * can be handed. So we write our own copy through the server and type that. */
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('nejde přečíst'));
+    reader.onload = () => resolve(String(reader.result).split(',', 2)[1] || '');
+    reader.readAsDataURL(file);
+  });
+}
+
+function shellQuote(p) {
+  return /[\s"'`$\\]/.test(p) ? `'${p.replace(/'/g, `'\\''`)}'` : p;
+}
+
+async function attachFiles(tab, fileList) {
+  const files = [...fileList].filter(f => f && f.size);
+  if (!files.length || !tab.id) return;
+  const paths = [];
+  for (const file of files) {
+    try {
+      const data = await fileToBase64(file);
+      const res = await api('upload', {name: file.name || 'obrazek.png', data});
+      if (res.path) paths.push(res.path);
+    } catch (err) {
+      toast(`Nepodařilo se přiložit ${file.name || 'soubor'}: ${err.message}`);
+    }
+  }
+  if (!paths.length) return;
+  send({t: 'in', id: tab.id, d: paths.map(shellQuote).join(' ') + ' '});
+  tab.term.focus();
+  toast(paths.length === 1 ? 'Přiloženo: ' + paths[0]
+                           : `Přiloženo ${paths.length} souborů`);
+}
+
+function wireFiles(tab) {
+  const pane = tab.pane;
+  // Capture on the pane so we get there before xterm's own textarea handler:
+  // it would otherwise paste the file's *name* as text. Plain text pastes are
+  // left alone — those xterm does right.
+  pane.addEventListener('paste', (ev) => {
+    const files = ev.clipboardData && ev.clipboardData.files;
+    if (!files || !files.length) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    attachFiles(tab, files);
+  }, true);
+  pane.addEventListener('dragover', (ev) => {
+    if (!ev.dataTransfer || ![...ev.dataTransfer.types].includes('Files')) return;
+    ev.preventDefault();
+    pane.classList.add('dropping');
+  });
+  pane.addEventListener('dragleave', (ev) => {
+    if (ev.target === pane) pane.classList.remove('dropping');
+  });
+  pane.addEventListener('drop', (ev) => {
+    const files = ev.dataTransfer && ev.dataTransfer.files;
+    if (!files || !files.length) return;
+    ev.preventDefault();
+    pane.classList.remove('dropping');
+    attachFiles(tab, files);
+  });
 }
 
 /* Slash commands: type the text, then send Enter as its own keystroke a moment

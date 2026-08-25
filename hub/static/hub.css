@@ -369,6 +369,28 @@ body { display: flex; flex-direction: column; }
   -webkit-user-select: text; user-select: text;
 }
 
+/* ── file drop ───────────────────────────────────────────────────────────── */
+.pane.dropping::after {
+  content: "Pusť sem obrázek nebo soubor — přiloží se k promptu";
+  position: absolute; inset: 6px; z-index: 6;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px dashed var(--amber); border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  color: var(--amber); font-size: 13px; pointer-events: none;
+}
+
+/* ── composition preview ─────────────────────────────────────────────────── */
+/* Dead keys in progress ("ˇ" before it becomes "š"). xterm.js draws its own,
+   but ime.js takes composition away from it to keep the input intact. */
+.ime-preview {
+  position: absolute; z-index: 5;
+  padding: 0 1px;
+  background: var(--amber); color: var(--bg);
+  font-family: inherit; font-size: inherit;
+  white-space: pre; pointer-events: none;
+}
+.ime-preview[hidden] { display: none; }
+
 /* ── scrollbars ──────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }

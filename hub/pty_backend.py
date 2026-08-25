@@ -11,6 +11,7 @@ Both expose the same tiny interface, so the server above never branches on OS:
     p.alive()           -> bool
     p.close()
 """
+import codecs
 import os
 import subprocess
 import time
@@ -58,10 +59,25 @@ class _PosixPty:
             return b""  # fd already closed by close()
 
     def write(self, data):
-        try:
-            os.write(self.master, data)
-        except OSError:
-            pass
+        """Write every byte, or none of the rest.
+
+        os.write on a pty master is a short write as soon as the line discipline
+        buffer fills up, which a paste easily does. Returning after one call
+        would drop the tail — and if the cut lands inside a multi-byte character,
+        what survives is half of an accented letter.
+        """
+        view = memoryview(data)
+        while view:
+            try:
+                n = os.write(self.master, view)
+            except BlockingIOError:
+                time.sleep(_IDLE)
+                continue
+            except OSError:
+                return
+            if n <= 0:
+                return
+            view = view[n:]
 
     def resize(self, cols, rows):
         self._resize_fd(cols, rows)
@@ -97,6 +113,11 @@ class _WindowsPty:
             argv, cwd=cwd, env={str(k): str(v) for k, v in env.items()},
             dimensions=(rows, cols))
         self._closed = False
+        # pywinpty hands us str, so what we write has to be str too — and a
+        # websocket frame can end mid-character. Decoding incrementally keeps
+        # the two halves of an accented letter together instead of turning the
+        # first one into U+FFFD.
+        self._in = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
     def read(self):
         """Block until there is output, or b'' once the child is gone.
@@ -120,7 +141,9 @@ class _WindowsPty:
 
     def write(self, data):
         try:
-            self.proc.write(data.decode("utf-8", "replace"))
+            text = self._in.decode(data)
+            if text:
+                self.proc.write(text)
         except Exception:
             pass
 

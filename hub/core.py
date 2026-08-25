@@ -52,6 +52,10 @@ VAULT_NAME = os.path.basename(BRAIN.replace("\\", "/").rstrip("/"))  # obsidian:
 ICON_PATH = os.path.expanduser(CONFIG["icon"])
 FTP_DEPLOY = os.path.expanduser(CONFIG["ftp_deploy_script"])
 SKILLS_DIR = os.path.join(CLAUDE_DIR, "skills")  # slash commands live here
+# Where a pasted or dropped image is parked so the tab can hand Claude a path.
+IMAGE_DIR = os.path.join(CLAUDE_DIR, "hub-images")
+MAX_UPLOAD = 25 * 1024 * 1024
+KEEP_IMAGES = 200
 # Only keep folders that actually exist — a stock config lists several candidates.
 PROJECT_DIRS = [p for p in (os.path.expanduser(d) for d in CONFIG["project_dirs"])
                 if os.path.isdir(p)]
@@ -162,11 +166,62 @@ def bash_argv(script):
     return [BASH, "-l", "-c", script]
 
 
+def _installed_locales():
+    """Locale names this machine actually has, normalised to lowercase .utf-8."""
+    names = set()
+    for line in run(["locale", "-a"], timeout=3).splitlines():
+        names.add(line.strip().lower().replace(".utf8", ".utf-8"))
+    return names
+
+
+def utf8_locale(current, installed=None):
+    """A UTF-8 locale name to use in place of `current`, or `current` if it is
+    already UTF-8.
+
+    A tab that starts under LANG=C truncates every accented character on its way
+    through readline and the Claude Code TUI, and the app is launched from a
+    desktop shortcut, which is exactly where a stripped environment comes from.
+    We keep the language when there is one and it is actually generated here —
+    naming a locale the machine does not have only earns a setlocale warning on
+    every shell start.
+    """
+    low = (current or "").lower()
+    if "utf-8" in low or "utf8" in low:
+        return current
+    if IS_WINDOWS:                       # Git Bash honours the name, not a locale DB
+        return "en_US.UTF-8"
+    if installed is None:
+        installed = _installed_locales()
+    lang = low.split(".")[0].split("@")[0]
+    candidates = []
+    if lang and lang not in ("c", "posix"):
+        candidates.append(lang + ".utf-8")
+    candidates += ["c.utf-8", "en_us.utf-8"]
+    for cand in candidates:
+        if cand in installed:
+            # Give it back in the conventional casing: cs_CZ.UTF-8, C.UTF-8
+            head, _, _ = cand.partition(".")
+            return ("C" if head == "c" else
+                    (head.split("_")[0] + "_" + head.split("_")[1].upper()
+                     if "_" in head else head)) + ".UTF-8"
+    return current or "C.UTF-8"
+
+
 def child_env():
     env = dict(os.environ)
     env["TERM"] = "xterm-256color"
     env["COLORTERM"] = "truecolor"
     env["CHERE_INVOKING"] = "1"
+    # Everything in a tab — bash, the Claude Code TUI, the hooks — has to agree
+    # that the bytes on the wire are UTF-8, or diacritics arrive as mojibake.
+    installed = None if IS_WINDOWS else _installed_locales()
+    for var in ("LC_ALL", "LC_CTYPE", "LANG"):
+        if env.get(var):
+            env[var] = utf8_locale(env[var], installed)
+    if not env.get("LANG") and not env.get("LC_ALL"):
+        env["LANG"] = utf8_locale("", installed)
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.setdefault("PYTHONUTF8", "1")
     env.pop("LINES", None)
     env.pop("COLUMNS", None)
     return env
@@ -329,6 +384,46 @@ def get_memory():
     entries.sort(key=lambda x: x[0], reverse=True)  # newest first
     recent = [{"kind": k, "title": t, "file": f} for _, k, t, f in entries[:8]]
     return counts, recent
+
+
+_SAFE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".avif",
+             ".pdf", ".txt", ".md", ".csv", ".json", ".log"}
+
+
+def save_upload(name, raw):
+    """Park a pasted/dropped file on disk and return its path.
+
+    The browser never tells us where a dropped file really lives, and a pasted
+    screenshot has no path at all — so the only way to get one into a tab is to
+    write our own copy and type that path at the prompt.
+    """
+    import datetime
+    import re
+    os.makedirs(IMAGE_DIR, exist_ok=True)
+    stem, ext = os.path.splitext(os.path.basename(name or "obrazek.png"))
+    ext = ext.lower() if ext.lower() in _SAFE_EXT else ".png"
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-.")[:40] or "obrazek"
+    path = os.path.join(
+        IMAGE_DIR, f"{datetime.datetime.now():%Y%m%d-%H%M%S}-{stem}{ext}")
+    n = 1
+    while os.path.exists(path):
+        path = path[:-len(ext)] + f"-{n}" + ext
+        n += 1
+    with open(path, "wb") as fh:
+        fh.write(raw)
+    _prune_images()
+    return path
+
+
+def _prune_images():
+    """Keep the folder from growing forever — screenshots add up fast."""
+    try:
+        files = [os.path.join(IMAGE_DIR, n) for n in os.listdir(IMAGE_DIR)]
+        files = [f for f in files if os.path.isfile(f)]
+        for old in sorted(files, key=os.path.getmtime, reverse=True)[KEEP_IMAGES:]:
+            os.remove(old)
+    except Exception:
+        pass
 
 
 def installed_skills():
