@@ -158,6 +158,52 @@ function renderFooter() {
   $('footer').textContent = [STATE.user, date].filter(Boolean).join('  ·  ');
 }
 
+/* Uvítání. Není to jen ozdoba — je to jediná obrazovka, kterou člověk vidí,
+   než něco otevře, takže nese i to, co je dobré vědět hned: co se našlo,
+   kde je paměť a jestli něco chybí. */
+function renderWelcome() {
+  const hour = new Date().getHours();
+  const part = hour < 5 ? 'Dobrou noc' : hour < 10 ? 'Dobré ráno'
+             : hour < 18 ? 'Dobrý den' : 'Dobrý večer';
+  const who = (STATE.user || '').split(/[\s.]/)[0];
+  $('welcome-greet').textContent = part + (who ? ', ' + who : '') + '.';
+
+  const box = $('welcome-actions');
+  box.textContent = '';
+  const cfg = STATE.config.newtab || {};
+  const actions = [];
+  if (cfg.claude !== false) {
+    actions.push(['i-terminal', 'Otevřít Claude Code', true,
+      () => openTab({kind: 'project', path: STATE.home, title: 'Claude Code'})]);
+  }
+  if (cfg.shell !== false) {
+    actions.push(['i-terminal', 'Otevřít terminál', false,
+      () => openTab({kind: 'shell', path: '', title: 'terminál'})]);
+  }
+  actions.push(['i-gear', 'Nastavení', false,
+    () => HubSettings.open({...hubIO(), state: STATE})]);
+  for (const [ico, label, primary, run] of actions) {
+    const b = document.createElement('button');
+    b.className = 'btn ' + (primary ? 'primary' : 'ghost');
+    b.innerHTML = icon(ico) + '<span></span>';
+    b.querySelector('span').textContent = label;
+    b.onclick = run;
+    box.appendChild(b);
+  }
+
+  const facts = [];
+  const count = (STATE.projects || []).length;
+  if (count) facts.push(count + ' projektů v panelu vlevo');
+  const mem = STATE.memory || {};
+  if (mem.enabled) {
+    const total = (mem.counts.learnings || 0) + (mem.counts.errors || 0) +
+                  (mem.counts.wins || 0);
+    facts.push(total ? total + ' poznámek v paměti' : 'paměť připravená');
+  }
+  facts.push('verze ' + STATE.version.version);
+  $('welcome-facts').textContent = facts.join('  ·  ');
+}
+
 function renderDoctor() {
   const d = STATE.doctor, warn = $('welcome-warn');
   const problems = [];
@@ -190,6 +236,7 @@ async function reload() {
   renderActions();
   renderFooter();
   renderDoctor();
+  renderWelcome();
   renderNewTabButtons();
   applyTheme();
 }

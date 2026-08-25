@@ -228,9 +228,10 @@
     const box = section('Aktualizace aplikace',
       'Stáhne novou verzi hubu a přeinstaluje ji. (Tlačítko ⟳ v hlavičce jen ' +
       'znovu načte projekty — s tímhle nemá nic společného.)');
-    const info = el('div', 'set-row');
-    info.appendChild(el('span', 'set-ver', 'Nainstalováno: ' + state.version.version));
-    box.appendChild(info);
+    const info = el('span', 'set-ver', 'Nainstalováno: ' + state.version.version);
+    const infoRow = el('div', 'set-row');
+    infoRow.appendChild(info);
+    box.appendChild(infoRow);
 
     const status = el('div', 'set-status');
     box.appendChild(status);
@@ -265,35 +266,73 @@
       }
     };
 
+    // Aktualizace běží na serveru na pozadí a stav se odečítá — dřív to byl
+    // jeden dlouhý požadavek a stránka na něm zůstala viset s „Stahuju…".
+    async function watchUpdate() {
+      for (;;) {
+        await new Promise(r => setTimeout(r, 1200));
+        let st;
+        try {
+          st = await io.api('update-status');
+        } catch (err) {
+          status.className = 'set-status warn';
+          status.textContent = 'Ztratil jsem spojení se serverem: ' + err.message;
+          return;
+        }
+        if (st.running) {
+          status.textContent = 'Aktualizuju… ' + (st.step || '');
+          continue;
+        }
+        const r = st.result || {};
+        if (!r.ok) {
+          status.className = 'set-status warn';
+          status.textContent = r.detail || 'Aktualizace se nepovedla.';
+        } else if (r.changed) {
+          status.className = 'set-status ok';
+          status.textContent = `✓ Nainstalována verze ${r.now}. ` +
+            'Zavři a znovu otevři aplikaci, ať se načte.';
+          doIt.hidden = true;
+          info.textContent = 'Nainstalováno: ' + r.now;
+        } else {
+          status.className = 'set-status ok';
+          status.textContent = '✓ ' + (r.detail || 'Nic nového.');
+          doIt.hidden = true;
+        }
+        doIt.disabled = false;
+        check.disabled = false;
+        await io.refreshState();
+        state = io.state;
+        return;
+      }
+    }
+
     doIt.onclick = async () => {
       doIt.disabled = true;
       check.disabled = true;
       status.className = 'set-status busy';
-      status.textContent = 'Stahuju a instaluju… (může to chvíli trvat)';
+      status.textContent = 'Aktualizuju…';
       try {
-        const r = await io.api('update');
-        if (!r.ok) {
-          status.className = 'set-status warn';
-          status.textContent = r.detail;
-        } else if (r.changed) {
-          status.className = 'set-status ok';
-          status.textContent =
-            `✓ Aktualizováno na ${r.now}. Zavři a znovu otevři aplikaci, ` +
-            'ať se nová verze načte.';
-          doIt.hidden = true;
-        } else {
-          status.className = 'set-status ok';
-          status.textContent = '✓ ' + r.detail;
-          doIt.hidden = true;
-        }
+        await io.api('update');
       } catch (err) {
         status.className = 'set-status warn';
-        status.textContent = 'Aktualizace selhala: ' + err.message;
-      } finally {
+        status.textContent = 'Nepodařilo se spustit: ' + err.message;
         doIt.disabled = false;
         check.disabled = false;
+        return;
       }
+      watchUpdate();
     };
+
+    // Když se stránka načte během běžící aktualizace, navážeme na ni.
+    io.api('update-status').then(st => {
+      if (st.running) {
+        status.className = 'set-status busy';
+        status.textContent = 'Aktualizuju…';
+        doIt.disabled = true;
+        check.disabled = true;
+        watchUpdate();
+      }
+    }).catch(() => {});
 
     btns.appendChild(check);
     btns.appendChild(doIt);

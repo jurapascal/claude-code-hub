@@ -370,7 +370,10 @@ class Handler(BaseHTTPRequestHandler):
             # Síťový dotaz je zvlášť, aby se na něj nečekalo při každém načtení.
             return self._json(core.version_info(check_remote=True))
         if name == "update":
-            return self._json(core.update_hub())
+            started = core.start_update()
+            return self._json({"started": started, **core.update_state()})
+        if name == "update-status":
+            return self._json(core.update_state())
         return self._json({"error": "unknown"}, 404)
 
     def _vault(self, payload):

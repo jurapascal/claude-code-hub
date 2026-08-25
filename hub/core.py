@@ -787,7 +787,20 @@ SRC_DIR = os.path.join(CLAUDE_DIR, "hub-src")
 
 
 def version():
-    from . import __version__
+    """Verze, která je NAINSTALOVANÁ — čte se ze souboru, ne z importu.
+
+    Běžící proces si modul drží v paměti z okamžiku startu, takže po aktualizaci
+    hlásil pořád tu starou: „aktualizováno" a hned pod tím „je dostupná novější".
+    """
+    path = os.path.join(CLAUDE_DIR, "hub", "__init__.py")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("__version__"):
+                    return line.split("=", 1)[1].strip().strip("\"'")
+    except Exception:
+        pass
+    from . import __version__      # spouštěno z klonu, ne z instalace
     return __version__
 
 
@@ -904,12 +917,43 @@ def _fetch_source():
         return False, f"stažení nevyšlo: {exc}"[:300]
 
 
+# Aktualizace trvá i minuty (klon + instalačka). Držet na ní otevřený HTTP
+# požadavek znamená, že se stránka po reloadu nebo zavření okna nikdy nedozví,
+# jak dopadla — přesně to se stalo. Běží proto na pozadí a stav se odečítá.
+_UPDATE = {"running": False, "done": False, "result": None, "step": ""}
+
+
+def update_state():
+    return dict(_UPDATE)
+
+
+def start_update():
+    """Spustí aktualizaci na pozadí. Vrací False, když už jedna běží."""
+    import threading
+    if _UPDATE["running"]:
+        return False
+    _UPDATE.update({"running": True, "done": False, "result": None,
+                    "step": "stahuju zdroj…"})
+
+    def worker():
+        try:
+            result = update_hub()
+        except Exception as exc:                     # pojistka, ať stav nezůstane viset
+            result = {"ok": False, "detail": str(exc)[:300]}
+        _UPDATE.update({"running": False, "done": True, "result": result,
+                        "step": ""})
+
+    threading.Thread(target=worker, daemon=True).start()
+    return True
+
+
 def update_hub():
     """Stáhne nejnovější verzi a přeinstaluje ji. Nikdy nevyhazuje."""
     was = version()
     ok, detail = _fetch_source()
     if not ok:
         return {"ok": False, "detail": detail}
+    _UPDATE["step"] = "instaluju…"
     installer = os.path.join(SRC_DIR, "install.sh")
     if IS_WINDOWS:
         installer = os.path.join(SRC_DIR, "install.ps1")
@@ -930,15 +974,7 @@ def update_hub():
     if r.returncode != 0:
         return {"ok": False,
                 "detail": ("Instalace selhala:\n" + (r.stderr or r.stdout))[:500]}
-    # Nová verze leží v ~/.claude/hub, ale běžící proces má v paměti tu starou.
-    now = ""
-    try:
-        with open(os.path.join(SRC_DIR, "hub", "__init__.py"), encoding="utf-8") as fh:
-            for line in fh:
-                if line.startswith("__version__"):
-                    now = line.split("=", 1)[1].strip().strip('"\'')
-    except Exception:
-        pass
+    now = version()                # ze souboru, tedy to, co je fakticky nasazené
     changed = bool(now and now != was)
     return {"ok": True, "changed": changed, "was": was, "now": now or was,
             "restart": changed,

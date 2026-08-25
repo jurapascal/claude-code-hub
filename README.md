@@ -240,8 +240,11 @@ po přesunu oslepla.
 a paměť. Aktualizace mění samotnou aplikaci a bydlí v ⚙ → *Aktualizace aplikace*:
 zjistí, jestli je na GitHubu novější vydání, a když ano, stáhne ho a přeinstaluje.
 
-Verze je v `hub/__init__.py` a porovnává se s poslední značkou v repu — po
-složkách, ne jako text, takže `1.10.0` je novější než `1.9.0`. Aktualizace
+Verze se čte **ze souboru nainstalované kopie**, ne z modulu v paměti — jinak
+by aplikace po aktualizaci hlásila pořád tu starou. Porovnává se s poslední
+značkou v repu po složkách, ne jako text, takže `1.10.0` je novější než `1.9.0`.
+Samotná aktualizace běží na serveru na pozadí a stránka se na stav ptá, takže
+ji přežije i reload okna. Aktualizace
 funguje i bez klonu: zdroj si stáhne do `~/.claude/hub-src`.
 
 Z příkazové řádky je to pořád ten samý jeden řádek:
