@@ -140,6 +140,13 @@ práva správce nebo vývojářský režim.
 
 Kdyby okno zůstalo prázdné, důvod je v `%USERPROFILE%\.claude\hub.log`.
 
+Když si chceš ověřit, že na tvém stroji sedí i to, co se z Linuxu vyzkoušet
+nedá (odkazy na složku, ConPTY, jméno složky s pamětí), spusť:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\tools\windows-check.ps1"
+```
+
 ### Z klonu
 
 ```bash
@@ -323,6 +330,7 @@ hub/stats.py              počítání statistik z ~/.claude (přírůstkově, s
 hooks/save-session.py     Stop hook — uloží stav projektů do session-state.md
 hooks/session-start.py    SessionStart hook — kategorie skillů z vaultu + stav minulé session
 tools/settings_merge.py   přidá hooky (a volitelně bypass) do settings.json, se zálohou
+tools/windows-check.ps1   kontrola na Windows: odkazy, ConPTY, schránka, složka paměti
 skills/<jméno>/SKILL.md   šablony slash příkazů ({{MEMORY_DIR}} apod. doplní instalátor)
 legacy/claude-hub-gtk.py  původní GTK 3 + VTE verze (Linux only, už se neinstaluje)
 hub-config.example.json   vzor konfigurace
