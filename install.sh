@@ -345,10 +345,13 @@ copy "$SRC/claude-hub.py"          "$CLAUDE_DIR/claude-hub.py"
 copy "$SRC/claude-wrapper.sh"      "$CLAUDE_DIR/claude-wrapper.sh"
 copy "$SRC/hooks/save-session.py"  "$CLAUDE_DIR/hooks/save-session.py"
 copy "$SRC/hooks/session-start.py" "$CLAUDE_DIR/hooks/session-start.py"
-# hub/ je celý náš — nahrazuje se vcelku, aby po updatu nezůstaly staré soubory
-rm -rf "$CLAUDE_DIR/hub"
+# hub/ a tools/ jsou celé naše — nahrazují se vcelku, aby po updatu nezůstaly
+# staré soubory. tools/ potřebuje sekce 7 (merge settings.json) a je fajn ho mít
+# po ruce i bez repa (memory_index_trim.py).
+rm -rf "$CLAUDE_DIR/hub" "$CLAUDE_DIR/tools"
 cp -r "$SRC/hub" "$CLAUDE_DIR/hub"
-find "$CLAUDE_DIR/hub" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null
+cp -r "$SRC/tools" "$CLAUDE_DIR/tools"
+find "$CLAUDE_DIR/hub" "$CLAUDE_DIR/tools" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null
 chmod +x "$CLAUDE_DIR/claude-hub.py" "$CLAUDE_DIR/claude-wrapper.sh" \
          "$CLAUDE_DIR/hooks/save-session.py" "$CLAUDE_DIR/hooks/session-start.py"
 ok "aplikace v $CLAUDE_DIR"
@@ -423,7 +426,7 @@ fi
 if $MINIMAL; then
     info "--minimal: do settings.json nesahám"
 else
-    python3 "$SRC/tools/settings_merge.py" --claude-dir "$CLAUDE_DIR" \
+    python3 "$CLAUDE_DIR/tools/settings_merge.py" --claude-dir "$CLAUDE_DIR" \
         --python python3 --hooks $BYPASS_FLAG 2>&1 | while read -r line; do
             case "$line" in
                 chyba:*)  warn "${line#chyba: }" ;;
