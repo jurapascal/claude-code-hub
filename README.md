@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:e0843c,100:0d1117&height=210&section=header&text=Claude%20Code%20Hub&fontSize=48&fontAlignY=38&fontColor=ffffff&desc=Ostatn%C3%AD&descAlignY=60&descSize=16&animation=fadeIn" alt="Claude Code Hub" width="100%"/>
+  <img src="assets/hub-wordmark.svg" alt="Claude Code Hub" width="420"/>
 </p>
 
 # Claude Code Hub
@@ -37,6 +37,8 @@ dělá jednu aplikaci:
 - **Diakritika** — háčky a čárky chodí přes vstupní metodu systému jako composition
   events; hub je bere na sebe (`hub/static/ime.js`), protože xterm.js je při rychlejším
   psaní slepuje a do řádku pak teče nashromážděný balast.
+- **Průvodce prvním spuštěním** — vzhled, složky s projekty, kde bydlí paměť
+  a jak se zálohuje. Kdykoli později totéž pod ⚙ v hlavičce.
 - **Dark/light** — řídí se motivem systému, přepínač v hlavičce.
 - **Obsidian paměť (volitelné)** — když máš vault, panel ukáže poslední poznámky
   (learnings/errors/wins) a klikem je otevře v Obsidianu. Bez vaultu se sekce
@@ -213,6 +215,37 @@ pod svým účtem:
 3. Token se uloží do `~/.claude/.credentials.json` na tvém počítači — do repa nepatří
    a je v `.gitignore`.
 
+## Záloha paměti
+
+Vault je obyčejná složka s markdownem, takže „napojení na cloud" znamená jedinou
+věc: ať leží uvnitř složky, kterou už něco synchronizuje. Nastavení nabídne, co
+na stroji najde:
+
+| Volba | Kdy dává smysl |
+|---|---|
+| **privátní repo na GitHubu** | funguje bez doinstalování čehokoli, a na Linuxu je to jediná spolehlivá cesta — OneDrive tam oficiálního klienta nemá; po každém sezení se změny pošlou samy |
+| **složka v cloudu** | OneDrive, Dropbox, Nextcloud, pCloud, MEGA, Syncthing, iCloud — co je na disku, to se nabídne |
+| **vlastní složka** | když máš sync jinde |
+
+Přesun opravuje i symlink `~/.claude/projects/<…>/memory`; bez toho by paměť
+po přesunu oslepla.
+
+## Aktualizace
+
+**Aktualizovat a načíst znovu nejsou totéž.** ⟳ v hlavičce jen přečte projekty
+a paměť. Aktualizace mění samotnou aplikaci a bydlí v ⚙ → *Aktualizace aplikace*:
+zjistí, jestli je na GitHubu novější vydání, a když ano, stáhne ho a přeinstaluje.
+
+Verze je v `hub/__init__.py` a porovnává se s poslední značkou v repu — po
+složkách, ne jako text, takže `1.10.0` je novější než `1.9.0`. Aktualizace
+funguje i bez klonu: zdroj si stáhne do `~/.claude/hub-src`.
+
+Z příkazové řádky je to pořád ten samý jeden řádek:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jurapascal/claude-code-hub/main/get.sh | bash
+```
+
 ## Konfigurace
 
 `~/.claude/hub-config.json` (vzor je [`hub-config.example.json`](hub-config.example.json)):
@@ -246,6 +279,9 @@ hub/window.py             hostitel okna: chromium --app → WebKitGTK → prohl�
 hub/static/               UI (index.html, hub.css, hub.js) + přibalený xterm.js
 claude-wrapper.sh         boot sekvence před spuštěním claude + restart po ctrl+c
 hub/static/ime.js         vstup s diakritikou — composition events místo xterm.js
+hub/static/clipboard.js   schránka přes server (WebKitGTK stránku k ní nepustí)
+hub/static/onboarding.js  průvodce prvním spuštěním
+hub/static/settings.js    nastavení a aktualizace aplikace
 hooks/save-session.py     Stop hook — uloží stav projektů do session-state.md
 hooks/session-start.py    SessionStart hook — kategorie skillů z vaultu + stav minulé session
 tools/settings_merge.py   přidá hooky (a volitelně bypass) do settings.json, se zálohou
@@ -253,6 +289,8 @@ skills/<jméno>/SKILL.md   šablony slash příkazů ({{MEMORY_DIR}} apod. dopln
 legacy/claude-hub-gtk.py  původní GTK 3 + VTE verze (Linux only, už se neinstaluje)
 hub-config.example.json   vzor konfigurace
 settings.example.json     vzor zapojení hooků (bez jakýchkoli klíčů)
+assets/hub-mark.svg       značka — z ní se generuje .png i .ico
+assets/hub-wordmark.svg   logo se jménem (řídí se motivem čtenáře)
 assets/                   ikona (.png pro Linux, .ico pro Windows)
 assets/vault/MEMORY.md    rozcestník paměti pro nově založený vault
 ```

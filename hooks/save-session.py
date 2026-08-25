@@ -9,6 +9,7 @@ config it falls back to sensible defaults and writes the state into ~/.claude/.
 """
 import os
 import json
+import shutil
 import subprocess
 import datetime
 
@@ -168,9 +169,40 @@ Automaticky uloženo při ukončení session.
 """
 
     os.makedirs(STATE_DIR, exist_ok=True)
-    with open(STATE_FILE, "w") as f:
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
         f.write(content)
+
+
+def sync_vault():
+    """Pošle paměť do gitu, když si to uživatel v nastavení zapnul.
+
+    Běží jako poslední krok Stop hooku, takže musí být tichý a rychlý: když
+    není co poslat nebo push nevyjde, session tím nesmí spadnout.
+    """
+    if not CONFIG.get("vault_autosync"):
+        return
+    brain = os.path.expanduser(CONFIG.get("brain_dir") or "")
+    if not brain or not os.path.isdir(os.path.join(brain, ".git")):
+        return
+    git = shutil.which("git")
+    if not git:
+        return
+    try:
+        changed = subprocess.run([git, "status", "--porcelain"], cwd=brain,
+                                 capture_output=True, text=True, timeout=30)
+        if not changed.stdout.strip():
+            return
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        subprocess.run([git, "add", "-A"], cwd=brain,
+                       capture_output=True, timeout=120)
+        subprocess.run([git, "commit", "-q", "-m", f"paměť: {stamp}"], cwd=brain,
+                       capture_output=True, timeout=120)
+        subprocess.run([git, "push", "-q", "origin", "HEAD"], cwd=brain,
+                       capture_output=True, timeout=180)
+    except Exception:
+        pass                      # záloha se nepovedla — session tím nekončí hůř
 
 
 if __name__ == "__main__":
     main()
+    sync_vault()
