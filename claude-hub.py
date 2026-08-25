@@ -44,6 +44,11 @@ def doctor():
         ("git", info["git"] or "chybí"),
         ("claude CLI", info["claude"] or "chybí (tab bude obyčejný shell)"),
         ("claude-wrapper.sh", info["wrapper"] or "chybí"),
+        # Na Windows je tohle jediná odpověď, která něco znamená: symlink tam
+        # chce práva správce, křižovatka ne — a co projde, se dá jen vyzkoušet.
+        ("odkaz na složku", info["link"] or
+         ("NEJDE — " + info["link_error"] + " (paměť nepůjde napojit)")),
+        ("paměť napojená", f'{info["memory_link"]}  {info["memory_link_path"]}'),
         ("ftp-deploy.sh", info["ftp_deploy"] or "není"),
         ("Obsidian Brain", info["brain"] or "není (paměť vypnutá)"),
         ("složky projektů", ", ".join(info["project_dirs"]) or "žádné"),

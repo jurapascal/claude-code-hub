@@ -1332,9 +1332,51 @@ def cmd_deploy(path):
     return cmd_project(path, "/deploy")
 
 
+def link_selftest():
+    """Zkusí nanečisto vyrobit odkaz na složku. (jak, detail)
+
+    Na Windows je to jediná odpověď, která něco znamená: symlink tam chce práva
+    správce nebo vývojářský režim, křižovatka nechce nic — a co z toho na tomhle
+    stroji projde, se nedá uhádnout, jen vyzkoušet.
+    """
+    import tempfile
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "cil")
+            os.makedirs(target)
+            link = os.path.join(tmp, "odkaz")
+            how = _make_link(target, link)
+            ok = os.path.realpath(link) == os.path.realpath(target)
+            return (how if ok else ""), ("" if ok else "odkaz nevede na cíl")
+    except Exception as exc:
+        return "", str(exc)[:200]
+
+
+def memory_link_state():
+    """Jak je na tom napojení paměti: (stav, detail).
+
+    Hádaná složka je slabé místo na Windows — jméno si Claude Code tvoří sám
+    a my ho můžeme leda najít. Když tam ještě není, je poctivější to říct než
+    tvářit se, že je napojeno.
+    """
+    link = memory_link_path()
+    parent = os.path.dirname(link)
+    if _is_link(link):
+        return "napojeno", os.path.realpath(link)
+    if os.path.isdir(link):
+        return "vlastní složka", link
+    if os.path.isdir(parent):
+        return "nenapojeno", parent
+    return "složka Claude Code zatím není", parent
+
+
 def doctor():
     """What the hub found on this machine — shown in the UI when something is off."""
+    how, detail = link_selftest()
+    stav, kde = memory_link_state()
     return {
+        "link": how, "link_error": detail,
+        "memory_link": stav, "memory_link_path": kde,
         "platform": "windows" if IS_WINDOWS else ("mac" if IS_MAC else "linux"),
         "bash": BASH,
         "git": GIT,
