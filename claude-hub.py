@@ -25,6 +25,17 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Konzole na Windows píše v systémové stránce (na české instalaci cp1250) a
+# `--doctor` na ní padal na UnicodeEncodeError hned u prvního rámečku. Naměřeno
+# ve virtuálce s Windows 11 Pro. Znaky, které se do stránky nevejdou, ať radši
+# vypadnou jako otazník, než aby shodily celý výpis.
+if sys.platform == "win32":
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
 from hub import core, pty_backend, server, window  # noqa: E402
 
 

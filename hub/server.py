@@ -365,6 +365,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(
                     {"error": "Na tomhle stroji chybí nástroj na schránku "
                               "(xclip / wl-clipboard)."}, 501)
+            if not text and which == "clipboard":
+                # Screenshot na schránce žádný text nemá a terminálu se obrázek
+                # podat nedá — jen cesta k odložené kopii.
+                path = core.clipboard_image()
+                if path:
+                    return self._json({"image": path})
             return self._json({"text": text})
         if name == "upload":
             try:

@@ -16,7 +16,7 @@
  *
  *   Ctrl+C        výběr → schránka; bez výběru projde jako ^C (přerušení)
  *   Ctrl+Shift+C  vždycky kopírovat (konvence terminálu)
- *   Ctrl+V        vložit ze schránky
+ *   Ctrl+V        vložit ze schránky (screenshot jako cesta k souboru)
  *   označení myší → rovnou do schránky i do PRIMARY
  *   pravé         vložit ze schránky
  *   prostřední    vložit z PRIMARY
@@ -25,7 +25,7 @@
 
 (function (global) {
 
-  /* install(term, io) — io: {read, write, notice}. Vrací teardown. */
+  /* install(term, io) — io: {read, write, attach, notice}. Vrací teardown. */
   function install(term, io) {
     const root = term.element;
     if (!root) return () => {};
@@ -42,15 +42,21 @@
     }
 
     async function pasteFrom(which) {
-      let text;
+      let res;
       try {
-        text = await io.read(which);
+        res = await io.read(which);
       } catch (err) {
         io.notice('Ze schránky se nepodařilo číst: ' + err.message);
         return;
       }
+      // Screenshot na schránce žádný text nenese — `xclip -o` na něm hlásí
+      // „target STRING not available" a vrátí prázdno, takže Ctrl+V vyznělo
+      // naprázdno. Terminál obrázek nevezme, jen cestu: server si ho odloží
+      // na disk a my napíšeme ji, stejně jako u přetaženého souboru.
+      if (res && res.image) { io.attach(res.image); return; }
       // term.paste() obalí text bracketed-paste značkami, když je aplikace
       // v tabu čeká — bez toho by víceřádkový text odešel jako řada Enterů.
+      const text = res && res.text;
       if (text) term.paste(text);
     }
 

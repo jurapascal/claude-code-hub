@@ -1337,7 +1337,13 @@ def _clipboard_tools(which):
     if IS_WINDOWS:
         if primary:
             return None, None                      # Windows PRIMARY nezná
-        return (["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
+        # Naměřeno na Windows 11 Pro (kontrola ve virtuálce): „příliš žluťoučký
+        # kůň" projde tam a zpět jako „p??li? ?lu?ou?k? k??". PowerShell sype
+        # stdout v kódování konzole (OEM), ne v UTF-8, a clip.exe čte stdin
+        # stejně — Unicode pozná jen podle UTF-16LE BOM. Obojí se musí říct.
+        return (["powershell", "-NoProfile", "-Command",
+                 "[Console]::OutputEncoding=[Text.Encoding]::UTF8; "
+                 "Get-Clipboard -Raw"],
                 ["clip"])
     if IS_MAC:
         if primary:
@@ -1356,12 +1362,20 @@ def _clipboard_tools(which):
     return None, None
 
 
+# xclip je hotový v řádu milisekund, jenže na Windows se spouští PowerShell a
+# ten studený startuje klidně několik sekund. Se čtyřmi sekundami tam čtení
+# schránky padalo na TimeoutExpired a hub z toho hlásil prázdno — naměřeno na
+# Windows 11 Pro, kde `clipboard_read()` vracelo None u textu, který na schránce
+# prokazatelně byl.
+_CLIP_TIMEOUT = 20 if IS_WINDOWS else 4
+
+
 def clipboard_read(which="clipboard"):
     read_cmd, _ = _clipboard_tools(which)
     if not read_cmd:
         return None
     try:
-        r = subprocess.run(read_cmd, capture_output=True, timeout=4,
+        r = subprocess.run(read_cmd, capture_output=True, timeout=_CLIP_TIMEOUT,
                            creationflags=_NO_WINDOW)
         text = r.stdout.decode("utf-8", "replace")
         if IS_WINDOWS:
@@ -1370,6 +1384,111 @@ def clipboard_read(which="clipboard"):
             if text.endswith("\n"):
                 text = text[:-1]
         return text
+    except Exception:
+        return None
+
+
+# Obrázek na schránce (screenshot) je zvláštní případ: `xclip -o` na něm hlásí
+# „target STRING not available" a vrátí prázdno, takže Ctrl+V vyzní naprázdno.
+# Terminálu se ale obrázek podat nedá — jen cesta k němu. Odložíme si ho tedy
+# na disk stejně jako vložený nebo přetažený soubor a vrátíme cestu.
+_CLIP_IMAGE_TYPES = (("image/png", ".png"), ("image/jpeg", ".jpg"),
+                     ("image/webp", ".webp"), ("image/bmp", ".bmp"))
+
+
+def _clipboard_image_unix():
+    if shutil.which("wl-paste"):
+        r = subprocess.run(["wl-paste", "--list-types"],
+                           capture_output=True, timeout=4)
+        have = r.stdout.decode("utf-8", "replace").split()
+        for mime, ext in _CLIP_IMAGE_TYPES:
+            if mime in have:
+                r = subprocess.run(["wl-paste", "--type", mime],
+                                   capture_output=True, timeout=8)
+                return r.stdout, ext
+        return None, None
+    if shutil.which("xclip"):
+        r = subprocess.run(["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"],
+                           capture_output=True, timeout=4)
+        have = r.stdout.decode("utf-8", "replace").split()
+        for mime, ext in _CLIP_IMAGE_TYPES:
+            if mime in have:
+                r = subprocess.run(["xclip", "-selection", "clipboard", "-t", mime, "-o"],
+                                   capture_output=True, timeout=8)
+                return r.stdout, ext
+    return None, None                      # xsel o cílech neumí říct nic
+
+
+def _clipboard_image_windows():
+    """Snipping Tool a Win+Shift+S nechávají obrázek jen jako bitmapu."""
+    import tempfile
+    fd, tmp = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    try:
+        script = ("Add-Type -AssemblyName System.Windows.Forms,System.Drawing; "
+                  "$i=[Windows.Forms.Clipboard]::GetImage(); "
+                  "if($i){$i.Save('%s',"
+                  "[System.Drawing.Imaging.ImageFormat]::Png)}"
+                  % tmp.replace("'", "''"))
+        # -STA: bez apartmentu pro jedno vlákno schránku Windows nepustí.
+        subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", script],
+                       capture_output=True, timeout=12, creationflags=_NO_WINDOW)
+        if os.path.getsize(tmp):
+            with open(tmp, "rb") as fh:
+                return fh.read(), ".png"
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+    return None, None
+
+
+def _clipboard_image_mac():
+    if shutil.which("pngpaste"):
+        r = subprocess.run(["pngpaste", "-"], capture_output=True, timeout=8)
+        if r.returncode == 0 and r.stdout:
+            return r.stdout, ".png"
+        return None, None
+    import tempfile
+    fd, tmp = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    try:
+        script = ('try\n'
+                  '  set d to the clipboard as \u00abclass PNGf\u00bb\n'
+                  'on error\n'
+                  '  return\n'
+                  'end try\n'
+                  'set f to open for access POSIX file "%s" with write permission\n'
+                  'write d to f\n'
+                  'close access f' % tmp)
+        subprocess.run(["osascript", "-e", script], capture_output=True, timeout=10)
+        if os.path.getsize(tmp):
+            with open(tmp, "rb") as fh:
+                return fh.read(), ".png"
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+    return None, None
+
+
+def clipboard_image():
+    """Cesta k obrázku odloženému ze schránky, nebo None, když tam žádný není."""
+    try:
+        if IS_WINDOWS:
+            raw, ext = _clipboard_image_windows()
+        elif IS_MAC:
+            raw, ext = _clipboard_image_mac()
+        else:
+            raw, ext = _clipboard_image_unix()
+    except Exception:
+        return None
+    if not raw or len(raw) > MAX_UPLOAD:
+        return None
+    try:
+        return save_upload("schranka" + ext, raw)
     except Exception:
         return None
 
@@ -1394,8 +1513,15 @@ def clipboard_write(text, which="clipboard"):
                                 creationflags=_NO_WINDOW)
     except Exception:
         return False
+    # clip.exe bere UTF-8 jako OEM znaky; BOM je jediné, čemu uvěří.
+    payload = (b"\xff\xfe" + text.encode("utf-16-le") if IS_WINDOWS
+               else text.encode("utf-8"))
+    # Na Windows a macOS se čeká na skutečný konec procesu (a tedy na skutečný
+    # návratový kód); pod X je čekání jen krátké, protože tam `xclip` schválně
+    # běží dál a doběhnout nemá proč.
+    wait = _CLIP_TIMEOUT if (IS_WINDOWS or IS_MAC) else 1.0
     try:
-        proc.communicate(input=text.encode("utf-8"), timeout=1.0)
+        proc.communicate(input=payload, timeout=wait)
         return proc.returncode == 0
     except subprocess.TimeoutExpired:
         return True          # drží výběr, jak má

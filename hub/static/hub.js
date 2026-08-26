@@ -717,8 +717,9 @@ function createTab({kind, path, title, id}) {
   tab.releaseIME = HubIME.install(term);
   // WebKitGTK nepustí stránku ke schránce, tak se na ni sahá přes náš server.
   tab.releaseClipboard = HubClipboard.install(term, {
-    read: (which) => api('clipboard?which=' + which).then(r => r.text || ''),
+    read: (which) => api('clipboard?which=' + which),
     write: (text, which) => api('clipboard', {text, which}),
+    attach: (path) => typePaths(tab, [path]),
     notice: toast,
   });
   wireFiles(tab);
@@ -852,7 +853,13 @@ async function attachFiles(tab, fileList) {
       toast(`Nepodařilo se přiložit ${file.name || 'soubor'}: ${err.message}`);
     }
   }
-  if (!paths.length) return;
+  typePaths(tab, paths);
+}
+
+/* Cesta k souboru napsaná na prompt — to je jediné, co terminál od obrázku
+ * vezme. Chodí sem vložené i přetažené soubory a screenshot ze schránky. */
+function typePaths(tab, paths) {
+  if (!paths.length || !tab.id) return;
   send({t: 'in', id: tab.id, d: paths.map(shellQuote).join(' ') + ' '});
   tab.term.focus();
   toast(paths.length === 1 ? 'Přiloženo: ' + paths[0]
@@ -864,6 +871,10 @@ function wireFiles(tab) {
   // Capture on the pane so we get there before xterm's own textarea handler:
   // it would otherwise paste the file's *name* as text. Plain text pastes are
   // left alone — those xterm does right.
+  // Ctrl+V sem nedojde: clipboard.js ho chytá na keydown a ruší mu výchozí
+  // chování, takže se paste vůbec nespustí — obrázek řeší cestou přes server.
+  // Tenhle posluchač zůstává pro Shift+Insert a všechno ostatní, co paste
+  // doopravdy vyvolá.
   pane.addEventListener('paste', (ev) => {
     const cd = ev.clipboardData;
     if (!cd || !cd.files || !cd.files.length) return;
