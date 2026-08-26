@@ -331,13 +331,16 @@ hooks/save-session.py     Stop hook — uloží stav projektů do session-state.
 hooks/session-start.py    SessionStart hook — kategorie skillů z vaultu + stav minulé session
 tools/settings_merge.py   přidá hooky (a volitelně bypass) do settings.json, se zálohou
 tools/windows-check.ps1   kontrola na Windows: odkazy, ConPTY, schránka, složka paměti
+tools/make-icons.py       ze značky vyrobí .png, .ico i favicony (jediná cesta, jak vznikají)
 skills/<jméno>/SKILL.md   šablony slash příkazů ({{MEMORY_DIR}} apod. doplní instalátor)
 legacy/claude-hub-gtk.py  původní GTK 3 + VTE verze (Linux only, už se neinstaluje)
 hub-config.example.json   vzor konfigurace
 settings.example.json     vzor zapojení hooků (bez jakýchkoli klíčů)
-assets/hub-mark.svg       značka — z ní se generuje .png i .ico
+assets/hub-mark.svg       značka — zdroj všech ikon (tools/make-icons.py)
 assets/hub-wordmark.svg   logo se jménem (řídí se motivem čtenáře)
-assets/                   ikona (.png pro Linux, .ico pro Windows)
+assets/claude-code.png    ikona okna a nabídky aplikací na Linuxu
+assets/claude-code.ico    ikona zástupců na Windows (16–64 px jako BMP, 128/256 jako PNG)
+hub/static/favicon.ico    ikona okna na Windows — bere se z favicony, ne ze zástupce
 assets/vault/MEMORY.md    rozcestník paměti pro nově založený vault
 ```
 

@@ -471,11 +471,34 @@ function New-Shortcut($path) {
     $link.Save()
 }
 
+# Do 1.3.2 se zástupce jmenoval „Claude Code" — tedy stejně jako CLI, se kterým
+# se v nabídce Start pletl. Starý smažeme, ale jen když je doopravdy náš (míří na
+# claude-hub.py), ať nesáhneme na zástupce, kterého si udělal někdo sám.
+function Remove-OurOldShortcut($path) {
+    if (-not (Test-Path $path)) { return $false }
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        if ($shell.CreateShortcut($path).Arguments -notlike '*claude-hub.py*') { return $false }
+        Remove-Item $path -Force
+        return $true
+    } catch { return $false }
+}
+
 $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
-New-Shortcut (Join-Path $startMenu 'Claude Code.lnk')
-Write-Ok 'zástupce v nabídce Start: Claude Code'
-if (Ask-YesNo 'Přidat zástupce i na plochu?') {
-    New-Shortcut (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Claude Code.lnk')
+if (Remove-OurOldShortcut (Join-Path $startMenu 'Claude Code.lnk')) {
+    Write-Dim 'starý zástupce „Claude Code" v nabídce Start nahrazen'
+}
+New-Shortcut (Join-Path $startMenu 'Claude Code Hub.lnk')
+Write-Ok 'zástupce v nabídce Start: Claude Code Hub'
+
+# Na ploše se neptáme znovu toho, kdo zástupce už má — jen ho přejmenujeme.
+$desktopOld = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Claude Code.lnk'
+$desktopNew = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Claude Code Hub.lnk'
+if ((Remove-OurOldShortcut $desktopOld) -or (Test-Path $desktopNew)) {
+    New-Shortcut $desktopNew
+    Write-Ok 'zástupce na ploše: Claude Code Hub'
+} elseif (Ask-YesNo 'Přidat zástupce i na plochu?') {
+    New-Shortcut $desktopNew
     Write-Ok 'zástupce na ploše'
 }
 
@@ -610,7 +633,7 @@ if ($ClaudeCli) {
 try { & $Python (Join-Path $ClaudeDir 'claude-hub.py') --doctor } catch { }
 
 Write-Host ''
-Write-Host '  ✦ Hotovo. Spusť zástupce Claude Code v nabídce Start.' -ForegroundColor DarkYellow
+Write-Host '  ✦ Hotovo. Spusť zástupce Claude Code Hub v nabídce Start.' -ForegroundColor DarkYellow
 Write-Dim  "Kontrola prostředí:  `"$Python`" `"$(Join-Path $ClaudeDir 'claude-hub.py')`" --doctor"
 Write-Dim  'První spuštění Claude Code: v tabu napiš /login a přihlas se svým účtem.'
 Write-Dim  "Kdyby okno zůstalo prázdné, důvod je v $(Join-Path $ClaudeDir 'hub.log')"

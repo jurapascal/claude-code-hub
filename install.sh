@@ -459,18 +459,18 @@ cat > "$APP_DIR/claude-code-hub.desktop" <<EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Claude Code
+Name=Claude Code Hub
 Comment=Claude Code Hub — projekty a paměť v jednom okně s taby
 Icon=$ICON_DIR/claude-code.png
 Terminal=false
 Categories=Development;Utility;
 Exec=python3 $CLAUDE_DIR/claude-hub.py
 StartupNotify=true
-StartupWMClass=Claude Code
+StartupWMClass=Claude Code Hub
 EOF
 chmod +x "$APP_DIR/claude-code-hub.desktop"
 update-desktop-database "$APP_DIR" >/dev/null 2>&1
-ok "položka v nabídce aplikací: Claude Code"
+ok "položka v nabídce aplikací: Claude Code Hub"
 
 # ── 7. Hooky a režim oprávnění v settings.json ───────────────────────────────
 # settings.json je uživatelův (klíče, model, vlastní hooky), takže se do něj
@@ -557,7 +557,7 @@ fi
 python3 "$CLAUDE_DIR/claude-hub.py" --doctor || true
 
 echo ""
-echo -e "  ${A}✦${R} Hotovo. Spusť: ${D}python3 $CLAUDE_DIR/claude-hub.py${R}  (nebo ikonu Claude Code v nabídce)"
+echo -e "  ${A}✦${R} Hotovo. Spusť: ${D}python3 $CLAUDE_DIR/claude-hub.py${R}  (nebo ikonu Claude Code Hub v nabídce)"
 echo -e "  ${D}Kontrola prostředí:  python3 $CLAUDE_DIR/claude-hub.py --doctor${R}"
 echo -e "  ${D}Když okno zůstane prázdné, důvod je v $CLAUDE_DIR/hub.log${R}"
 echo ""

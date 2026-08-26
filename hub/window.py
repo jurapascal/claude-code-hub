@@ -98,7 +98,7 @@ def _open_chromium(browser, url):
         "--window-size=1360,860",
     ]
     if not core.IS_WINDOWS and not core.IS_MAC:
-        argv.append("--class=Claude Code")  # matches StartupWMClass in the .desktop
+        argv.append("--class=Claude Code Hub")  # matches StartupWMClass in the .desktop
     return subprocess.Popen(argv, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL)
 
@@ -116,7 +116,7 @@ def _open_webkit(url, versions):
     # prgname is what Wayland/X11 map to claude-code-hub.desktop, which is where
     # the window gets its icon and its place in the dock.
     GLib.set_prgname("claude-code-hub")
-    GLib.set_application_name("Claude Code")
+    GLib.set_application_name("Claude Code Hub")
 
     view = WebKit.WebView()
     view.load_uri(url)
@@ -125,7 +125,7 @@ def _open_webkit(url, versions):
         Gtk.init()
         window = Gtk.Window()
         window.set_default_size(1360, 860)
-        window.set_title("Claude Code")
+        window.set_title("Claude Code Hub")
         window.set_child(view)
         loop = GLib.MainLoop()
         window.connect("close-request", lambda *_: (loop.quit(), False)[1])
@@ -133,7 +133,7 @@ def _open_webkit(url, versions):
         return loop.run
 
     Gtk.init([])
-    window = Gtk.Window(title="Claude Code")
+    window = Gtk.Window(title="Claude Code Hub")
     window.set_default_size(1360, 860)
     if core.ICON_PATH and os.path.isfile(core.ICON_PATH):
         try:
