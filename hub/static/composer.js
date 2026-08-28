@@ -214,18 +214,36 @@
   }
 
   /* Souvislé kusy textu. Odsazený řádek je ukázka (příkaz, cesta, diff) a
-     patří do neproporcionálního bloku, zbytek je věta. Prázdný řádek kusy
-     odděluje, do karty se sám nedostane. */
+     patří do neproporcionálního bloku, zbytek je věta.
+
+     Věty se přitom slepují dvakrát. Řádky uvnitř odstavce do jedné věty:
+     terminál je zalomil na svoji šířku a v kartě se má text lámat sám, jinak
+     zůstane po zalomení díra uprostřed řádku. A odstavce do jednoho bloku:
+     každý zvlášť by z dotazu udělal sloupec oddělených kousků místo textu,
+     který se dá přečíst v jednom tahu. */
   function bodyBlocks(body) {
     const out = [];
-    for (const line of body) {
-      if (!line.trim()) { out.push(null); continue; }
-      const code = /^\s/.test(line);
+    let para = '';
+
+    function push(code, line) {
       const last = out[out.length - 1];
       if (last && last.code === code) last.lines.push(line);
       else out.push({code, lines: [line]});
     }
-    return out.filter(Boolean);
+
+    function endPara() {
+      if (!para) return;
+      push(false, para);
+      para = '';
+    }
+
+    for (const line of body) {
+      if (!line.trim()) { endPara(); continue; }
+      if (/^\s/.test(line)) { endPara(); push(true, line); continue; }
+      para = para ? para + ' ' + line.trim() : line.trim();
+    }
+    endPara();
+    return out;
   }
 
   /* Nápověda pod volbami. Claude Code tam píše „Enter to confirm · Esc to
@@ -671,10 +689,11 @@
       let blocks = bodyBlocks(body);
       // První krátká věta je nadpis („Bash command", „Accessing workspace:").
       let title = '';
-      if (blocks.length && !blocks[0].code && blocks[0].lines.length === 1 &&
-          blocks[0].lines[0].length <= 70) {
-        title = blocks[0].lines[0];
-        blocks = blocks.slice(1);
+      const head = blocks[0];
+      if (head && !head.code && head.lines[0].length <= 70) {
+        title = head.lines[0];
+        head.lines = head.lines.slice(1);
+        if (!head.lines.length) blocks = blocks.slice(1);
       }
 
       /* Výběr ze seznamu (historie, volba modelu) do karty nepatří: seznam je

@@ -618,7 +618,12 @@ body { display: flex; flex-direction: column; }
 .ask-title[hidden] { display: none; }
 .ask-body { margin-top: 8px; }
 .ask-body[hidden] { display: none; }
-.ask-p { margin: 0 0 8px; color: var(--fg); font-size: 13px; line-height: 1.5; }
+/* Odstavce dotazu drží pohromadě v jednom bloku (composer.js je slepí a oddělí
+   řádkem), takže `pre-line` — vlastní zalomení textu si obstará prohlížeč. */
+.ask-p {
+  margin: 0 0 8px; color: var(--fg); font-size: 13px; line-height: 1.55;
+  white-space: pre-line;
+}
 .ask-p:last-child { margin-bottom: 0; }
 /* Příkaz, cesta nebo diff — to, co v dotazu stálo odsazené. Vlastní plocha,
    ať je na první pohled poznat, co Claude opravdu spustí nebo změní. */
