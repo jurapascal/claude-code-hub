@@ -33,6 +33,11 @@ dělá jednu aplikaci:
   takže Claude dostane přesně to, co by dostal z klávesnice. Jakmile se dole
   objeví dialog (výběr modelu, dotaz na oprávnění) nebo se odroluje nahoru,
   bublina se sama složí do proužku — nikdy nezakryje to, na co se máš dívat.
+- **Dotaz jako karta** — když se Claude Code na něco ptá (důvěra ke složce, povolení
+  příkazu nebo úpravy souboru), přenese se otázka z terminálu do karty přes celé okno:
+  nadpis, text, příkaz nebo diff v rámečku a volby jako tlačítka. Odpovídá se myší
+  i klávesnicí — terminál pod tím poslouchá dál. Tlačítkem **Terminál** jde karta
+  odsunout a podívat se, jak dotaz nakreslil Claude Code.
 - **Akční panel vpravo** — tlačítka posílají do chatu rovnou slash příkazy
   (`/save`, `/project`, `/deploy`, `/push`, `/status`, `/screenshot`). Tlačítko se
   zobrazí, jen když je odpovídající příkaz nainstalovaný.
@@ -412,6 +417,7 @@ hub/static/clipboard.js   schránka přes server (WebKitGTK stránku k ní nepus
 hub/static/onboarding.js  průvodce prvním spuštěním
 hub/static/settings.js    nastavení po sekcích (vzhled, projekty, paměť, napojení, aktualizace, logy)
 hub/static/composer.js    bublina místo vstupního řádku (text, model, slash příkazy, přílohy, režimy)
+                          + karta s dotazem, když se Claude Code ptá
 hub/static/stats.js       statistiky používání
 hub/stats.py              počítání statistik z ~/.claude (přírůstkově, s mezipamětí)
 hooks/save-session.py     Stop hook — uloží stav projektů do session-state.md

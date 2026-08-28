@@ -1391,7 +1391,19 @@ def clipboard_read(which="clipboard"):
     try:
         r = subprocess.run(read_cmd, capture_output=True, timeout=_CLIP_TIMEOUT,
                            creationflags=_NO_WINDOW)
-        text = r.stdout.decode("utf-8", "replace")
+        # Screenshot na schránce nemusí vyjít naprázdno, jak se tu dřív čekalo.
+        # Když vlastník výběru žádný textový cíl nenabízí, `xclip -o` sáhne
+        # po prvním, který má — a vrátí rovnou binárku PNG (naměřeno na
+        # Waylandu, kde schránku mostí XWayland). Dekódovat ji „s náhradami“
+        # znamenalo napsat na prompt smetí místo cesty k obrázku, takže co
+        # není čistý text, končí tady jako prázdno — a volající sáhne po
+        # clipboard_image().
+        try:
+            text = r.stdout.decode("utf-8")
+        except UnicodeDecodeError:
+            return ""
+        if "\x00" in text:
+            return ""
         if IS_WINDOWS:
             # Get-Clipboard vrací řádky s CRLF a jeden navíc na konci
             text = text.replace("\r\n", "\n")
@@ -1545,6 +1557,22 @@ def clipboard_write(text, which="clipboard"):
 
 def has_clipboard():
     return _clipboard_tools("clipboard")[0] is not None
+
+
+def current_model():
+    """Model, se kterým Claude Code startuje nové sessions.
+
+    `/model <jméno>` si volbu ukládá do ~/.claude/settings.json, takže je to
+    jediné místo, kde se dá zjistit, co je vybrané, bez čtení terminálu.
+    Prázdný řetězec = v souboru nic není a rozhoduje Claude Code sám.
+    """
+    try:
+        with open(os.path.join(CLAUDE_DIR, "settings.json"),
+                  encoding="utf-8-sig") as fh:
+            model = json.load(fh).get("model")
+    except (OSError, ValueError):
+        return ""
+    return str(model) if isinstance(model, str) else ""
 
 
 def installed_skills():
@@ -1701,13 +1729,12 @@ def _mcp_status(text):
     return "unknown", text.strip("✔✘✗! ").strip() or "neznámý stav"
 
 
-def mcp_scopes():
-    """Odkud se který server registruje — čte se jen z disku, bez sítě.
+def _claude_json():
+    """Obsah ~/.claude.json — vlastní soubor Claude Code, my do něj nesaháme.
 
-    `claude mcp list` scope neukazuje, ale právě podle něj se pozná, co si
-    můžeme odregistrovat sami (user scope) a co leží v účtu na claude.ai.
+    Se `CLAUDE_CONFIG_DIR` leží uvnitř té složky, jinak vedle ní. Bere se první,
+    který se povede přečíst; prázdno znamená „ještě nic nenapsal".
     """
-    user, project = set(), {}
     for path in (CLAUDE_DIR.rstrip("/\\") + ".json",
                  os.path.join(CLAUDE_DIR, ".claude.json")):
         try:
@@ -1715,13 +1742,52 @@ def mcp_scopes():
                 data = json.load(fh)
         except (OSError, ValueError):
             continue
-        user |= set((data.get("mcpServers") or {}).keys())
-        for proj, meta in (data.get("projects") or {}).items():
-            if not isinstance(meta, dict):
-                continue
-            for name in (meta.get("mcpServers") or {}):
-                project.setdefault(name, proj)
-        break
+        return data if isinstance(data, dict) else {}
+    return {}
+
+
+# Jak se jmenuje předplatné, které si Claude Code zapsal jako typ organizace.
+_PLANS = {"claude_max": "Max", "claude_pro": "Pro", "claude_free": "Free",
+          "claude_team": "Team", "claude_enterprise": "Enterprise"}
+
+
+def claude_account():
+    """Pod jakým účtem claude.ai je Claude Code na tomhle stroji přihlášený.
+
+    Konektory („claude.ai Gmail" a spol.) nejsou v žádném souboru — visí na
+    účtu. Druhá schránka se k nim proto nepřidá vedle první: napojí se
+    v claude.ai pod tím účtem, nebo se přepne účet celý. Aby to v seznamu
+    nevisely bez souvislosti, ukáže hub aspoň, ke komu patří.
+    """
+    acct = _claude_json().get("oauthAccount")
+    if not isinstance(acct, dict):
+        return {}
+    email = acct.get("emailAddress") or ""
+    org = acct.get("organizationName") or ""
+    # Osobní účet má organizaci pojmenovanou po e-mailu — dvakrát totéž nikomu
+    # nic neřekne.
+    if email and org.startswith(email):
+        org = ""
+    return {"email": email,
+            "name": acct.get("fullName") or acct.get("displayName") or "",
+            "org": org,
+            "plan": _PLANS.get(acct.get("organizationType") or "", "")}
+
+
+def mcp_scopes():
+    """Odkud se který server registruje — čte se jen z disku, bez sítě.
+
+    `claude mcp list` scope neukazuje, ale právě podle něj se pozná, co si
+    můžeme odregistrovat sami (user scope) a co leží v účtu na claude.ai.
+    """
+    user, project = set(), {}
+    data = _claude_json()
+    user |= set((data.get("mcpServers") or {}).keys())
+    for proj, meta in (data.get("projects") or {}).items():
+        if not isinstance(meta, dict):
+            continue
+        for name in (meta.get("mcpServers") or {}):
+            project.setdefault(name, proj)
     return user, project
 
 

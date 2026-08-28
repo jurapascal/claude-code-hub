@@ -694,6 +694,11 @@ function createTab({kind, path, title, id}) {
   const pane = document.createElement('div');
   pane.className = 'pane';
   $('panes').appendChild(pane);
+  // Terminál bydlí ve vlastním obalu — z jeho výšky se počítá počet řádků,
+  // takže je to jediné místo, kde se dá terminálu ubrat, aniž by přetekl.
+  const termbox = document.createElement('div');
+  termbox.className = 'termbox';
+  pane.appendChild(termbox);
 
   const term = new Terminal({
     fontFamily: '"Cascadia Mono","JetBrains Mono","DejaVu Sans Mono",Menlo,Consolas,monospace',
@@ -707,9 +712,10 @@ function createTab({kind, path, title, id}) {
   term.loadAddon(fit);
   // Links open in the real browser, not inside the app window.
   term.loadAddon(new WebLinksAddon.WebLinksAddon((_ev, uri) => openExternal(uri)));
-  term.open(pane);
+  term.open(termbox);
 
-  const tab = {ref, id: id || null, title, kind, path, term, fit, pane, exited: false};
+  const tab = {ref, id: id || null, title, kind, path, term, fit, pane, termbox,
+               exited: false};
   const toPty = (d) => { if (tab.id) send({t: 'in', id: tab.id, d}); };
   term.onData(toPty);
   // Diacritics arrive from the GTK input method as composition events, which
@@ -732,6 +738,28 @@ function createTab({kind, path, title, id}) {
       upload: uploadFiles,
       quote: shellQuote,
       skills: () => STATE.skills || [],
+      /* Model ze settings.json — s ním Claude Code v tomhle tabu nastartoval.
+         Přepnutí si Claude Code do settings.json uloží taky, ale my ho víme
+         hned, tak si ho tu rovnou přepíšeme: další tab pak ukáže to samé. */
+      model: (key) => {
+        if (key) STATE.model = key;
+        return STATE.model || '';
+      },
+      // Na schránku bublina sama nedosáhne — obrázek si vyžádá přes server,
+      // stejnou cestou jako terminál.
+      read: (which) => api('clipboard?which=' + which),
+      // Náhled přílohy: soubor podá server, prohlížeč na disk nevidí.
+      imageUrl,
+      notice: toast,
+      /* Kolik místa dole si bublina ukusuje z terminálu navíc k tomu, co
+         zabírá Claudeovo vlastní vstupní pole. Terminál se o to zkrátí, takže
+         poslední řádky výpisu zůstanou nad bublinou, ne pod ní. */
+      reserve: (px) => {
+        const now = parseFloat(tab.termbox.style.bottom) || 0;
+        if (Math.abs(now - px) < 1) return;
+        tab.termbox.style.bottom = px > 0 ? px + 'px' : '';
+        refit(tab);
+      },
     });
   }
 
@@ -882,10 +910,11 @@ function typePaths(tab, paths) {
   if (!paths.length || !tab.id) return;
   // Když je vidět bublina, patří cesta do ní — do terminálu by se napsala
   // pod ni, do pole, které není vidět.
-  if (!(tab.composer && tab.composer.insertPaths(paths))) {
-    send({t: 'in', id: tab.id, d: paths.map(shellQuote).join(' ') + ' '});
-    tab.term.focus();
-  }
+  // V bublině je po přiložení vidět náhled, ten mluví za sebe. Do terminálu
+  // se píše holá cesta, a tam se hodí říct, co se vlastně stalo.
+  if (tab.composer && tab.composer.insertPaths(paths)) return;
+  send({t: 'in', id: tab.id, d: paths.map(shellQuote).join(' ') + ' '});
+  tab.term.focus();
   toast(paths.length === 1 ? 'Přiloženo: ' + paths[0]
                            : `Přiloženo ${paths.length} souborů`);
 }
@@ -909,6 +938,10 @@ function wireFiles(tab) {
     if (cd.getData && cd.getData('text/plain')) return;
     ev.preventDefault();
     ev.stopPropagation();
+    // Bublina si o obrázek umí říct serveru sama (pod WebKitGTK jinak nemá
+    // jak). Když ho ale podá prohlížeč, musí o tom vědět — jinak by se
+    // tentýž screenshot přiložil dvakrát, každou cestou jednou.
+    if (tab.composer) tab.composer.browserPaste();
     attachFiles(tab, cd.files);
   }, true);
   pane.addEventListener('dragover', (ev) => {
@@ -1002,7 +1035,9 @@ function showMenu(x, y, items, opts) {
   menu.textContent = '';
   for (const item of items) {
     const el = document.createElement('button');
-    el.innerHTML = icon(item.icon) + '<span></span>';
+    // Vybraná položka (model, režim) se pozná fajfkou místo vlastní ikony.
+    el.innerHTML = icon(item.on ? 'i-check' : item.icon) + '<span></span>';
+    if (item.on) el.classList.add('on');
     el.querySelector('span').textContent = item.label;
     el.onclick = (ev) => {
       if (Date.now() - menuArmedAt < MENU_ARM_MS) {
@@ -1130,6 +1165,13 @@ let toastTimer = null;
 function toast(text) {
   const el = $('toast');
   el.textContent = text;
+  // Bublina se často zvětší v témže tiknutí, ve kterém hláška vzniká — vložená
+  // cesta se zalomí na další řádek. ResizeObserver, který --composer-h píše, se
+  // ozve až další snímek, takže by se hláška stihla posadit na starou, nižší
+  // hranu, tedy přes bublinu. Změří se proto tady, těsně před zobrazením.
+  const box = document.querySelector('.pane.active .composer');
+  document.documentElement.style.setProperty(
+    '--composer-h', (box ? box.offsetHeight : 0) + 'px');
   el.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.hidden = true; }, 6000);
@@ -1149,6 +1191,12 @@ function hubIO() {
     reload,
     refreshState: async () => { STATE = await api('state'); },
     openWizard: () => HubOnboarding.open({...hubIO(), state: STATE}),
+    /* Přihlášení jiným účtem. `/login` žije uvnitř Claude Code, ne v shellu,
+       tak se otevře tab, který ho dostane rovnou jako první příkaz — stejnou
+       cestou, jakou jde „Upravit poznámku" na /project. Jiný účet znamená
+       i jiné konektory (třeba druhou gmailovou schránku). */
+    login: () => openTab({kind: 'slash:login', path: STATE.home,
+                          title: 'přihlášení'}),
   };
 }
 

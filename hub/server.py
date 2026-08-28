@@ -304,6 +304,7 @@ class Handler(BaseHTTPRequestHandler):
                 "memory": {"counts": counts, "recent": recent,
                            "enabled": core.HAS_BRAIN},
                 "skills": core.installed_skills(),
+                "model": core.current_model(),
                 "palette": {"dark": core.DARK, "light": core.LIGHT},
                 "doctor": core.doctor(),
                 "user": os.environ.get("USER") or os.environ.get("USERNAME") or "",
@@ -448,16 +449,21 @@ class Handler(BaseHTTPRequestHandler):
                 result = core.mcp_remove(payload.get("name", ""))
                 return self._json(result, 200 if result.get("ok") else 400)
             cached = core.job_state("mcp")
+            # Účet se čte ze souboru, ne ze sítě — posílá se i do rozdělané
+            # kontroly, ať je hned vidět, ke komu konektory patří.
+            acct = core.claude_account()
             if cached.get("running"):
                 return self._json({"running": True, "catalog": core.MCP_CATALOG,
+                                   "account": acct,
                                    "step": cached.get("step", "")})
             done = cached.get("result") or {}
             if query.get("refresh") or payload.get("refresh") or not done:
                 core.start_job("mcp", core.mcp_list)
                 return self._json({"running": True, "catalog": core.MCP_CATALOG,
+                                   "account": acct,
                                    "step": "ptám se serverů…"})
             return self._json({"running": False, "catalog": core.MCP_CATALOG,
-                               **done})
+                               "account": acct, **done})
         if name == "update-status":
             return self._json(core.update_state())
         if name == "job":

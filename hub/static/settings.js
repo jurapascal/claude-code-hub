@@ -308,12 +308,14 @@
       'servery zaregistrované na tomhle stroji. Kontrola se každého zeptá, ' +
       'takže je vidět i to, co je sice zapsané, ale nefunguje.');
 
+    const acct = el('div', 'mcp-acct');
     const summary = el('div', 'set-row');
     const list = el('div', 'onb-list');
     const store = el('div');            // katalog: co se dá přidat
     const btns = el('div', 'onb-btns');
     const check = el('button', 'actionbtn', 'Zkontrolovat znovu');
     btns.appendChild(check);
+    box.appendChild(acct);
     box.appendChild(summary);
     box.appendChild(list);
     box.appendChild(store);
@@ -325,9 +327,37 @@
       check.disabled = true;
     }
 
+    /* Konektory „claude.ai …" v seznamu visely bez souvislosti: nejsou v žádném
+       souboru, patří k účtu. Druhá schránka (další Gmail) se k nim nepřidá
+       vedle první — napojí se v claude.ai pod tím účtem, nebo se přepne účet
+       celý. Tady je proto vidět, o který jde, a odsud se dá přepnout. */
+    function drawAccount(a) {
+      acct.textContent = '';
+      const col = el('span', 'onb-col');
+      if (a && a.email) {
+        col.appendChild(el('span', null, a.name ? a.name + ' · ' + a.email : a.email));
+        const meta = ['konektory z účtu patří sem'];
+        if (a.plan) meta.push(a.plan);
+        if (a.org) meta.push(a.org);
+        col.appendChild(el('small', null, meta.join(' · ')));
+      } else {
+        col.appendChild(el('span', 'set-warn', 'Nikdo přihlášený'));
+        col.appendChild(el('small', null,
+          'Bez přihlášení nejsou konektory z účtu claude.ai vidět.'));
+      }
+      acct.appendChild(col);
+      acct.appendChild(el('span', 'spacer'));
+      const swap = el('button', 'btn ghost', a && a.email ? 'Přepnout účet' : 'Přihlásit');
+      swap.title = 'Otevře Claude Code s /login. Jiný účet = jiné konektory ' +
+                   '(třeba druhá gmailová schránka).';
+      swap.onclick = () => { close(); io.login(); };
+      acct.appendChild(swap);
+    }
+
     function draw(data) {
       check.disabled = false;
       mcpLast = data;
+      drawAccount(data.account);
       const servers = data.servers || [];
       const c = data.counts || {};
 
@@ -448,6 +478,7 @@
       let data;
       try {
         data = await io.api('mcp' + (refresh ? '?refresh=1' : ''));
+        drawAccount(data.account);
       } catch (err) {
         summary.textContent = '';
         summary.appendChild(el('span', 'set-warn', 'Nepovedlo se: ' + err.message));
@@ -456,6 +487,7 @@
       }
       while (data.running) {
         busy(data.step || 'Ptám se serverů…');
+        drawAccount(data.account);
         await new Promise(r => setTimeout(r, 1200));
         try {
           data = await io.api('mcp');

@@ -240,10 +240,16 @@ body { display: flex; flex-direction: column; }
 .panes { position: relative; flex: 1; min-height: 0; }
 .pane {
   position: absolute; inset: 0;
-  padding: 6px 0 0 8px;
   display: none;
 }
 .pane.active { display: block; }
+/* Terminál má vlastní obal, protože podle jeho výšky se počítá, kolik řádků
+   se do okna vejde — a počítá se z `height`, do které se při box-sizing:
+   border-box schová i odsazení. Odsazení tedy patří sem jako pozice, ne jako
+   padding; jinak by si terminál naúčtoval o pár řádků víc, než kam se vejde,
+   a ty by přetekly pod bublinu. Spodní hranu posouvá bublina (composer.js),
+   když potřebuje víc místa, než kolik zabírá Claudeovo vlastní vstupní pole. */
+.termbox { position: absolute; left: 8px; right: 0; top: 6px; bottom: 0; }
 .pane .xterm { height: 100%; }
 
 .welcome {
@@ -297,8 +303,7 @@ body { display: flex; flex-direction: column; }
 .ctxmenu {
   position: fixed; z-index: 40; min-width: 210px;
   background: var(--bg-sidebar);
-  border: 1px solid var(--border); border-radius: var(--radius);
-  box-shadow: 0 12px 32px rgba(0,0,0,.45);
+  border: 1px solid var(--section); border-radius: var(--radius);
   padding: 4px;
   /* Nabídka slash příkazů má přes dvacet položek — bez stropu by přerostla
      obrazovku a spodní položky by nešly vybrat. */
@@ -313,6 +318,9 @@ body { display: flex; flex-direction: column; }
 }
 .ctxmenu button:hover { background: var(--card-hover); }
 .ctxmenu .ico { color: var(--amber); }
+/* Zaškrtnutá volba (vybraný model, aktuální režim) — fajfka i sytější text,
+   ať se pozná i bez barvy. */
+.ctxmenu button.on { color: var(--amber); font-weight: 600; }
 
 /* ── folder picker ───────────────────────────────────────────────────────── */
 .modal {
@@ -367,14 +375,23 @@ body { display: flex; flex-direction: column; }
 .btn.primary:hover { filter: brightness(1.08); }
 
 /* ── toast ───────────────────────────────────────────────────────────────── */
+/* Hláška vypadá jako karta v panelu — jen s barevným proužkem vlevo, stejně
+   jako poznámky z paměti. Červené ohraničení tu bylo na všechno, takže i
+   „Přiloženo…" vypadalo jako chyba.
+
+   Spodní hrana se odvíjí od bubliny (--composer-h píše composer.js): dřív
+   hláška ležela přes ni a schovávala právě to pole, do kterého se píše. */
 .toast {
-  position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(var(--composer-h, 0px) + 14px);
   z-index: 60; max-width: 70vw;
   background: var(--bg-card);
-  border: 1px solid var(--red); border-radius: var(--radius);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .28);   /* stejný i ve světlém režimu */
   color: var(--fg-bright); font-size: 12px;
   padding: 9px 14px;
-  box-shadow: 0 10px 30px rgba(0,0,0,.45);
   -webkit-user-select: text; user-select: text;
 }
 
@@ -385,6 +402,9 @@ body { display: flex; flex-direction: column; }
 .composer {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 7;
   display: flex; flex-direction: column; align-items: stretch;
+  /* Dorovnání na celé řádky terminálu (composer.js) přidává výšku navrch —
+     ta patří nad bublinu jako mezera od výpisu, ne pod ni jako prázdný pruh. */
+  justify-content: flex-end;
   padding: 6px 8px 5px; pointer-events: none;
 }
 .composer > * { pointer-events: auto; }
@@ -399,53 +419,257 @@ body { display: flex; flex-direction: column; }
 }
 
 .composer-box { display: none; }
+/* Ploché, bez stínu. Od terminálu bublinu odděluje o odstín světlejší výplň
+   a ohraničení — vrstvení šedým rozmazáním pod ni tady nic nepřidalo, jen
+   ušpinilo výpis těsně nad ní. */
+/* Stejná stavba jako karta projektu v panelu (výplň, ohraničení, rádius), jen
+   s nádechem hlavní barvy — ať je pole, do kterého se píše, na první pohled
+   ten živý prvek okna a přitom drží paletu zbytku hubu. */
 .composer.on .composer-box {
   display: block;
-  background: var(--bg-sidebar);
-  border: 1px solid var(--border); border-radius: 14px;
-  padding: 8px 10px 7px;
-  box-shadow: 0 -10px 24px -12px rgba(0,0,0,.55);
+  background: color-mix(in srgb, var(--amber) 5%, var(--bg-card));
+  border: 1px solid color-mix(in srgb, var(--amber) 26%, var(--border));
+  border-radius: var(--radius);
+  padding: 7px 9px 6px;
+  transition: border-color .12s ease, background .12s ease;
+}
+/* Že se do bubliny zrovna píše, řekne ohraničení — to je práce, kterou tu
+   předtím zastával stín. Stejnou barvou svítí i hledání v panelu. */
+.composer.on .composer-box:focus-within {
+  border-color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 9%, var(--bg-card));
 }
 .composer.on .composer-peek { display: none; }
+/* Rozbalená bublina si dotaz obsluhuje sama — dvakrát tytéž volby nemají smysl. */
+.composer.on .composer-answer { display: none; }
+
+/* Přílohy nad textem. Cesta k souboru je to jediné, co si Claude Code odnese,
+   jenže z ní nikdo nepozná, co vlastně přiložil — tak je nad polem vidět
+   náhled a cesta se doplní až při odeslání. */
+.composer-atts {
+  display: flex; flex-wrap: wrap; gap: 10px; padding: 2px 0 7px;
+}
+.composer-atts[hidden] { display: none; }
+.composer-att {
+  display: inline-flex; align-items: center; gap: 7px;
+  max-width: 220px; padding: 3px 4px 3px 3px; border-radius: 9px;
+  background: var(--bg-card); border: 1px solid var(--border);
+}
+/* Obrázek se ukáže sám sebou: jméno pasteovaného screenshotu je jen datum
+   a čas, celá cesta visí v popisku pod myší. */
+.composer-att.img {
+  position: relative; width: 46px; height: 46px;
+  padding: 0; background: none; border: none; overflow: visible;
+}
+.composer-att img {
+  width: 46px; height: 46px; display: block; object-fit: cover;
+  border-radius: 8px; border: 1px solid var(--border); background: var(--bg);
+}
+/* Bez náhledu (PDF, text, nedostupný soubor) zbyde jméno — ať chip nedrží
+   prázdný čtverec. */
+.composer-att.bare { padding: 5px 4px 5px 9px; }
+.composer-att-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11.5px; color: var(--fg-bright);
+}
+.composer-att-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; flex: none; padding: 0; border-radius: 6px;
+  background: none; border: none; color: var(--dim); cursor: pointer;
+}
+.composer-att-x:hover { background: var(--card-hover); color: var(--fg-bright); }
+.composer-att-x .ico { width: 12px; height: 12px; }
+/* Nad náhledem není kam křížek posadit, tak si sedne na jeho roh. */
+.composer-att.img .composer-att-x {
+  position: absolute; top: -7px; right: -7px; width: 18px; height: 18px;
+  border-radius: 50%; background: var(--bg-card); border: 1px solid var(--border);
+}
+.composer-att.img .composer-att-x:hover { color: var(--fg-bright); border-color: var(--amber); }
 
 .composer-input {
   display: block; width: 100%; border: none; outline: none; resize: none;
   background: none; color: var(--fg-bright);
   font: 13px/1.5 system-ui, "Segoe UI", Cantarell, Ubuntu, sans-serif;
-  padding: 3px 2px 5px; max-height: 112px; overflow-y: auto;
+  padding: 4px 2px 7px; max-height: 112px; overflow-y: auto;
   -webkit-user-select: text; user-select: text;
 }
 .composer-input::placeholder { color: var(--dim); }
 
-.composer-bar { display: flex; align-items: center; gap: 6px; }
+.composer-bar { display: flex; align-items: center; gap: 4px; }
 .composer-bar .spacer { flex: 1; }
+/* Nástroje pod textem mají být po ruce, ne na očích: bez výplně a bez
+   ohraničení, to se ozve až pod myší. Pět plných pilulek v řadě přebíjelo
+   jediné, co má být v bublině vidět — co se píše. */
 .composer-chip {
   display: inline-flex; align-items: center; gap: 5px;
-  padding: 4px 9px; border-radius: 999px; cursor: pointer;
-  background: var(--bg-card); border: 1px solid var(--border);
-  color: var(--fg); font: inherit; font-size: 11.5px; white-space: nowrap;
+  padding: 4px 8px; border-radius: 8px; cursor: pointer;
+  background: none; border: 1px solid transparent;
+  color: var(--dim); font: inherit; font-size: 11.5px; white-space: nowrap;
 }
-.composer-chip:hover { background: var(--card-hover); color: var(--fg-bright); }
-.composer-chip .ico { color: var(--dim); }
-.composer-chip.ghost { background: none; color: var(--dim); }
+.composer-chip:hover {
+  background: var(--card-hover); border-color: var(--border);
+  color: var(--fg-bright);
+}
+.composer-chip .ico { color: inherit; }
+/* Vybraná hodnota (model, režim) svítí víc než popisek před ní — barvou, ať
+   je na první pohled poznat, co je zapnuté, bez čtení celého chipu. */
+.composer-chip .val { color: var(--amber); font-weight: 600; }
+/* Normální režim je ten nezajímavý stav, tomu stačí obyčejné písmo. */
+.composer-chip[data-act=mode].normal .val { color: var(--fg-bright); font-weight: 400; }
 .composer-chip.ghost:hover { color: var(--amber); border-color: var(--amber); }
 
 .composer-send {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px; flex: none; border-radius: 999px; cursor: pointer;
-  background: var(--amber); border: none; color: #12161c; font-size: 14px;
+  width: 28px; height: 28px; flex: none; border-radius: 8px; cursor: pointer;
+  background: var(--amber); border: none; color: #fff; font-size: 14px;
+  opacity: .45; transition: opacity .12s ease;
 }
+/* Jediná barevná plocha v bublině — ať svítí, jen když je co odeslat. */
+.composer.ready .composer-send { opacity: 1; }
 .composer-send:hover { filter: brightness(1.08); }
 
 /* Proužek, který po bublině zbyde, když dole běží dialog nebo se roluje. */
 .composer-peek {
   align-self: flex-end;
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 4px 10px; border-radius: 999px; cursor: pointer;
+  padding: 4px 10px; border-radius: 8px; cursor: pointer;
   background: var(--bg-card); border: 1px solid var(--border);
-  color: var(--dim); font: inherit; font-size: 11.5px; opacity: .75;
+  color: var(--dim); font: inherit; font-size: 11.5px;
 }
-.composer-peek:hover { opacity: 1; color: var(--fg-bright); }
+.composer-peek:hover { color: var(--fg-bright); border-color: var(--section); }
+
+/* Dotaz z terminálu přenesený do tlačítek. Leží nad proužkem, aby se dalo
+   odpovídat myší — jinak by jedinou cestou byl terminál pod bublinou. */
+.composer-answer {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  margin-bottom: 5px; padding: 6px 8px;
+  background: var(--bg-card);
+  border: 1px solid color-mix(in srgb, var(--amber) 30%, var(--border));
+  border-radius: var(--radius);
+}
+.composer-answer[hidden] { display: none; }
+.composer-answer-q { color: var(--dim); font-size: 11.5px; }
+.composer-answer-opts { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+.composer-answer-btn {
+  max-width: 100%; padding: 4px 10px; border-radius: 8px; cursor: pointer;
+  background: none; border: 1px solid var(--border);
+  color: var(--fg-bright); font: inherit; font-size: 11.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.composer-answer-btn:hover { background: var(--card-hover); border-color: var(--amber); }
+/* Na kterou volbu ukazuje ❯ v terminálu — tam padne Enter. */
+.composer-answer-btn.sel { border-color: var(--amber); color: var(--amber); }
+.composer-answer-btn.ghost { color: var(--dim); }
+
+/* ── dotaz jako karta ────────────────────────────────────────────────────── */
+/* Když se Claude Code ptá, nemá být na co koukat do terminálu: otázka i volby
+   patří do okna. Karta proto leží přes terminál celou plochou — dotaz z čar
+   rámečku by zpod ní vykukoval a člověk by četl dvakrát to samé. Terminál si
+   jde vyvolat zpátky tlačítkem, kdyby se text nepovedlo přenést. */
+.ask {
+  position: absolute; inset: 0; z-index: 6;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px 16px calc(var(--composer-h, 0px) + 12px);
+  background: var(--bg);
+  overflow: auto;
+}
+/* Proužek, který po odsunuté kartě zbyde — jinak by nebylo kudy zpátky. */
+.ask.peek {
+  background: none; pointer-events: none;
+  align-items: flex-end; justify-content: flex-end;
+}
+.ask.peek .ask-card { display: none; }
+.ask-back { display: none; }
+.ask.peek .ask-back {
+  display: inline-flex; align-items: center; gap: 6px; pointer-events: auto;
+  padding: 4px 10px; border-radius: 8px; cursor: pointer;
+  background: var(--bg-card);
+  border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--border));
+  color: var(--amber); font: inherit; font-size: 11.5px;
+}
+.ask.peek .ask-back:hover { background: var(--card-hover); }
+/* Proužek bubliny by kartě jen překážel — psát se stejně nedá, dokud dotaz
+   nedostane odpověď. */
+.pane.asking .composer-peek { display: none; }
+
+.ask-card {
+  width: 100%; max-width: 620px; max-height: 100%; overflow: auto;
+  padding: 15px 17px 13px;
+  /* Ve světlém motivu je výplň karty stejně bílá jako pozadí okna, takže by
+     karta zmizela. Nádech hlavní barvy ji drží nad plochou v obou motivech —
+     stejně jako u bubliny, se kterou se střídá. */
+  background: color-mix(in srgb, var(--amber) 5%, var(--bg-card));
+  border: 1px solid color-mix(in srgb, var(--amber) 30%, var(--border));
+  border-radius: var(--radius);
+  -webkit-user-select: text; user-select: text;
+}
+.ask-tag {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--amber); font-size: 10.5px; font-weight: 700;
+  letter-spacing: 1px; text-transform: uppercase;
+}
+/* Žárovka je menší než řádek, do kterého patří — s velikostí písma by z ní
+   byla tečka. */
+.ask-tag .ico { width: 13px; height: 13px; }
+.ask-title {
+  margin-top: 8px;
+  color: var(--fg-bright); font-size: 16px; font-weight: 700; line-height: 1.3;
+}
+.ask-title[hidden] { display: none; }
+.ask-body { margin-top: 8px; }
+.ask-body[hidden] { display: none; }
+.ask-p { margin: 0 0 8px; color: var(--fg); font-size: 13px; line-height: 1.5; }
+.ask-p:last-child { margin-bottom: 0; }
+/* Příkaz, cesta nebo diff — to, co v dotazu stálo odsazené. Vlastní plocha,
+   ať je na první pohled poznat, co Claude opravdu spustí nebo změní. */
+.ask-code {
+  margin: 0 0 9px; padding: 8px 10px; max-height: 34vh; overflow: auto;
+  background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--fg-bright);
+  font: 12px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace;
+  white-space: pre-wrap; word-break: break-word;
+}
+.ask-code:last-child { margin-bottom: 0; }
+
+.ask-opts { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.ask-opt {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 9px 11px; border-radius: 8px; cursor: pointer; text-align: left;
+  background: var(--bg); border: 1px solid var(--border);
+  color: var(--fg-bright); font: inherit; font-size: 13px;
+}
+.ask-opt:hover { background: var(--card-hover); border-color: var(--amber); }
+/* Na kterou volbu ukazuje ❯ v terminálu — tam padne Enter. */
+.ask-opt.sel {
+  border-color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 10%, var(--bg));
+}
+.ask-opt.sel .ico { margin-left: auto; color: var(--amber); }
+.ask-opt-label { flex: 1; }
+.ask-num {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; flex: none; border-radius: 5px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  color: var(--dim); font-size: 11px; font-weight: 700;
+}
+.ask-opt.sel .ask-num { color: var(--amber); border-color: var(--amber); }
+
+.ask-foot {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--border);
+}
+.ask-foot .spacer { flex: 1; }
+.ask-hint { color: var(--dim); font-size: 11.5px; }
+.ask-ghost {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 9px; border-radius: 8px; cursor: pointer;
+  background: none; border: 1px solid transparent;
+  color: var(--dim); font: inherit; font-size: 11.5px; white-space: nowrap;
+}
+.ask-ghost:hover {
+  background: var(--card-hover); border-color: var(--border);
+  color: var(--fg-bright);
+}
 
 /* ── file drop ───────────────────────────────────────────────────────────── */
 .pane.dropping::after {
@@ -626,6 +850,22 @@ body { display: flex; flex-direction: column; }
   font-family: ui-monospace, monospace; font-size: 11px; color: var(--dim);
   word-break: break-all; opacity: .8;
 }
+/* Ke komu konektory patří. Karta jako v panelu, jantarový proužek jako
+   u poznámek z paměti — ať je vidět, že je to hlavička sekce, ne další řádek
+   seznamu pod ní. */
+.mcp-acct {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 10px; padding: 10px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+  border-radius: var(--radius);
+  font-size: 13px; color: var(--fg-bright);
+}
+.mcp-acct .onb-col { min-width: 0; }
+.mcp-acct .onb-col > span { word-break: break-all; }
+.mcp-acct .btn { flex: none; }
+
 .mcp-add {
   margin-top: 12px; padding: 12px; border-radius: 8px;
   border: 1px dashed var(--border); background: var(--bg-card);
