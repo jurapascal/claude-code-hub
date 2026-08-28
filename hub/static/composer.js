@@ -48,6 +48,15 @@
   const PICKER = /(↑\/↓|to navigate)/i;
   const YESNO = /\(y\/n\)|\[y\/N\]/i;
 
+  /* Panel, ze kterého se jen odchází — „Rewind / Nothing to rewind to yet. /
+     Esc to cancel". Volbu nenabízí, takže by po něm zbyl holý terminál a ven
+     by se člověk musel trefit klávesou. Dostane kartu s jediným tlačítkem.
+     „esc to interrupt" (Claude zrovna pracuje) sem schválně nepatří. */
+  const CANCEL = /(^|\s)(esc|escape) to (cancel|close|exit|go back)\b/i;
+  const CANCEL_LINE = /^(esc|escape) to (cancel|close|exit|go back)\.?$/i;
+  // Delší panel je spíš výpis než hláška — tomu ať zůstane terminál.
+  const NOTE_MAX = 8;
+
   /* Dialog, který volby nečísluje — stojí prostě pod sebou a vybranou označuje
      jedině šipka („Yes, I trust this folder" hned po startu). Že jde o nabídku
      a ne o výpis, řekne až nápověda s Enterem: samotná šipka na začátku řádku
@@ -160,9 +169,13 @@
      to vypadá jako výpis, ne jako otázka. Rozebere se proto na text, volby
      a nápovědu, ze kterých se poskládá karta. */
 
-  // Čáry rámečku a vodorovná pravítka. V terminálu drží dotaz pohromadě,
-  // v kartě by z nich bylo jen rozsypané písmo navíc.
-  const RULE = /^[\s─━═╌╍┄┅╭╮╰╯┌┐└┘├┤┬┴┼│┃|╔╗╚╝║]+$/;
+  /* Čáry rámečku a vodorovná pravítka. V terminálu drží dotaz pohromadě,
+     v kartě by z nich bylo jen rozsypané písmo navíc. Bere se celý blok
+     Unicode s kreslicími znaky (2500–257F) i s poloviční výplní (2580–259F) —
+     Claude Code kreslí oddělovač panelu z `▔`, a ten vyjmenovaný seznam čar
+     minul: stal se z něj nadpis karty a odsazení pod ním pak vyšlo jako
+     ukázka kódu. */
+  const RULE = /^[\s|\u2500-\u259F]+$/;
   // Jen vnější rámeček: ten vnořený (příkaz, diff) patří do textu dotazu.
   const BOX_TOP = /^\s*[╭┌╔]/;
 
@@ -622,6 +635,7 @@
     const askBody = askRoot.querySelector('.ask-body');
     const askOpts = askRoot.querySelector('.ask-opts');
     const askHint = askRoot.querySelector('.ask-hint');
+    const askEsc = askRoot.querySelector('[data-act=esc]');
     let answerSig = '';
 
     function press(data) {
@@ -677,15 +691,30 @@
         rows.push({label: 'Ano', run: () => press('y')},
                   {label: 'Ne', run: () => press('n')});
       }
+      // Hláška, ze které se jen odchází. Volbu za ni neděláme — jen cestu ven.
+      const note = !rows.length && !picker && lines.length && CANCEL.test(text);
 
       // Text nad volbami a nápověda pod nimi. Ano/ne se nekreslí jako seznam,
       // takže tam žádné „nad" a „pod" není — bere se celý dotaz.
       const numbered = rows.length && rows[0].row != null;
-      const body = rows.length
+      const body = rows.length || note
         ? dialogBody(lines, numbered ? rows[0].row : lines.length) : [];
       const hint = !rows.length ? ''
                  : opts.length ? HINT_NUM : plain.length ? HINT_PLAIN : '';
       let blocks = bodyBlocks(body);
+      /* „Esc to cancel" v textu je nápověda ke klávese, ne věta dotazu —
+         v kartě ji zastupuje tlačítko. */
+      for (const b of blocks) {
+        if (!b.code) b.lines = b.lines.filter(l => !CANCEL_LINE.test(l.trim()));
+      }
+      blocks = blocks.filter(b => b.lines.length);
+      if (note) {
+        // Delší panel je spíš výpis než hláška a karta s jediným tlačítkem nad
+        // prázdnem taky nemá co říct — v obou případech ať zůstane terminál.
+        const len = blocks.reduce((n, b) => n + b.lines.length, 0);
+        if (!len || len > NOTE_MAX) blocks = [];
+        else rows.push({label: 'Zavřít (Esc)', run: () => press('\x1b')});
+      }
       // První krátká věta je nadpis („Bash command", „Accessing workspace:").
       let title = '';
       const head = blocks[0];
@@ -743,6 +772,9 @@
           askOpts.appendChild(btn);
         }
         askHint.textContent = hint;
+        // U hlášky je „Zavřít" jediné tlačítko nahoře — „Zrušit" v patičce
+        // dělá to samé a jen mate, čím z toho se vlastně odchází.
+        askEsc.hidden = note;
         askCard.scrollTop = 0;
       }
 
@@ -773,7 +805,7 @@
     }
     askRoot.querySelector('[data-act=term]').onclick = () => askShow(false);
     askRoot.querySelector('.ask-back').onclick = () => askShow(true);
-    askRoot.querySelector('[data-act=esc]').onclick = () => press('\x1b');
+    askEsc.onclick = () => press('\x1b');
 
     /* Lišta s odpovědí leží přes spodek terminálu — tedy přes poslední řádky
        dialogu, který popisuje. Terminál se o ni proto na tu chvíli zkrátí,
