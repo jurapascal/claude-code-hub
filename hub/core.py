@@ -1649,15 +1649,217 @@ def browser_state():
     return "neregistrovaný", "~/.claude.json se nepodařilo přečíst"
 
 
+# ── Napojení na cizí služby (MCP) ────────────────────────────────────────────
+# Zdrojem pravdy je `claude mcp list`. Jako jediný ví i o konektorech z účtu
+# („claude.ai …"), které na disku v žádném souboru nejsou, a rovnou každý server
+# zkusí oslovit — takže odpoví i na to, co se jen tváří zaregistrovaně. Stojí to
+# jednotky sekund, proto to jede na pozadí a výsledek se drží v úloze "mcp".
+
+# Co se dá přidat jedním klikem. Klíč = jméno serveru u `claude mcp add`.
+MCP_CATALOG = {
+    "clockify": {
+        "label": "Clockify",
+        "note": "Výkazy času, projekty a spuštěné stopky přímo z Claude Code.",
+        "url": "https://api.clockify.me/mcp-server/mcp",
+        "header": "x-api-key",
+        "key_label": "API klíč z Clockify",
+        "key_help": "Clockify → foto profilu → Preferences → Advanced → "
+                    "Manage API keys → Generate New",
+        "docs": "https://clockify.me/help/integrations-and-add-ons/"
+                "use-clockify-mcp-server-to-connect-to-ai-agent",
+    },
+}
+
+_MCP_STATES = (
+    # (co hledat ve zbytku řádku, stav, český popis)
+    ("needs authentication", "auth", "chce přihlásit"),
+    ("authentication", "auth", "chce přihlásit"),
+    ("failed", "fail", "nepřipojeno"),
+    ("connected", "ok", "připojeno"),
+)
+
+
+def _mcp_status(text):
+    low = text.lower()
+    for needle, state, label in _MCP_STATES:
+        if needle in low:
+            return state, label
+    return "unknown", text.strip("✔✘✗! ").strip() or "neznámý stav"
+
+
+def mcp_scopes():
+    """Odkud se který server registruje — čte se jen z disku, bez sítě.
+
+    `claude mcp list` scope neukazuje, ale právě podle něj se pozná, co si
+    můžeme odregistrovat sami (user scope) a co leží v účtu na claude.ai.
+    """
+    user, project = set(), {}
+    for path in (CLAUDE_DIR.rstrip("/\\") + ".json",
+                 os.path.join(CLAUDE_DIR, ".claude.json")):
+        try:
+            with open(path, encoding="utf-8-sig") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        user |= set((data.get("mcpServers") or {}).keys())
+        for proj, meta in (data.get("projects") or {}).items():
+            if not isinstance(meta, dict):
+                continue
+            for name in (meta.get("mcpServers") or {}):
+                project.setdefault(name, proj)
+        break
+    return user, project
+
+
+def mcp_project_files():
+    """Servery z `.mcp.json` v projektech — platí jen v té složce.
+
+    V seznamu z hubu (běží z domovské složky) se neobjeví, takže by jinak
+    vypadaly jako neexistující. Tady jsou vidět i s tím, kam patří.
+    """
+    found = []
+    for base in PROJECT_DIRS:
+        if not os.path.isdir(base):
+            continue
+        try:
+            entries = sorted(os.listdir(base))
+        except OSError:
+            continue
+        for d in entries:
+            path = os.path.join(base, d, ".mcp.json")
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path, encoding="utf-8-sig") as fh:
+                    servers = json.load(fh).get("mcpServers") or {}
+            except (OSError, ValueError):
+                continue
+            for name, entry in servers.items():
+                found.append({"name": name, "project": os.path.join(base, d),
+                              "target": _mcp_target(entry)})
+    return found
+
+
+def _mcp_target(entry):
+    """Krátký popis, na co server sahá — URL, nebo příkaz, který se spouští."""
+    if not isinstance(entry, dict):
+        return ""
+    if entry.get("url"):
+        return entry["url"]
+    argv = [entry.get("command") or ""] + [str(a) for a in (entry.get("args") or [])]
+    return " ".join(a for a in argv if a).strip()
+
+
+def mcp_list():
+    """Seznam napojení i s tím, jestli odpovídají. Nikdy nevyhazuje."""
+    claude = shutil.which("claude")
+    if not claude:
+        return {"ok": False, "detail": "Claude Code CLI (claude) není v PATH.",
+                "servers": [], "counts": {}}
+
+    # Zdravotní kontrola oslovuje každý server zvlášť; 9 s bývá běžných,
+    # minuta je strop, aby se úloha nezasekla na jednom mrtvém serveru.
+    out = run([claude, "mcp", "list"], cwd=HOME, timeout=90)
+    user, project = mcp_scopes()
+    servers = []
+    for line in out.split("\n"):
+        line = line.strip()
+        if not line or ":" not in line or " - " not in line:
+            continue          # hlavička „Checking MCP server health…" a prázdné
+        name, rest = line.split(":", 1)
+        target, _, status_text = rest.rpartition(" - ")
+        name = name.strip()
+        state, label = _mcp_status(status_text)
+        if name.startswith("claude.ai "):
+            scope, where = "account", "účet claude.ai"
+        elif name in user:
+            scope, where = "user", "všechny projekty"
+        elif name in project:
+            scope, where = "project", project[name]
+        else:
+            scope, where = "", ""
+        servers.append({"name": name, "target": target.strip(),
+                        "state": state, "status": label,
+                        "scope": scope, "where": where,
+                        "removable": scope == "user"})
+
+    seen = {s["name"] for s in servers}
+    for entry in mcp_project_files():
+        if entry["name"] in seen:
+            continue
+        servers.append({"name": entry["name"], "target": entry["target"],
+                        "state": "local", "status": "jen v tomhle projektu",
+                        "scope": "project", "where": entry["project"],
+                        "removable": False})
+
+    counts = {"total": len(servers)}
+    for s in servers:
+        counts[s["state"]] = counts.get(s["state"], 0) + 1
+    # Co z katalogu ještě chybí — UI z toho dělá tlačítka „Přidat".
+    missing = [k for k in MCP_CATALOG if not any(
+        s["name"] == k or s["name"].startswith(k + " ") for s in servers)]
+    return {"ok": True, "servers": servers, "counts": counts,
+            "available": missing, "checked": time.time()}
+
+
+def mcp_add(name, api_key=""):
+    """Zaregistruje server z katalogu do user scope. Vrací {ok, detail}."""
+    spec = MCP_CATALOG.get(name)
+    if not spec:
+        return {"ok": False, "detail": f"Napojení {name} neznám."}
+    claude = shutil.which("claude")
+    if not claude:
+        return {"ok": False, "detail": "Claude Code CLI (claude) není v PATH."}
+    api_key = (api_key or "").strip()
+    if spec.get("header") and not api_key:
+        return {"ok": False, "detail": "Bez klíče se server nepřihlásí."}
+    argv = [claude, "mcp", "add", name, spec["url"],
+            "-s", "user", "--transport", "http"]
+    if spec.get("header"):
+        argv += ["--header", f'{spec["header"]}: {api_key}']
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, cwd=HOME,
+                           timeout=60, creationflags=_NO_WINDOW)
+    except Exception as exc:
+        return {"ok": False, "detail": str(exc)[:200]}
+    if r.returncode != 0:
+        # Klíč do logu nepatří, tak jen to, co řeklo CLI.
+        detail = (r.stderr or r.stdout or "").strip()[:300] or "nepovedlo se"
+        log(f"MCP {name}: registrace selhala — {detail}", "warn")
+        return {"ok": False, "detail": detail}
+    log(f"MCP {name}: zaregistrováno (user scope)")
+    return {"ok": True, "detail": f"{spec['label']} je napojený."}
+
+
+def mcp_remove(name):
+    """Odregistruje server z user scope."""
+    claude = shutil.which("claude")
+    if not claude:
+        return {"ok": False, "detail": "Claude Code CLI (claude) není v PATH."}
+    user, _ = mcp_scopes()
+    if name not in user:
+        return {"ok": False, "detail": "Tenhle server tu nezaložil hub — "
+                                       "odeber ho tam, kde je zapsaný."}
+    out = run([claude, "mcp", "remove", name, "-s", "user"], cwd=HOME, timeout=30)
+    log(f"MCP {name}: odebráno z user scope")
+    return {"ok": True, "detail": out or f"{name} odebrán."}
+
+
 def doctor():
     """What the hub found on this machine — shown in the UI when something is off."""
     how, detail = link_selftest()
     stav, kde = memory_link_state()
     browser, browser_detail = browser_state()
+    # Jen jména z disku — jestli servery opravdu odpovídají, se ptá /api/mcp
+    # na pozadí. Tenhle výpis se čte při každém načtení stránky a čekat na síť
+    # by znamenalo čekat na každý mrtvý server.
+    mcp_user, mcp_project = mcp_scopes()
     return {
         "link": how, "link_error": detail,
         "memory_link": stav, "memory_link_path": kde,
         "browser_mcp": browser, "browser_mcp_detail": browser_detail,
+        "mcp_user": sorted(mcp_user),
+        "mcp_project": sorted(mcp_project),
         "platform": "windows" if IS_WINDOWS else ("mac" if IS_MAC else "linux"),
         "bash": BASH,
         "git": GIT,

@@ -1,5 +1,10 @@
 /* Nastavení — to, co průvodce nastaví napoprvé, se tu dá změnit kdykoli.
  *
+ * Sekce se přepínají tlačítky vlevo a v těle je vždycky jen jedna. Jako jeden
+ * dlouhý svitek se v tom ztrácelo: kvůli přepínači tabů se scrollovalo přes
+ * paměť, napojení i logy. Vybraná sekce se pamatuje, takže po zavření a
+ * otevření je člověk tam, kde skončil.
+ *
  * Je tu i aktualizace aplikace. Schválně daleko od ⟳ v hlavičce: to jen znovu
  * přečte projekty a paměť, kdežto tohle stáhne novou verzi hubu a přeinstaluje
  * ji. Dvě různé věci, dvě různá místa, dvě různá jména.
@@ -11,6 +16,19 @@
   let io = null;
   let state = null;
   let root = null;
+  let active = localStorage.getItem('hub-set-tab') || 'vzhled';
+
+  // Pořadí je i pořadím v panelu vlevo: napřed to, co se mění nejčastěji,
+  // servis (aktualizace, logy) až na konci.
+  const SECTIONS = [
+    ['vzhled',     'Vzhled',    'i-sun',      () => vzhled()],
+    ['projekty',   'Projekty',  'i-folder',   () => projekty()],
+    ['taby',       'Taby',      'i-terminal', () => taby()],
+    ['pamet',      'Paměť',     'i-book',     () => pamet()],
+    ['napojeni',   'Napojení',  'i-hub',      () => napojeni()],
+    ['aktualizace','Aktualizace', 'i-up',     () => aktualizace()],
+    ['logy',       'Logy',      'i-status',   () => logy()],
+  ];
 
   function el(tag, cls, text) {
     const node = document.createElement(tag);
@@ -29,7 +47,7 @@
   async function open(opts) {
     io = opts;
     state = opts.state;
-    root = el('div', 'onb');
+    root = el('div', 'onb set-modal');
     root.innerHTML = `
       <div class="onb-box">
         <div class="onb-head">
@@ -39,7 +57,10 @@
             <div class="onb-sub"></div>
           </div>
         </div>
-        <div class="onb-body"></div>
+        <div class="onb-body set-body">
+          <nav class="set-nav"></nav>
+          <div class="set-panel"></div>
+        </div>
         <div class="onb-foot">
           <button class="btn ghost set-wizard">Spustit průvodce znovu</button>
           <span class="spacer"></span>
@@ -66,14 +87,27 @@
   }
 
   function render() {
-    const body = root.querySelector('.onb-body');
-    body.textContent = '';
-    body.appendChild(vzhled());
-    body.appendChild(projekty());
-    body.appendChild(taby());
-    body.appendChild(pamet());
-    body.appendChild(aktualizace());
-    body.appendChild(logy());
+    const nav = root.querySelector('.set-nav');
+    const panel = root.querySelector('.set-panel');
+    if (!SECTIONS.some(([id]) => id === active)) active = SECTIONS[0][0];
+
+    nav.textContent = '';
+    for (const [id, label, ico] of SECTIONS) {
+      const b = el('button', 'set-tab' + (id === active ? ' on' : ''));
+      b.innerHTML = '<svg class="ico"><use href="#' + ico + '"/></svg><span></span>';
+      b.querySelector('span').textContent = label;
+      b.onclick = () => {
+        active = id;
+        localStorage.setItem('hub-set-tab', id);
+        render();
+        panel.scrollTop = 0;
+      };
+      nav.appendChild(b);
+    }
+
+    panel.textContent = '';
+    const build = (SECTIONS.find(([id]) => id === active) || SECTIONS[0])[3];
+    panel.appendChild(build());
   }
 
   function vzhled() {
@@ -248,6 +282,196 @@
       }
     };
     box.appendChild(move);
+    return box;
+  }
+
+  /* Napojení (MCP) — na co Claude Code na tomhle stroji dosáhne.
+   *
+   * Kontrola nečte jen registrace: každý server se opravdu osloví, protože
+   * „zaregistrovaný" a „odpovídá" jsou dvě různé věci — konektor s vypršeným
+   * přihlášením vypadá v souborech úplně stejně jako ten funkční. Trvá to
+   * kolem deseti sekund, tak to počítá server na pozadí a sekce se dokreslí.
+   */
+  let mcpLast = null;      // poslední doběhlý výsledek, ať sekce mezi otevřeními nebliká
+
+  const MCP_STATES = {
+    ok:      ['set-ok', '●', 'připojeno'],
+    auth:    ['set-warn', '●', 'chce přihlásit'],
+    fail:    ['set-bad', '●', 'nepřipojeno'],
+    local:   ['set-dim', '○', 'jen v projektu'],
+    unknown: ['set-dim', '○', 'neznámý stav'],
+  };
+
+  function napojeni() {
+    const box = section('Napojení (MCP)',
+      'Služby, do kterých Claude Code vidí — konektory z účtu claude.ai i ' +
+      'servery zaregistrované na tomhle stroji. Kontrola se každého zeptá, ' +
+      'takže je vidět i to, co je sice zapsané, ale nefunguje.');
+
+    const summary = el('div', 'set-row');
+    const list = el('div', 'onb-list');
+    const store = el('div');            // katalog: co se dá přidat
+    const btns = el('div', 'onb-btns');
+    const check = el('button', 'actionbtn', 'Zkontrolovat znovu');
+    btns.appendChild(check);
+    box.appendChild(summary);
+    box.appendChild(list);
+    box.appendChild(store);
+    box.appendChild(btns);
+
+    function busy(text) {
+      summary.textContent = '';
+      summary.appendChild(el('span', 'set-dim', text));
+      check.disabled = true;
+    }
+
+    function draw(data) {
+      check.disabled = false;
+      mcpLast = data;
+      const servers = data.servers || [];
+      const c = data.counts || {};
+
+      summary.textContent = '';
+      if (!data.ok && data.detail) {
+        summary.appendChild(el('span', 'set-warn', data.detail));
+      } else {
+        summary.appendChild(el('span', 'set-ok',
+          (c.ok || 0) + ' z ' + (c.total || 0) + ' připojeno'));
+        const rest = [];
+        if (c.auth) rest.push(c.auth + '× chce přihlásit');
+        if (c.fail) rest.push(c.fail + '× nepřipojeno');
+        if (c.local) rest.push(c.local + '× jen v projektu');
+        if (rest.length) summary.appendChild(el('small', null, rest.join(' · ')));
+      }
+
+      list.textContent = '';
+      if (!servers.length) list.appendChild(el('div', 'empty', '(žádné napojení)'));
+      for (const s of servers) {
+        const [cls, dot, fallback] = MCP_STATES[s.state] || MCP_STATES.unknown;
+        const row = el('div', 'onb-row mcp-row');
+        row.appendChild(Object.assign(el('span', 'mcp-dot ' + cls), {textContent: dot}));
+        const col = el('span', 'onb-col');
+        col.appendChild(el('span', null, s.name));
+        const where = [s.status || fallback];
+        if (s.where) where.push(s.where);
+        col.appendChild(el('small', null, where.join(' · ')));
+        if (s.target) col.appendChild(el('small', 'mcp-target', s.target));
+        row.appendChild(col);
+        row.appendChild(el('span', 'spacer'));
+        if (s.removable) {
+          const del = el('button', 'set-x', '×');
+          del.title = 'Odebrat napojení';
+          del.onclick = async (ev) => {
+            ev.stopPropagation();
+            if (!confirm('Odebrat napojení ' + s.name + '?')) return;
+            try {
+              await io.api('mcp', {action: 'remove', name: s.name});
+              io.toast(s.name + ' odebrán.');
+              load(true);
+            } catch (err) { io.toast('Nepovedlo se: ' + err.message); }
+          };
+          row.appendChild(del);
+        }
+        list.appendChild(row);
+      }
+
+      store.textContent = '';
+      const catalog = data.catalog || {};
+      for (const key of (data.available || [])) {
+        const spec = catalog[key];
+        if (spec) store.appendChild(pridat(key, spec));
+      }
+    }
+
+    /* Přidání z katalogu. Klíč se zadává tady a putuje rovnou do
+       `claude mcp add` — hub si ho nikam neukládá a do logu se nedostane. */
+    function pridat(key, spec) {
+      const wrap = el('div', 'mcp-add');
+      const head = el('div', 'set-row');
+      head.appendChild(el('strong', null, 'Přidat ' + spec.label));
+      head.appendChild(el('span', 'spacer'));
+      const open = el('button', 'btn ghost', 'Napojit');
+      head.appendChild(open);
+      wrap.appendChild(head);
+      wrap.appendChild(el('div', 'set-note', spec.note));
+
+      const form = el('div', 'mcp-form');
+      form.hidden = true;
+      const input = el('input');
+      input.type = 'password';
+      input.placeholder = spec.key_label || 'API klíč';
+      input.autocomplete = 'off';
+      form.appendChild(input);
+      const go = el('button', 'btn primary', 'Napojit');
+      form.appendChild(go);
+      wrap.appendChild(form);
+      if (spec.key_help) {
+        const help = el('div', 'set-note', 'Kde ho vzít: ' + spec.key_help + ' ');
+        if (spec.docs) {
+          const a = el('button', 'linkbtn', 'návod');
+          a.onclick = () => io.api('open-path', {path: spec.docs})
+            .catch(() => io.toast('Nepodařilo se otevřít odkaz.'));
+          help.appendChild(a);
+        }
+        wrap.appendChild(help);
+      }
+
+      open.onclick = () => {
+        form.hidden = !form.hidden;
+        // Dvě tlačítka „Napojit" vedle sebe by mátla — tohle jen otevírá pole.
+        open.textContent = form.hidden ? 'Napojit' : 'Zavřít';
+        if (!form.hidden) input.focus();
+      };
+      input.onkeydown = (ev) => { if (ev.key === 'Enter') go.click(); };
+      go.onclick = async () => {
+        const value = input.value.trim();
+        if (!value) { io.toast('Bez klíče se server nepřihlásí.'); return; }
+        go.disabled = true;
+        go.textContent = 'Napojuju…';
+        try {
+          const r = await io.api('mcp', {action: 'add', name: key, key: value});
+          io.toast(r.detail || 'Hotovo.');
+        } catch (err) {
+          io.toast('Nepovedlo se: ' + err.message);
+          go.disabled = false;
+          go.textContent = 'Napojit';
+          return;
+        }
+        input.value = '';
+        load(true);
+      };
+      return wrap;
+    }
+
+    async function load(refresh) {
+      busy(refresh ? 'Ptám se serverů…' : 'Načítám…');
+      let data;
+      try {
+        data = await io.api('mcp' + (refresh ? '?refresh=1' : ''));
+      } catch (err) {
+        summary.textContent = '';
+        summary.appendChild(el('span', 'set-warn', 'Nepovedlo se: ' + err.message));
+        check.disabled = false;
+        return;
+      }
+      while (data.running) {
+        busy(data.step || 'Ptám se serverů…');
+        await new Promise(r => setTimeout(r, 1200));
+        try {
+          data = await io.api('mcp');
+        } catch (err) {
+          summary.textContent = '';
+          summary.appendChild(el('span', 'set-warn', 'Nepovedlo se: ' + err.message));
+          check.disabled = false;
+          return;
+        }
+      }
+      draw(data);
+    }
+
+    check.onclick = () => load(true);
+    if (mcpLast) draw(mcpLast);          // ať je hned vidět minulý výsledek
+    load(false);                         // a na pozadí se dotáhne aktuální
     return box;
   }
 

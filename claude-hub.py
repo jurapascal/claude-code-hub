@@ -39,9 +39,17 @@ if sys.platform == "win32":
 from hub import core, pty_backend, server, window  # noqa: E402
 
 
+MCP_MARKS = {"ok": "+", "auth": "!", "fail": "-", "local": ".",
+             "unknown": "?"}
+
+
 def doctor():
     info = core.doctor()
     ok, detail = pty_backend.selftest()
+    # Zdravotní kontrola oslovuje každý MCP server zvlášť, takže tohle je
+    # nejpomalejší část výpisu (~10 s). V --doctor to stojí za to: jinak se
+    # „napojeno" pozná až tím, že v Claude Code nefunguje.
+    mcp = core.mcp_list()
     browser = window.find_browser()
     webkit = window.has_webkit()
     host = ("chromium (" + os.path.basename(browser) + ")" if browser else
@@ -69,10 +77,16 @@ def doctor():
         # Prohlížeč pro Claude Code: zajímavý je jen profil. Bez připnutého
         # profilu se každá přihlášená session ztratí s přepnutím projektu.
         ("prohlížeč (MCP)", f'{info["browser_mcp"]}  {info["browser_mcp_detail"]}'),
+        ("napojení (MCP)", _mcp_summary(mcp)),
         ("pty test", "OK" if ok else f"SELHAL — {detail}"),
         ("log", core.LOG_PATH),
     ]:
         print(f"  {label:<20} {value}")
+        # Rozpis patří hned pod svůj řádek, ne až za celou tabulku.
+        if label == "napojení (MCP)":
+            for server in mcp.get("servers") or []:
+                mark = MCP_MARKS.get(server["state"], "?")
+                print(f"  {'':<20} {mark} {server['name']} — {server['status']}")
     print()
     if not info["bash"]:
         print("  ⚠ Bez bash hub neumí spustit tab:")
@@ -80,6 +94,20 @@ def doctor():
               else "    sudo apt install bash")
         print()
     return 0 if (ok and info["bash"]) else 1
+
+
+def _mcp_summary(mcp):
+    if not mcp.get("ok"):
+        return mcp.get("detail") or "nepodařilo se zjistit"
+    c = mcp.get("counts") or {}
+    parts = [f'{c.get("ok", 0)} z {c.get("total", 0)} připojeno']
+    if c.get("auth"):
+        parts.append(f'{c["auth"]}x chce přihlásit')
+    if c.get("fail"):
+        parts.append(f'{c["fail"]}x nepřipojeno')
+    if c.get("local"):
+        parts.append(f'{c["local"]}x jen v projektu')
+    return ", ".join(parts)
 
 
 def wait_for_page(proc=None, grace=10, startup=60):

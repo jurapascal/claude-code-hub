@@ -644,6 +644,49 @@ if (-not $ClaudeCli) {
     $ErrorActionPreference = $prevEap
 }
 
+# ── 11b. Clockify MCP (volitelné) ────────────────────────────────────────────
+# Výkazy času a projekty z Clockify přímo v Claude Code. HTTP server ověřovaný
+# hlavičkou x-api-key. Klíč se bere jen tady a zapíše si ho Claude Code do
+# ~/.claude.json — do repa ani do logu instalačky se nedostane.
+# Klíč: Clockify → foto profilu → Preferences → Advanced → Manage API keys.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $ClockifyUrl = 'https://api.clockify.me/mcp-server/mcp'
+    $clockifyDone = $false
+    if ($ClaudeCli) {
+        & $ClaudeCli mcp get clockify *>$null
+        $clockifyDone = ($LASTEXITCODE -eq 0)
+    }
+
+    if (-not $ClaudeCli) {
+        Write-Info 'Clockify MCP přeskočen — chybí Claude Code CLI'
+    } elseif ($clockifyDone) {
+        Write-Ok 'clockify MCP už je zaregistrovaný'
+    } elseif ($env:CLOCKIFY_API_KEY) {
+        # Neinteraktivní cesta: klíč z prostředí, ať projde i běh bez otázek.
+        & $ClaudeCli mcp add clockify $ClockifyUrl -s user --transport http --header "x-api-key: $($env:CLOCKIFY_API_KEY)"
+        Write-Ok 'clockify MCP zaregistrován z CLOCKIFY_API_KEY (user scope)'
+    } elseif (-not $Interactive) {
+        Write-Info 'Clockify MCP přeskočen — klíč nemám (nastav CLOCKIFY_API_KEY, nebo ho zadej v hubu)'
+    } elseif (Ask-YesNo 'Napojit Clockify (výkazy času)? Budeš potřebovat API klíč') {
+        $clockifyKey = Read-Host '     API klíč z Clockify'
+        if (-not $clockifyKey) {
+            Write-Info 'bez klíče to nejde — přidáš ho kdykoli v hubu: Nastavení → Napojení (MCP)'
+        } else {
+            & $ClaudeCli mcp add clockify $ClockifyUrl -s user --transport http --header "x-api-key: $clockifyKey"
+            Write-Ok 'clockify MCP zaregistrován (user scope)'
+        }
+        $clockifyKey = $null
+    } else {
+        Write-Dim 'Později: Nastavení → Napojení (MCP) → Přidat Clockify'
+    }
+} catch {
+    Write-Warn "Clockify MCP se nepovedlo přidat: $($_.Exception.Message)"
+} finally {
+    $ErrorActionPreference = $prevEap
+}
+
 # ── 12. Přihlášení do Claude Code ────────────────────────────────────────────
 # Bez přihlášení uvítá každý tab login obrazovka. Spustit `claude` rovnou tady je
 # nejrychlejší: uživatel projde /login a dá /exit.

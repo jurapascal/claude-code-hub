@@ -27,6 +27,12 @@ dělá jednu aplikaci:
 - **Taby** — klik na projekt otevře **skutečný terminál** (pty + xterm.js), takže TUI
   Claude Code vypadá přesně jako v terminálu. Když session skončí, tab zůstane jako
   obyčejný shell. Taby jdou přejmenovat dvojklikem a přetáhnout myší.
+- **Bublina místo vstupního řádku** — spodek terminálu, kde Claude Code kreslí
+  svoje vstupní pole, překryje chatovací bublina: pole na text, přepínač modelu,
+  slash příkazy, příloha a režimy (Shift+Tab, Esc). Odeslané jde do stejného pty,
+  takže Claude dostane přesně to, co by dostal z klávesnice. Jakmile se dole
+  objeví dialog (výběr modelu, dotaz na oprávnění) nebo se odroluje nahoru,
+  bublina se sama složí do proužku — nikdy nezakryje to, na co se máš dívat.
 - **Akční panel vpravo** — tlačítka posílají do chatu rovnou slash příkazy
   (`/save`, `/project`, `/deploy`, `/push`, `/status`, `/screenshot`). Tlačítko se
   zobrazí, jen když je odpovídající příkaz nainstalovaný.
@@ -55,6 +61,13 @@ dělá jednu aplikaci:
 - **Statistiky** — kolik tokenů, kdy během dne píšeš, které projekty berou
   nejvíc, a commity z GitHubu. Počítá se z toho, co si Claude Code ukládá do
   `~/.claude`; nic se nikam neposílá.
+- **Napojení (MCP)** — v nastavení je vidět, na co Claude Code dosáhne: konektory
+  z účtu claude.ai i servery zaregistrované na stroji, u každého jestli opravdu
+  odpovídá. Nečte se jen registrace — každý server se osloví, takže je poznat
+  i ten, který je sice zapsaný, ale chce přihlásit. Clockify se dá přidat jedním
+  klikem.
+- **Nastavení po sekcích** — vzhled, projekty, taby, paměť, napojení, aktualizace
+  a logy se přepínají tlačítky vlevo; vybraná sekce se pamatuje.
 - **Dark/light** — řídí se motivem systému, přepínač v hlavičce.
 - **Obsidian paměť (volitelné)** — když máš vault, panel ukáže poslední poznámky
   (learnings/errors/wins) a klikem je otevře v Obsidianu. Bez vaultu se sekce
@@ -171,6 +184,7 @@ sama** — otázka navíc byla hlavní důvod, proč instalace nebyla rychlá:
 | **vault** | naklonuje ten tvůj z gitu, nebo založí `~/Obsidian/Claude-Brain` s `memory/`, `skills/` a rozcestníkem `MEMORY.md` — teprve tím se zapnou `/save`, `/learn`, `/project`, `/skill` |
 | **GitHub CLI** | `winget install GitHub.cli` / apt / dnf / pacman / snap / brew, pak `gh auth login` + `gh auth setup-git` |
 | **Playwright MCP** | prohlížeč pro Claude Code (~115 MB, potřebuje Node.js 20+) |
+| **Clockify MCP** | volitelně, jen když zadáš API klíč (nebo ho máš v `CLOCKIFY_API_KEY`) |
 | **hooky** | `Stop` (uloží stav session) a `SessionStart` (načte kategorie skillů z vaultu a stav minulé session) do `settings.json` |
 | **skilly** | 571 hotových postupů z [claude-brain-skills](https://github.com/jurapascal/claude-brain-skills) do vaultu — existující složku nikdy nepřepíše |
 
@@ -280,6 +294,43 @@ Stav registrace ukáže `python3 ~/.claude/claude-hub.py --doctor` na řádku
 Odebrání: `claude mcp remove playwright -s user`.
 [Dokumentace](https://playwright.dev/docs/getting-started-mcp)
 
+## Napojení na cizí služby (MCP)
+
+**Nastavení → Napojení** ukáže všechno, na co Claude Code dosáhne, a u každého
+jestli to opravdu odpovídá:
+
+- **konektory z účtu** (`claude.ai …`) — ty na disku v žádném souboru nejsou,
+  ví o nich jen Claude Code sám,
+- **servery ze stroje** — `~/.claude.json`, user scope, platí ve všech projektech,
+- **servery z projektu** — `.mcp.json` ve složce projektu; platí jen tam, tak
+  jsou v seznamu označené.
+
+Zdrojem pravdy je `claude mcp list`, který každý server rovnou osloví — proto to
+pár sekund trvá a proto se pozná i registrace, která sice existuje, ale vypršelo
+jí přihlášení. Totéž vypíše i `--doctor`:
+
+```bash
+python3 ~/.claude/claude-hub.py --doctor
+#   napojení (MCP)       9 z 13 připojeno, 4x chce přihlásit
+#                        + figma — připojeno
+#                        ! claude.ai Gmail — chce přihlásit
+```
+
+### Clockify
+
+Výkazy času, projekty a spuštěné stopky přímo z Claude Code. V nastavení stačí
+vložit API klíč (Clockify → foto profilu → Preferences → Advanced → Manage API
+keys → Generate New), ručně to je jeden příkaz:
+
+```bash
+claude mcp add clockify https://api.clockify.me/mcp-server/mcp \
+    -s user --transport http --header "x-api-key: <klíč>"
+```
+
+Klíč si zapíše Claude Code do `~/.claude.json` — hub ho nikam neukládá a do logu
+se nedostane. Instalačka ho vezme i z proměnné `CLOCKIFY_API_KEY`, takže projde
+i běh s `--yes`.
+
 ## Přihlášení vlastním účtem
 
 Aplikace **žádné přihlašovací údaje neobsahuje ani nesdílí** — každý si pustí Claude Code
@@ -359,7 +410,8 @@ claude-wrapper.sh         boot sekvence před spuštěním claude + restart po c
 hub/static/ime.js         vstup s diakritikou — composition events místo xterm.js
 hub/static/clipboard.js   schránka přes server (WebKitGTK stránku k ní nepustí)
 hub/static/onboarding.js  průvodce prvním spuštěním
-hub/static/settings.js    nastavení a aktualizace aplikace
+hub/static/settings.js    nastavení po sekcích (vzhled, projekty, paměť, napojení, aktualizace, logy)
+hub/static/composer.js    bublina místo vstupního řádku (text, model, slash příkazy, přílohy, režimy)
 hub/static/stats.js       statistiky používání
 hub/stats.py              počítání statistik z ~/.claude (přírůstkově, s mezipamětí)
 hooks/save-session.py     Stop hook — uloží stav projektů do session-state.md

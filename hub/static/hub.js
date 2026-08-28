@@ -723,6 +723,17 @@ function createTab({kind, path, title, id}) {
     notice: toast,
   });
   wireFiles(tab);
+  // Bublina jen tam, kde běží Claude Code. V holém shellu ani při deployi
+  // není co překrývat — a odeslaný text by skončil v bashi.
+  if (kind === 'project' || kind.startsWith('slash:')) {
+    tab.composer = HubComposer.install(tab, {
+      send,
+      menu: showMenu,
+      upload: uploadFiles,
+      quote: shellQuote,
+      skills: () => STATE.skills || [],
+    });
+  }
 
   const el = document.createElement('button');
   el.className = 'tab';
@@ -763,6 +774,8 @@ function activate(tab) {
   if (tab) {
     refit(tab);
     tab.term.focus();
+    // Když je vidět bublina, píše se do ní — fokus patří jí.
+    if (tab.composer) tab.composer.focus();
   }
 }
 
@@ -776,6 +789,7 @@ function closeTab(tab) {
   if (tab.id) send({t: 'close', id: tab.id});
   if (tab.releaseIME) tab.releaseIME();
   if (tab.releaseClipboard) tab.releaseClipboard();
+  if (tab.composer) tab.composer.release();
   tab.term.dispose();
   tab.el.remove();
   tab.pane.remove();
@@ -840,9 +854,10 @@ function shellQuote(p) {
   return /[\s"'`$\\]/.test(p) ? `'${p.replace(/'/g, `'\\''`)}'` : p;
 }
 
-async function attachFiles(tab, fileList) {
+/* Soubory na server a zpátky jejich cesty. Odděleně od vkládání do promptu,
+   protože totéž potřebuje i bublina composeru. */
+async function uploadFiles(fileList) {
   const files = [...fileList].filter(f => f && f.size);
-  if (!files.length || !tab.id) return;
   const paths = [];
   for (const file of files) {
     try {
@@ -853,15 +868,24 @@ async function attachFiles(tab, fileList) {
       toast(`Nepodařilo se přiložit ${file.name || 'soubor'}: ${err.message}`);
     }
   }
-  typePaths(tab, paths);
+  return paths;
+}
+
+async function attachFiles(tab, fileList) {
+  if (!tab.id) return;
+  typePaths(tab, await uploadFiles(fileList));
 }
 
 /* Cesta k souboru napsaná na prompt — to je jediné, co terminál od obrázku
  * vezme. Chodí sem vložené i přetažené soubory a screenshot ze schránky. */
 function typePaths(tab, paths) {
   if (!paths.length || !tab.id) return;
-  send({t: 'in', id: tab.id, d: paths.map(shellQuote).join(' ') + ' '});
-  tab.term.focus();
+  // Když je vidět bublina, patří cesta do ní — do terminálu by se napsala
+  // pod ni, do pole, které není vidět.
+  if (!(tab.composer && tab.composer.insertPaths(paths))) {
+    send({t: 'in', id: tab.id, d: paths.map(shellQuote).join(' ') + ' '});
+    tab.term.focus();
+  }
   toast(paths.length === 1 ? 'Přiloženo: ' + paths[0]
                            : `Přiloženo ${paths.length} souborů`);
 }
@@ -908,6 +932,7 @@ function wireFiles(tab) {
  * later — a \r bundled with pasted text reads as a newline, not as submit. */
 function runSlash(cmd) {
   if (!ACTIVE || !ACTIVE.id) return;
+  if (ACTIVE.composer && ACTIVE.composer.run(cmd)) return;
   const id = ACTIVE.id;
   if (cmd.endsWith('\r')) {
     send({t: 'in', id, d: cmd.slice(0, -1)});
@@ -972,7 +997,7 @@ async function removeProject(p) {
 const MENU_ARM_MS = 300;
 let menuArmedAt = 0;
 
-function showMenu(x, y, items) {
+function showMenu(x, y, items, opts) {
   const menu = $('ctxmenu');
   menu.textContent = '';
   for (const item of items) {
@@ -995,7 +1020,9 @@ function showMenu(x, y, items) {
   const box = menu.getBoundingClientRect();
   // +3 px, ať kurzor nestojí přímo na první položce
   menu.style.left = Math.min(x + 3, innerWidth - box.width - 8) + 'px';
-  menu.style.top = Math.min(y + 3, innerHeight - box.height - 8) + 'px';
+  // Nabídka z bubliny musí růst nahoru — dole už není kam.
+  const top = (opts && opts.above) ? y - box.height : y + 3;
+  menu.style.top = Math.max(8, Math.min(top, innerHeight - box.height - 8)) + 'px';
 }
 
 function hideMenu() { $('ctxmenu').hidden = true; }

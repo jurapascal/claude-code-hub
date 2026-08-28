@@ -582,6 +582,45 @@ else
     register_playwright_mcp && download_playwright_browser
 fi
 
+# ── 8b. Clockify MCP (volitelné) ─────────────────────────────────────────────
+# Výkazy času a projekty z Clockify přímo v Claude Code. HTTP server, ověřuje
+# se hlavičkou x-api-key — klíč se bere jen tady, do repa ani do logu se
+# nedostane (zapíše si ho Claude Code do ~/.claude.json, jako u ostatních).
+# Klíč: Clockify → foto profilu → Preferences → Advanced → Manage API keys.
+CLOCKIFY_URL="https://api.clockify.me/mcp-server/mcp"
+
+echo ""
+if $MINIMAL; then
+    info "--minimal: Clockify MCP přeskočen"
+elif ! command -v claude >/dev/null 2>&1; then
+    info "Clockify MCP přeskočen — chybí Claude Code CLI"
+elif claude mcp get clockify >/dev/null 2>&1; then
+    ok "clockify MCP už je zaregistrovaný"
+elif [ -n "${CLOCKIFY_API_KEY:-}" ]; then
+    # Neinteraktivní cesta: klíč z prostředí, ať jde instalačka i s --yes.
+    if claude mcp add clockify "$CLOCKIFY_URL" -s user --transport http \
+            --header "x-api-key: $CLOCKIFY_API_KEY" >/dev/null 2>&1; then
+        ok "clockify MCP zaregistrován z CLOCKIFY_API_KEY (user scope)"
+    else
+        warn "'claude mcp add clockify' selhalo — zkus to z Nastavení v hubu"
+    fi
+elif $ASSUME_YES; then
+    info "Clockify MCP přeskočen — klíč nemám (nastav CLOCKIFY_API_KEY, nebo ho zadej v hubu)"
+elif ask "Napojit Clockify (výkazy času)? Budeš potřebovat API klíč"; then
+    read -r -p "     API klíč z Clockify: " CLOCKIFY_KEY
+    if [ -z "$CLOCKIFY_KEY" ]; then
+        info "bez klíče to nejde — přidáš ho kdykoli v hubu: Nastavení → Napojení (MCP)"
+    elif claude mcp add clockify "$CLOCKIFY_URL" -s user --transport http \
+            --header "x-api-key: $CLOCKIFY_KEY" >/dev/null 2>&1; then
+        ok "clockify MCP zaregistrován (user scope)"
+    else
+        warn "'claude mcp add clockify' selhalo — zkus to z Nastavení v hubu"
+    fi
+    unset CLOCKIFY_KEY
+else
+    echo -e "     ${D}Později: Nastavení → Napojení (MCP) → Přidat Clockify${R}"
+fi
+
 # ── 9. Přihlášení do Claude Code ─────────────────────────────────────────────
 # Bez přihlášení se v každém tabu objeví login obrazovka. Spustit `claude` tady
 # je nejrychlejší cesta: uživatel projde /login a dá /exit.

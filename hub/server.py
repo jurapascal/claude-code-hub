@@ -435,6 +435,29 @@ class Handler(BaseHTTPRequestHandler):
                     progress=lambda m: core.job_step("stats", m)))
                 return self._json({"running": True, "step": "počítám…"})
             return self._json({"running": False, **(cached.get("result") or {})})
+        if name == "mcp":
+            # Napojení na cizí služby. Zdravotní kontrola oslovuje každý server
+            # zvlášť (~10 s), takže stejný postup jako u statistik: spočítat na
+            # pozadí a stránce vracet, co už je hotové.
+            action = payload.get("action") or ""
+            if action == "add":
+                result = core.mcp_add(payload.get("name", ""),
+                                      payload.get("key", ""))
+                return self._json(result, 200 if result.get("ok") else 400)
+            if action == "remove":
+                result = core.mcp_remove(payload.get("name", ""))
+                return self._json(result, 200 if result.get("ok") else 400)
+            cached = core.job_state("mcp")
+            if cached.get("running"):
+                return self._json({"running": True, "catalog": core.MCP_CATALOG,
+                                   "step": cached.get("step", "")})
+            done = cached.get("result") or {}
+            if query.get("refresh") or payload.get("refresh") or not done:
+                core.start_job("mcp", core.mcp_list)
+                return self._json({"running": True, "catalog": core.MCP_CATALOG,
+                                   "step": "ptám se serverů…"})
+            return self._json({"running": False, "catalog": core.MCP_CATALOG,
+                               **done})
         if name == "update-status":
             return self._json(core.update_state())
         if name == "job":
