@@ -351,7 +351,6 @@
     askRoot.hidden = true;
     askRoot.innerHTML = `
       <div class="ask-card">
-        <div class="ask-tag">${icon('i-bulb')}<span>Claude se ptá</span></div>
         <div class="ask-title"></div>
         <div class="ask-body"></div>
         <div class="ask-opts"></div>

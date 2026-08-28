@@ -603,20 +603,14 @@ body { display: flex; flex-direction: column; }
   border-radius: var(--radius);
   -webkit-user-select: text; user-select: text;
 }
-.ask-tag {
-  display: flex; align-items: center; gap: 6px;
-  color: var(--amber); font-size: 10.5px; font-weight: 700;
-  letter-spacing: 1px; text-transform: uppercase;
-}
-/* Žárovka je menší než řádek, do kterého patří — s velikostí písma by z ní
-   byla tečka. */
-.ask-tag .ico { width: 13px; height: 13px; }
+/* Bez popisky „Claude se ptá": karta stojí přes celý terminál a ptá se
+   tlačítky, takže si o sebe říct nemusí. */
 .ask-title {
-  margin-top: 8px;
   color: var(--fg-bright); font-size: 16px; font-weight: 700; line-height: 1.3;
 }
 .ask-title[hidden] { display: none; }
 .ask-body { margin-top: 8px; }
+.ask-title[hidden] + .ask-body { margin-top: 0; }
 .ask-body[hidden] { display: none; }
 /* Odstavce dotazu drží pohromadě v jednom bloku (composer.js je slepí a oddělí
    řádkem), takže `pre-line` — vlastní zalomení textu si obstará prohlížeč. */
