@@ -227,13 +227,18 @@ Pracuje nad accessibility tree, ne nad pixely, takže nepotřebuje vision model.
 Instalátor ho nabídne na konci, ručně to jsou dva příkazy:
 
 ```bash
-claude mcp add playwright -s user -- npx @playwright/mcp@latest --browser chromium
+claude mcp add playwright -s user -- npx @playwright/mcp@latest \
+    --browser chromium --user-data-dir ~/.claude/browser-profile
 npx @playwright/mcp@latest install-browser chrome-for-testing
 ```
 
 - `-s user` = platí ve všech projektech; zapíše se do `~/.claude.json`, ne do repa.
 - `--browser chromium` jede na bundlovaném Chromiu — výchozí kanál `chrome` by chtěl
   systémový Google Chrome.
+- **`--user-data-dir` je to, díky čemu přihlášení vydrží.** Bez něj si Playwright MCP
+  odvozuje profil z pracovní složky (`mcp-<kanál>-<hash cwd>` v cache), takže každý
+  projekt v Hubu dostane vlastní prohlížeč — přihlásíš se do Googlu, přepneš tab
+  a jsi zase odhlášený. Připnutý profil je jeden pro všechny projekty.
 - Druhý příkaz je nutný: verze prohlížeče se váže na verzi MCP serveru, jinak první
   `browser_navigate` vrátí „Browser chrome-for-testing is not installed". Stahuje
   ~115 MB do `~/.cache/ms-playwright` (jen co chybí).
@@ -241,6 +246,36 @@ npx @playwright/mcp@latest install-browser chrome-for-testing
 - Bez vyskakujícího okna: přidat za `--browser chromium` ještě `--headless`.
 - Snapshoty stránek si server ukládá do `.playwright-mcp/` v aktuální složce —
   hodí se do `.gitignore`.
+
+### Profil prohlížeče
+
+`~/.claude/browser-profile` je obyčejný profil Chromia: cookies, přihlášení, uložená
+hesla. Záměrně **není v cache** — úklid disku by tichým smazáním odhlásil všechno.
+
+```bash
+python3 ~/.claude/tools/playwright_profile.py --path            # kde profil je
+python3 ~/.claude/tools/playwright_profile.py --prune           # zahodit staré profily
+```
+
+Instalačka profil založí sama a přihlášení do něj **převezme** z toho nejpoužívanějšího
+ze starých profilů po jednotlivých složkách (pozná ho podle přihlášeného účtu Google),
+takže se nikdo nemusí přihlašovat znovu. Když nad starým profilem zrovna běží prohlížeč,
+řekne to a nechá ho být — zavři ho a dožeň přenos jedním příkazem:
+
+```bash
+python3 ~/.claude/tools/playwright_profile.py            # přenese přihlášení
+```
+
+Přeskočí to, jakmile v novém profilu nějaký účet Google je; nepřihlášený profil
+předtím odloží stranou (`browser-profile.backup-<datum>`), nikdy nemaže.
+`--prune` zahodí staré profily po složkách; klidně to jsou stovky MB.
+
+Daň za společný profil: **jeden profil = jeden běžící prohlížeč.** Když si o něj řeknou
+dva taby naráz, druhý dostane „Browser is already in use for …" — buď zavřít ten první
+(`browser_close`), nebo tomu druhému přidat `--isolated`.
+
+Stav registrace ukáže `python3 ~/.claude/claude-hub.py --doctor` na řádku
+`prohlížeč (MCP)`.
 
 Odebrání: `claude mcp remove playwright -s user`.
 [Dokumentace](https://playwright.dev/docs/getting-started-mcp)

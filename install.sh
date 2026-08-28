@@ -505,16 +505,38 @@ fi
 # tree místo vlastních Puppeteer skriptů. Registruje se do user scope
 # (~/.claude.json), takže platí ve všech projektech. Bez zeptání se neinstaluje:
 # poprvé stahuje ~115 MB prohlížeče.
-add_playwright_mcp() {
+#
+# Profil prohlížeče se přibíjí na jedno místo. Bez `--user-data-dir` si ho
+# Playwright MCP odvozuje z pracovní složky (mcp-<kanál>-<hash cwd>), takže
+# každý tab v hubu dostal vlastní prohlížeč a přihlášení do Googlu bylo po
+# přepnutí projektu pryč. tools/playwright_profile.py profil připraví a
+# přihlášení převezme z toho nejpoužívanějšího ze starých.
+PW_TOOL="$CLAUDE_DIR/tools/playwright_profile.py"
+PW_PROFILE="$(python3 "$PW_TOOL" --claude-dir "$CLAUDE_DIR" --path 2>/dev/null)"
+
+prepare_playwright_profile() {
+    python3 "$PW_TOOL" --claude-dir "$CLAUDE_DIR" 2>&1 | while read -r line; do
+        case "$line" in
+            chyba:*)     warn "${line#chyba: }" ;;
+            varování:*)  warn "${line#varování: }" ;;
+            *)           ok "$line" ;;
+        esac
+    done
+}
+
+register_playwright_mcp() {
     # --browser chromium = bundlovaný Chromium z ~/.cache/ms-playwright;
     # výchozí kanál "chrome" by chtěl systémový Google Chrome.
     if ! claude mcp add playwright -s user -- \
-            npx @playwright/mcp@latest --browser chromium >/dev/null 2>&1; then
+            npx @playwright/mcp@latest --browser chromium \
+            --user-data-dir "$PW_PROFILE" >/dev/null 2>&1; then
         warn "'claude mcp add playwright' selhalo — přidej si ho ručně"
         return 1
     fi
-    ok "playwright MCP zaregistrován (user scope)"
+    ok "playwright MCP zaregistrován (user scope), profil ${D}$PW_PROFILE${R}"
+}
 
+download_playwright_browser() {
     # Verze prohlížeče se váže na verzi MCP serveru; bez tohohle kroku vrací
     # první browser_navigate "Browser chrome-for-testing is not installed".
     info "stahuju prohlížeč (~115 MB, stahuje se jen co chybí)…"
@@ -526,18 +548,38 @@ add_playwright_mcp() {
 }
 
 NODE_MAJOR="$(node -v 2>/dev/null | sed 's/^v//; s/\..*//')"
+PW_REGISTERED=false
+PW_PINNED=false
+if command -v claude >/dev/null 2>&1; then
+    if PW_CURRENT="$(claude mcp get playwright 2>/dev/null)"; then
+        PW_REGISTERED=true
+        case "$PW_CURRENT" in *--user-data-dir*) PW_PINNED=true ;; esac
+    fi
+fi
+
 echo ""
 if $MINIMAL; then
     info "--minimal: Playwright MCP přeskočen"
 elif ! command -v claude >/dev/null 2>&1; then
     info "Playwright MCP přeskočen — chybí Claude Code CLI"
-elif claude mcp get playwright >/dev/null 2>&1; then
-    ok "playwright MCP už je zaregistrovaný"
+elif $PW_REGISTERED && $PW_PINNED; then
+    # Profil se zkouší i tady: když se přenos přihlášení posledně nepovedl,
+    # protože nad starým profilem běžel prohlížeč, dožene se to teď.
+    ok "playwright MCP už je zaregistrovaný a přihlášení se drží"
+    prepare_playwright_profile
 elif [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 20 ]; then
     warn "Playwright MCP přeskočen — chce Node.js 20+ (teď: ${NODE_MAJOR:-žádný})"
     echo -e "     ${D}Doinstaluj Node 20+ a spusť instalačku znovu.${R}"
+elif $PW_REGISTERED; then
+    # Starší registrace bez --user-data-dir: prohlížeč se odhlašoval s každou
+    # změnou složky. Přeregistrovat, prohlížeč už na disku je.
+    info "opravuju Playwright MCP — přihlášení se ztrácelo s každou složkou"
+    prepare_playwright_profile
+    claude mcp remove playwright -s user >/dev/null 2>&1 || true
+    register_playwright_mcp
 else
-    add_playwright_mcp
+    prepare_playwright_profile
+    register_playwright_mcp && download_playwright_browser
 fi
 
 # ── 9. Přihlášení do Claude Code ─────────────────────────────────────────────

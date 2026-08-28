@@ -583,11 +583,30 @@ if ($NodeExe) {
     } catch { $nodeMajor = 0 }
 }
 
+# Profil prohlížeče se přibíjí na jedno místo. Bez `--user-data-dir` si ho
+# Playwright MCP odvozuje z pracovní složky (mcp-<kanál>-<hash cwd>), takže
+# každý tab v hubu dostal vlastní prohlížeč a přihlášení do Googlu bylo po
+# přepnutí projektu pryč. Profil připraví stejný skript jako na Linuxu.
+$PwTool = Join-Path $ClaudeDir 'tools\playwright_profile.py'
+$PwProfile = ''
+try { $PwProfile = (& $Python $PwTool '--claude-dir' $ClaudeDir '--path' | Select-Object -First 1) } catch { }
+if (-not $PwProfile) { $PwProfile = Join-Path $ClaudeDir 'browser-profile' }
+
+function Initialize-PlaywrightProfile {
+    & $Python $PwTool '--claude-dir' $ClaudeDir 2>&1 | ForEach-Object {
+        if     ($_ -match '^chyba:')    { Write-Warn ($_ -replace '^chyba: ', '') }
+        elseif ($_ -match '^varování:') { Write-Warn ($_ -replace '^varování: ', '') }
+        else                            { Write-Ok $_ }
+    }
+}
+
 $mcpRegistered = $false
+$mcpPinned = $false
 if ($ClaudeCli -and $NodeExe) {
     try {
-        & $ClaudeCli mcp get playwright *>$null
+        $mcpCurrent = (& $ClaudeCli mcp get playwright 2>$null | Out-String)
         $mcpRegistered = ($LASTEXITCODE -eq 0)
+        $mcpPinned = ($mcpRegistered -and $mcpCurrent -match '--user-data-dir')
     } catch { $mcpRegistered = $false }
 }
 
@@ -595,18 +614,28 @@ if (-not $ClaudeCli) {
     Write-Info 'Playwright MCP přeskočen — chybí Claude Code CLI'
 } elseif (-not $NodeExe -or -not $NpxExe) {
     Write-Info 'Playwright MCP přeskočen — bez Node.js/npx ho není čím spustit'
-} elseif ($mcpRegistered) {
-    Write-Ok 'playwright MCP už je zaregistrovaný'
+} elseif ($mcpRegistered -and $mcpPinned) {
+    # Profil se zkouší i tady: když se přenos přihlášení posledně nepovedl,
+    # protože nad starým profilem běžel prohlížeč, dožene se to teď.
+    Write-Ok 'playwright MCP už je zaregistrovaný a přihlášení se drží'
+    Initialize-PlaywrightProfile
 } elseif ($nodeMajor -lt 20) {
     Write-Warn "Playwright MCP přeskočen — chce Node.js 20+ (teď: $nodeMajor)"
+} elseif ($mcpRegistered) {
+    # Starší registrace bez --user-data-dir: prohlížeč se odhlašoval s každou
+    # změnou složky. Přeregistrovat, prohlížeč už na disku je.
+    Write-Info 'opravuju Playwright MCP — přihlášení se ztrácelo s každou složkou'
+    Initialize-PlaywrightProfile
+    & $ClaudeCli mcp remove playwright -s user *>$null
+    & $ClaudeCli mcp add playwright -s user -- npx '@playwright/mcp@latest' --browser chromium --user-data-dir $PwProfile
+    Write-Ok "playwright MCP opraven, profil $PwProfile"
 } else {
     Write-Info 'přidávám Playwright MCP (prohlížeč pro Claude Code, stáhne ~115 MB)'
-    & $ClaudeCli mcp add playwright -s user -- npx '@playwright/mcp@latest' --browser chromium
+    Initialize-PlaywrightProfile
+    & $ClaudeCli mcp add playwright -s user -- npx '@playwright/mcp@latest' --browser chromium --user-data-dir $PwProfile
     Write-Info 'stahuju prohlížeč (~115 MB, stahuje se jen co chybí)…'
     & $NpxExe -y '@playwright/mcp@latest' install-browser chrome-for-testing
-    Write-Ok 'playwright MCP připraven'
-} else {
-    Write-Info 'přeskočeno — kdykoli později: claude mcp add playwright -s user -- npx @playwright/mcp@latest --browser chromium'
+    Write-Ok "playwright MCP připraven, profil $PwProfile"
 }
 } catch {
     # nothing here is required for the hub to work — never let it fail the install

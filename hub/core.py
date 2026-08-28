@@ -1617,13 +1617,47 @@ def memory_link_state():
     return "složka Claude Code zatím není", parent
 
 
+def browser_profile():
+    """Společný profil prohlížeče pro Playwright MCP.
+
+    Musí sedět s tools/playwright_profile.py — tam ho zakládají obě instalačky.
+    """
+    return os.path.join(CLAUDE_DIR, "browser-profile")
+
+
+def browser_state():
+    """Jak je na tom prohlížeč pro Claude Code: (stav, detail).
+
+    Playwright MCP si bez `--user-data-dir` odvozuje profil z pracovní složky,
+    takže každý projekt dostane vlastní prohlížeč a přihlášení (Google a spol.)
+    zmizí s přepnutím tabu. Registraci drží ~/.claude.json.
+    """
+    for path in (CLAUDE_DIR.rstrip("/\\") + ".json",
+                 os.path.join(CLAUDE_DIR, ".claude.json")):
+        try:
+            with open(path, encoding="utf-8-sig") as fh:
+                servers = json.load(fh).get("mcpServers") or {}
+        except (OSError, ValueError):
+            continue
+        entry = servers.get("playwright")
+        if not entry:
+            return "neregistrovaný", "volitelný — přidá ho instalačka"
+        args = " ".join(str(a) for a in (entry.get("args") or []))
+        if "--user-data-dir" in args:
+            return "přihlášení se drží", browser_profile()
+        return "profil podle složky", "přihlášení se ztrácí — spusť instalačku znovu"
+    return "neregistrovaný", "~/.claude.json se nepodařilo přečíst"
+
+
 def doctor():
     """What the hub found on this machine — shown in the UI when something is off."""
     how, detail = link_selftest()
     stav, kde = memory_link_state()
+    browser, browser_detail = browser_state()
     return {
         "link": how, "link_error": detail,
         "memory_link": stav, "memory_link_path": kde,
+        "browser_mcp": browser, "browser_mcp_detail": browser_detail,
         "platform": "windows" if IS_WINDOWS else ("mac" if IS_MAC else "linux"),
         "bash": BASH,
         "git": GIT,

@@ -66,6 +66,9 @@ def doctor():
         ("slash příkazy",
          ", ".join("/" + s for s in core.installed_skills()) or "žádné"),
         ("okno", host),
+        # Prohlížeč pro Claude Code: zajímavý je jen profil. Bez připnutého
+        # profilu se každá přihlášená session ztratí s přepnutím projektu.
+        ("prohlížeč (MCP)", f'{info["browser_mcp"]}  {info["browser_mcp_detail"]}'),
         ("pty test", "OK" if ok else f"SELHAL — {detail}"),
         ("log", core.LOG_PATH),
     ]:
