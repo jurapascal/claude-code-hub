@@ -521,7 +521,7 @@
 
     const btns = el('div', 'onb-btns');
     const check = el('button', 'actionbtn', 'Zjistit, jestli je novější');
-    const doIt = el('button', 'actionbtn set-update', 'Aktualizovat');
+    const doIt = el('button', 'actionbtn', 'Aktualizovat');
     doIt.hidden = true;
 
     check.onclick = async () => {

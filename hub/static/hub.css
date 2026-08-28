@@ -836,7 +836,10 @@ body { display: flex; flex-direction: column; }
 .set-status.busy, .set-status.ok, .set-status.warn { display: block; }
 .set-status.ok   { border-color: var(--green); color: var(--green); }
 .set-status.warn { border-color: var(--amber); color: var(--amber); }
-.set-update { border-color: var(--amber) !important; color: var(--amber) !important; }
+/* Tlačítko Aktualizovat si tu kdysi vynucovalo hlavní barvu textu přes
+   `!important` — jenže tu má `.actionbtn` sama a `!important` navíc přebilo
+   i hover, kde se text obarvuje na pozadí. Po najetí tak zbyl oranžový nápis
+   na oranžové ploše, tedy prázdné tlačítko. */
 .set-dim  { color: var(--dim); }
 .set-bad  { color: var(--red); font-weight: 600; }
 
