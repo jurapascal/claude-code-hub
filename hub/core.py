@@ -1132,12 +1132,19 @@ def source_dir():
 def latest_version():
     """(nejnovější vydaná verze, důvod prázdna).
 
+    Ptá se na obě místa a bere z nich **tu vyšší**, ne první, která odpoví.
+    Dřív měl přednost `releases/latest`, takže když se vydávalo jen značkou,
+    hub tvrdil „máš nejnovější" nad verzí o tři vydání starší — 1.3.2 až 1.3.4
+    se takhle nikdy nikomu nenabídly. Značka i release jsou vydání, rozhoduje
+    číslo.
+
     Rozlišuje „není síť" od „repo zatím nic nevydalo" — pro toho, kdo se dívá
     do nastavení, je to úplně jiná zpráva.
     """
     import urllib.error
     import urllib.request
     reachable = False
+    best = ""
     for url, key in ((f"https://api.github.com/repos/{REPO}/releases/latest", "tag_name"),
                      (f"https://api.github.com/repos/{REPO}/tags", None)):
         try:
@@ -1147,14 +1154,21 @@ def latest_version():
             with urllib.request.urlopen(req, timeout=6) as r:
                 data = json.load(r)
             reachable = True
-            tag = data.get(key) if key else (data[0]["name"] if data else "")
-            if tag:
-                return str(tag), ""
+            if key:
+                tags = [data.get(key)]
+            else:
+                # /tags vrací pořadí, na které se nedá spolehnout — projdeme vše.
+                tags = [t.get("name") for t in data] if isinstance(data, list) else []
+            for tag in tags:
+                if tag and (not best or _as_tuple(tag) > _as_tuple(best)):
+                    best = str(tag)
         except urllib.error.HTTPError:
             reachable = True          # server odpověděl, jen tam nic není
             continue
         except Exception:
             continue
+    if best:
+        return best, ""
     return "", ("Repo zatím nemá žádné vydání." if reachable
                 else "Nepodařilo se spojit s GitHubem.")
 
