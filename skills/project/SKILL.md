@@ -6,7 +6,22 @@ Create or refresh the Obsidian memory note for the current folder — so every p
 
 ## Instructions
 
-1. Project dir = current working directory. `slug` = folder name in kebab-case.
+1. **Zjisti, o kterou složku jde.** Pracovní složka shellu během session odplouvá
+   (`cd` v dřívějším příkazu), takže se na ni nedá slepě spolehnout:
+   - Je-li v argumentu cesta nebo jméno projektu, platí ta.
+   - Jinak vezmi pracovní složku, ale **jen když je to projekt** — obsahuje `.git`
+     nebo některý z manifestů níže.
+   - Když projekt není (typicky `~` nebo `~/Obsidian/...`), **nezakládej prázdnou
+     poznámku**. Vyber složku, na které se v téhle session doopravdy pracovalo
+     (podle editovaných souborů a commitů), a řekni, kterou jsi vzal. Když ani to
+     nejde, nabídni projekty **bez poznámky v paměti**:
+     ```bash
+     for d in /opt/lampp/htdocs/*/ ~/Desktop/*/; do
+       [ -d "$d/.git" ] || continue; n=$(basename "$d")
+       ls {{MEMORY_DIR}}/ | grep -qi "^project_.*${n%%.*}" || echo "$n"
+     done
+     ```
+   `slug` = jméno složky v kebab-case.
 2. Detect (don't guess — only record what you can verify):
    - **type**: PHP / Shopify / Node / static — check for `.php`, `sections/`+`templates/` (Shopify), `package.json`, `composer.json`
    - **git**: remote URL + branch (`git remote -v`, `git branch --show-current`)
