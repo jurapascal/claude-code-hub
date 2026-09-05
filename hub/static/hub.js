@@ -1343,10 +1343,70 @@ async function main() {
   });
 
   connect();
+  checkForUpdate();
 
   // Napoprvé se hub nastavuje tady, ne v instalačce — ta běží jednou a v
   // terminálu, takže po ní nebylo kde nastavení změnit.
   if (!STATE.onboarded) HubOnboarding.open({...hubIO(), state: STATE});
+}
+
+/* ── Je venku nová verze? ────────────────────────────────────────────────────
+ * Běží při startu na pozadí — načtení okna na to nikdy nečeká a když GitHub
+ * neodpoví, mlčí se. Odpověď se drží půl dne, aby se na každé spuštění
+ * neťukalo na síť; jakmile je něco venku, ukazuje se z paměti hned. */
+const UPDATE_CACHE_KEY = 'hubUpdateCheck';
+const UPDATE_CACHE_MS = 12 * 60 * 60 * 1000;
+
+// Značka na GitHubu je „v1.6.0", verze v aplikaci „1.6.0" — bez tohohle by se
+// po aktualizaci nikdy nerovnaly a pilulka by svítila napořád.
+const bare = (v) => String(v || '').replace(/^v/, '');
+
+function readUpdateCache() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(UPDATE_CACHE_KEY) || 'null');
+    // Po vlastní aktualizaci sedí uložené „latest" na běžící verzi — pak už
+    // není co hlásit a záznam se zahodí, ať pilulka nesvítí zbytečně.
+    if (raw && raw.latest && bare(raw.latest) !== bare(STATE.version.version)) return raw;
+    if (raw) localStorage.removeItem(UPDATE_CACHE_KEY);
+  } catch (_) { /* rozbitý nebo nedostupný localStorage nesmí zabít start */ }
+  return null;
+}
+
+function showUpdate(latest) {
+  const btn = $('btn-update');
+  $('btn-update-text').textContent = `Nová verze ${latest}`;
+  btn.title = `Je venku verze ${latest}, máš ${STATE.version.version}. ` +
+              `Klikni pro aktualizaci v nastavení.`;
+  btn.hidden = false;
+  btn.onclick = () => HubSettings.open({...hubIO(), state: STATE});
+}
+
+async function checkForUpdate() {
+  const cached = readUpdateCache();
+  if (cached) showUpdate(cached.latest);
+  if (cached && Date.now() - cached.at < UPDATE_CACHE_MS) return;
+
+  let info;
+  try {
+    info = await api('update-check');
+  } catch (_) {
+    return;                       // bez sítě se prostě nic neřekne
+  }
+  if (!info || !info.update_available || !info.latest) {
+    try { localStorage.removeItem(UPDATE_CACHE_KEY); } catch (_) { /* nevadí */ }
+    return;
+  }
+  try {
+    localStorage.setItem(UPDATE_CACHE_KEY,
+      JSON.stringify({at: Date.now(), latest: info.latest}));
+  } catch (_) { /* nevadí, jen se příště zeptáme znovu */ }
+  showUpdate(info.latest);
+  // Toast až po síti: kdyby se ukazoval i z paměti, otravoval by při každém
+  // spuštění, dokud člověk neaktualizuje.
+  if (!cached || bare(cached.latest) !== bare(info.latest)) {
+    toast(`Je venku nová verze Hubu ${info.latest} (máš ${info.version}). ` +
+          `Aktualizovat můžeš v nastavení.`);
+  }
 }
 
 main().catch(err => toast('Hub se nenačetl: ' + err.message));

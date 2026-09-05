@@ -1097,3 +1097,14 @@ body { display: flex; flex-direction: column; }
 }
 .confirm-text b { color: var(--fg-bright); }
 .confirm-text .hint { display: block; margin-top: 8px; opacity: .7; font-size: 12px; }
+
+/* ── „je venku nová verze" v horní liště ──────────────────────────────────── */
+.topbar-update {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; margin-right: 4px;
+  background: var(--amber); border: 1px solid var(--amber); border-radius: 999px;
+  color: var(--bg); font: inherit; font-size: 12px; font-weight: 600;
+  cursor: pointer;
+}
+.topbar-update:hover { filter: brightness(1.08); }
+.topbar-update .ico { width: 14px; height: 14px; fill: currentColor; }
