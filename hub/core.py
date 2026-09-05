@@ -8,6 +8,7 @@ The Windows story in one line: we run the same bash scripts everywhere by
 going through Git for Windows' bash.exe, so `claude-wrapper.sh` and every
 bash-based slash command work unchanged on all three platforms.
 """
+import datetime
 import json
 import os
 import re
@@ -1950,3 +1951,80 @@ def doctor():
         "clipboard": (_clipboard_tools("clipboard")[1] or [""])[0],
         "project_dirs": PROJECT_DIRS,
     }
+
+
+# ── Postup ze zavíraných shellů ──────────────────────────────────────────────
+POSTUP_PATH = os.path.join(MEMORY_DIR, "hub-postup.md")
+ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[()][A-Z0-9]|\x1b[=>]|\r")
+
+
+def _tail_text(buffer, lines=40):
+    """Konec výpisu terminálu jako čitelný text — bez ANSI a bez prázdna."""
+    text = ANSI_RE.sub("", bytes(buffer).decode("utf-8", "replace"))
+    kept = [ln.rstrip() for ln in text.splitlines()]
+    while kept and not kept[-1]:
+        kept.pop()
+    return "\n".join(kept[-lines:])
+
+
+def save_shell_progress(sessions):
+    """Zapíše do Brainu, na čem se v zavíraných shellech pracovalo.
+
+    Děje se to na serveru a bez modelu: zapisuje se to, co je jisté — složka,
+    git stav a konec výpisu. Smysl je, aby se při zavření okna neztratilo, kde
+    člověk skončil; hlubší poznatky si do paměti ukládá Claude sám přes /save.
+    """
+    if not HAS_BRAIN or not sessions:
+        return 0
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    blocks = []
+    for session in sessions:
+        path = session.path or HOME
+        head = f"## {stamp} — {session.title or session.kind} ({shorten_path(path)})"
+        lines = [head]
+        status = git_short_status(path)
+        if status:
+            lines.append(f"- Git: {status}")
+        tail = _tail_text(session.buffer)
+        if tail:
+            lines.append("- Kde to skončilo:")
+            lines.append("")
+            lines.append("```")
+            lines.append(tail)
+            lines.append("```")
+        blocks.append("\n".join(lines))
+    if not blocks:
+        return 0
+    new = not os.path.isfile(POSTUP_PATH)
+    try:
+        with open(POSTUP_PATH, "a", encoding="utf-8") as fh:
+            if new:
+                fh.write("# Postup ze zavřených shellů\n\n"
+                         "Zapisuje Hub při zavírání shellu nebo okna, aby se "
+                         "neztratilo, kde jsi skončil.\n\n")
+            fh.write("\n\n".join(blocks) + "\n\n")
+    except OSError as exc:
+        log_error("Postup se nepodařilo zapsat", exc)
+        return 0
+    return len(blocks)
+
+
+def shorten_path(path):
+    return path.replace(HOME, "~", 1) if path.startswith(HOME) else path
+
+
+def git_short_status(path):
+    """Krátké shrnutí git stavu složky, nebo '' když to není repozitář."""
+    if not os.path.isdir(os.path.join(path, ".git")):
+        return ""
+    try:
+        out = subprocess.run(["git", "-C", path, "status", "--porcelain"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return ""
+    changed = [ln for ln in out.splitlines() if ln.strip()]
+    if not changed:
+        return "čisto"
+    names = ", ".join(ln[3:] for ln in changed[:5])
+    more = f" (+{len(changed) - 5} dalších)" if len(changed) > 5 else ""
+    return f"{len(changed)} nezacommitovaných — {names}{more}"

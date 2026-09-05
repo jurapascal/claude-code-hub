@@ -323,6 +323,12 @@ class Handler(BaseHTTPRequestHandler):
                 "vault_git": dict(zip(("is_repo", "remote"), core.vault_git_state())),
                 "vault_autosync": bool(core.CONFIG.get("vault_autosync")),
             })
+        if name == "save-progress":
+            # Zavírá se shell nebo celé okno: uložíme, kde to skončilo, dokud
+            # ještě session žije a její výpis je po ruce.
+            ids = payload.get("ids") or []
+            live = [HUB.sessions[sid] for sid in ids if sid in HUB.sessions]
+            return self._json({"saved": core.save_shell_progress(live)})
         if name == "open-path":
             target = payload.get("path", "")
             if payload.get("kind") == "brain":

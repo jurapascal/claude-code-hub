@@ -1089,3 +1089,11 @@ body { display: flex; flex-direction: column; }
 .log-line { display: block; }
 .log-line.err { color: var(--red); }
 .log-line.warn { color: var(--amber); }
+
+/* ── potvrzení před zavřením ──────────────────────────────────────────────── */
+.confirm-box { width: min(460px, 92vw); }
+.confirm-text {
+  padding: 0 14px 4px; color: var(--fg); font-size: 13px; line-height: 1.5;
+}
+.confirm-text b { color: var(--fg-bright); }
+.confirm-text .hint { display: block; margin-top: 8px; opacity: .7; font-size: 12px; }

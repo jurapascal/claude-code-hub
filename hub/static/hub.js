@@ -770,7 +770,7 @@ function createTab({kind, path, title, id}) {
                  `<span class="tab-close" title="Zavřít tab">${icon('i-close')}</span>`;
   el.querySelector('.tab-title').textContent = title;
   el.onclick = (ev) => {
-    if (ev.target.closest('.tab-close')) { closeTab(tab); return; }
+    if (ev.target.closest('.tab-close')) { requestCloseTab(tab); return; }
     activate(tab);
   };
   el.ondblclick = (ev) => { if (!ev.target.closest('.tab-close')) startRename(tab); };
@@ -811,6 +811,69 @@ function refit(tab) {
   if (!tab || tab.pane.offsetWidth === 0) return;
   try { tab.fit.fit(); } catch (_) { return; }
   if (tab.id) send({t: 'resize', id: tab.id, cols: tab.term.cols, rows: tab.term.rows});
+}
+
+/* Potvrzení „Ano / Ne" jako slib. Vrací true, když člověk klikl na Ano.
+ * Otevřený dialog nikdy nezdvojujeme — druhé volání počká na to první. */
+let confirmPending = null;
+function askConfirm({title, html, yes = 'Ano, uložit postup a zavřít', no = 'Ne'}) {
+  if (confirmPending) return confirmPending;
+  const box = $('confirm');
+  $('confirm-title').textContent = title;
+  $('confirm-text').innerHTML = html;
+  $('confirm-yes').textContent = yes;
+  $('confirm-no').textContent = no;
+  box.hidden = false;
+  $('confirm-yes').focus();
+  confirmPending = new Promise((resolve) => {
+    const finish = (answer) => {
+      box.hidden = true;
+      document.removeEventListener('keydown', onKey, true);
+      confirmPending = null;
+      resolve(answer);
+    };
+    const onKey = (ev) => {
+      if (ev.key === 'Escape') { ev.stopPropagation(); finish(false); }
+      if (ev.key === 'Enter') { ev.stopPropagation(); finish(true); }
+    };
+    $('confirm-yes').onclick = () => finish(true);
+    $('confirm-no').onclick = () => finish(false);
+    document.addEventListener('keydown', onKey, true);
+  });
+  return confirmPending;
+}
+
+/* Uloží postup ze shellu do Brainu. Server si vezme, co o session ví (složka,
+ * git stav, konec výpisu) — nečeká se na Clauda, aby zavírání nedrhlo. */
+async function saveProgress(ids) {
+  if (!ids.length) return;
+  try {
+    const res = await api('save-progress', {ids});
+    if (res && res.saved) toast(`Postup uložen do Brainu (${res.saved}×).`);
+  } catch (err) {
+    toast('Postup se nepodařilo uložit: ' + err.message);
+  }
+}
+
+/* Zavření vyvolané člověkem se ptá; zavření kvůli chybě nebo úklidu po
+ * reconnectu ne — tam už není co potvrzovat ani co ukládat. */
+async function requestCloseTab(tab) {
+  if (tab.exited || !tab.id) { closeTab(tab); return; }
+  const ok = await askConfirm({
+    title: 'Zavřít tenhle shell?',
+    html: `Zavíráš <b>${escapeHtml(tab.title)}</b>.` +
+          `<span class="hint">Ano = uložím postup do Brainu a shell zavřu.</span>`,
+    no: 'Ne, nechat otevřený',
+  });
+  if (!ok) return;
+  await saveProgress([tab.id]);
+  closeTab(tab);
+}
+
+function escapeHtml(text) {
+  const d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML;
 }
 
 function closeTab(tab) {
@@ -1260,6 +1323,24 @@ async function main() {
 
   new ResizeObserver(() => refit(ACTIVE)).observe($('panes'));
   window.addEventListener('resize', () => refit(ACTIVE));
+
+  // Zavření celého okna. Vlastní dialog sem nedosáhne — křížek okna řídí
+  // prohlížeč, takže se ptá on (Ano/Ne). Uložení postupu proto visí na
+  // pagehide, který přijde až ve chvíli, kdy se opravdu odchází: kdyby se
+  // ukládalo už v beforeunload, zapsal by se postup i po kliknutí na „Ne".
+  window.addEventListener('beforeunload', (ev) => {
+    if (!TABS.some(t => t.id && !t.exited)) return;
+    ev.preventDefault();
+    ev.returnValue = '';             // vyžadují starší prohlížeče
+  });
+  window.addEventListener('pagehide', () => {
+    const ids = TABS.filter(t => t.id && !t.exited).map(t => t.id);
+    if (!ids.length) return;
+    // Běžný fetch by se při zavírání stránky zrušil; beacon se doručí i potom.
+    navigator.sendBeacon(
+      `/api/save-progress?t=${encodeURIComponent(TOKEN)}`,
+      new Blob([JSON.stringify({ids})], {type: 'application/json'}));
+  });
 
   connect();
 
