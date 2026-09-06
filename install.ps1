@@ -417,6 +417,7 @@ function Copy-Tracked($from, $to) {
 
 Copy-Tracked (Join-Path $Src 'claude-hub.py')         (Join-Path $ClaudeDir 'claude-hub.py')
 Copy-Tracked (Join-Path $Src 'claude-wrapper.sh')     (Join-Path $ClaudeDir 'claude-wrapper.sh')
+Copy-Tracked (Join-Path $Src 'agent-wrapper.sh')      (Join-Path $ClaudeDir 'agent-wrapper.sh')
 Copy-Tracked (Join-Path $Src 'hooks\save-session.py')  (Join-Path $ClaudeDir 'hooks\save-session.py')
 Copy-Tracked (Join-Path $Src 'hooks\session-start.py') (Join-Path $ClaudeDir 'hooks\session-start.py')
 # tools\ potřebuje sekce 10 (merge settings.json) i pozdější spuštění ručně

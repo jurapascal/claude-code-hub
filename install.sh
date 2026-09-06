@@ -406,6 +406,7 @@ copy() {  # copy <zdroj> <cíl> — existující jiný soubor zazálohuje
 
 copy "$SRC/claude-hub.py"          "$CLAUDE_DIR/claude-hub.py"
 copy "$SRC/claude-wrapper.sh"      "$CLAUDE_DIR/claude-wrapper.sh"
+copy "$SRC/agent-wrapper.sh"       "$CLAUDE_DIR/agent-wrapper.sh"
 copy "$SRC/hooks/save-session.py"  "$CLAUDE_DIR/hooks/save-session.py"
 copy "$SRC/hooks/session-start.py" "$CLAUDE_DIR/hooks/session-start.py"
 # hub/ a tools/ jsou celé naše — nahrazují se vcelku, aby po updatu nezůstaly
@@ -416,6 +417,7 @@ cp -r "$SRC/hub" "$CLAUDE_DIR/hub"
 cp -r "$SRC/tools" "$CLAUDE_DIR/tools"
 find "$CLAUDE_DIR/hub" "$CLAUDE_DIR/tools" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null
 chmod +x "$CLAUDE_DIR/claude-hub.py" "$CLAUDE_DIR/claude-wrapper.sh" \
+         "$CLAUDE_DIR/agent-wrapper.sh" \
          "$CLAUDE_DIR/hooks/save-session.py" "$CLAUDE_DIR/hooks/session-start.py"
 ok "aplikace v $CLAUDE_DIR"
 

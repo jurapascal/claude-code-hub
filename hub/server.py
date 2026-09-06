@@ -98,12 +98,19 @@ def read_frame(rfile):
 class Session:
     """A pty running one bash session, plus the scrollback we replay on reload."""
 
-    def __init__(self, sid, title, kind, path, argv, cwd, cols, rows):
+    def __init__(self, sid, title, kind, path, argv, cwd, cols, rows,
+                 agent="", model="", env=None):
         self.id = sid
         self.title = title
         self.kind = kind
         self.path = path
-        self.pty = pty_backend.spawn(argv, cwd=cwd, env=core.child_env(),
+        # Čím tab jede, se drží tady: po reloadu stránky se sessions obnovují
+        # ze serveru, takže bez toho by tab po F5 zapomněl, kdo v něm běží.
+        self.agent = agent
+        self.model = model
+        child = core.child_env()
+        child.update(env or {})
+        self.pty = pty_backend.spawn(argv, cwd=cwd, env=child,
                                      cols=cols, rows=rows)
         self.buffer = bytearray()
         self.conn = None
@@ -153,7 +160,8 @@ class Session:
 
     def info(self):
         return {"id": self.id, "title": self.title, "kind": self.kind,
-                "path": self.path, "exited": self.exited}
+                "path": self.path, "exited": self.exited,
+                "agent": self.agent, "model": self.model}
 
 
 class Hub:
@@ -172,23 +180,36 @@ class Hub:
             self._next_id += 1
             return sid
 
-    def open(self, kind, path, title, cols, rows):
-        script, cwd = self._command_for(kind, path)
+    def open(self, kind, path, title, cols, rows, agent="", model=""):
+        script, cwd, env = self._command_for(kind, path, agent, model)
         sid = self.new_id()
         session = Session(sid, title, kind, path, core.bash_argv(script), cwd,
-                          cols, rows)
+                          cols, rows, agent=agent, model=model, env=env)
         self.sessions[sid] = session
         return session
 
     @staticmethod
-    def _command_for(kind, path):
+    def _command_for(kind, path, agent="", model=""):
+        """(příkaz, pracovní složka, prostředí navíc) pro daný druh tabu."""
         if kind == "shell":
-            return core.cmd_shell(), (path or core.HOME)
+            return core.cmd_shell(), (path or core.HOME), {}
         if kind == "deploy":
-            return core.cmd_deploy(path), path
+            return core.cmd_deploy(path), path, {}
+        if kind.startswith("install:"):
+            return core.cmd_install(kind.split(":", 1)[1]), (path or core.HOME), {}
+        if kind.startswith("auth:"):
+            return core.cmd_auth(kind.split(":", 1)[1]), (path or core.HOME), {}
         if kind.startswith("slash:"):
-            return core.cmd_project(path, "/" + kind.split(":", 1)[1]), path
-        return core.cmd_project(path), path
+            # Slash příkazy jsou naše skilly z ~/.claude/skills — rozumí jim jen
+            # agent, který je čte. Jinému by se předal jako holý text promptu.
+            spec = core.agent_spec(agent)
+            if not spec.get("skills"):
+                agent = ""
+            script, env = core.cmd_agent(path, agent,
+                                         slash="/" + kind.split(":", 1)[1])
+            return script, path, env
+        script, env = core.cmd_agent(path, agent, model=model)
+        return script, path, env
 
     def close(self, sid):
         session = self.sessions.pop(sid, None)
@@ -397,7 +418,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": f"Nepodařilo se uložit: {exc}"}, 500)
         if name == "config":
             allowed = ("project_dirs", "brain_dir", "onboarded", "vault_autosync",
-                       "newtab", "extra_projects", "show_archived")
+                       "newtab", "extra_projects", "show_archived",
+                       "agents", "default_agent", "project_agents")
             updates = {k: v for k, v in payload.items() if k in allowed}
             if not updates:
                 return self._json({"error": "Nic k uložení."}, 400)
@@ -407,6 +429,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": f"Konfig nejde zapsat: {exc}"}, 500)
             return self._json({"ok": True, "brain_dir": core.BRAIN,
                                "project_dirs": core.PROJECT_DIRS})
+        if name == "agents":
+            # Verze se zjišťují spuštěním každého CLI, takže to jede na pozadí
+            # stejně jako MCP — stránka se na to nesmí zdržet.
+            state = core.job_state("agents")
+            if query.get("refresh") or not state.get("done"):
+                core.start_job("agents", lambda: core.agents_state())
+                state = core.job_state("agents")
+            if state.get("done"):
+                return self._json({"running": False, **(state.get("result") or {})})
+            return self._json({"running": True, "step": state.get("step") or ""})
         if name == "project":
             return self._project(payload)
         if name == "vault":
@@ -651,7 +683,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 session = HUB.open(msg.get("kind", "project"), msg.get("path", ""),
                                    msg.get("title", "shell"),
-                                   int(msg.get("cols", 80)), int(msg.get("rows", 24)))
+                                   int(msg.get("cols", 80)), int(msg.get("rows", 24)),
+                                   agent=str(msg.get("agent", "") or ""),
+                                   model=str(msg.get("model", "") or ""))
             except (pty_backend.PtyUnavailable, core.BashMissing) as exc:
                 core.log_error("tab se nepodařilo otevřít", exc)
                 conn.send_json({"t": "error", "ref": msg.get("ref"), "d": str(exc)})
@@ -661,7 +695,8 @@ class Handler(BaseHTTPRequestHandler):
                 conn.send_json({"t": "error", "ref": msg.get("ref"),
                                 "d": f"Nepodařilo se otevřít terminál: {exc}"})
                 return
-            core.log(f"tab otevřen: {session.kind} {session.path or '~'}")
+            core.log(f"tab otevřen: {session.kind} {session.path or '~'}"
+                     + (f" [{session.agent}]" if session.agent else ""))
             conn.send_json({"t": "opened", "ref": msg.get("ref"), **session.info()})
             session.attach(conn)
         elif kind == "attach" and session:

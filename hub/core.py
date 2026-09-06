@@ -18,6 +18,8 @@ import sys
 import threading
 import time
 
+from . import agents
+
 IS_WINDOWS = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 
@@ -50,6 +52,9 @@ def load_config():
 
 CONFIG = load_config()
 WRAPPER = os.path.join(CLAUDE_DIR, "claude-wrapper.sh")
+# Společný wrapper pro všechny agenty; claude-wrapper.sh je od 2.0.0 jen
+# zkratka na něj a zůstává kvůli starším instalacím.
+AGENT_WRAPPER = os.path.join(CLAUDE_DIR, "agent-wrapper.sh")
 BRAIN = os.path.expanduser(CONFIG["brain_dir"])
 MEMORY_DIR = os.path.join(BRAIN, "memory")
 VAULT_NAME = os.path.basename(BRAIN.replace("\\", "/").rstrip("/"))  # obsidian:// URIs
@@ -1600,12 +1605,101 @@ def sh_quote(text):
     return "'" + str(text).replace("'", "'\\''") + "'"
 
 
+# ── AI agenti ────────────────────────────────────────────────────────────────
+# Katalog je v agents.py; tady je jen to, co potřebuje běžící hub — která volba
+# platí, čím se tab spustí a co se pošle do UI.
+def _agents_extra():
+    """Vlastní agenti dopsaní do hub-config.json (klíč "agents")."""
+    extra = CONFIG.get("agents")
+    return extra if isinstance(extra, dict) else {}
+
+
+def default_agent():
+    """Kterým agentem se otevírá projekt, když se nevybere jinak."""
+    want = str(CONFIG.get("default_agent") or "claude").strip().lower()
+    cat = agents.catalog(_agents_extra())
+    return want if want in cat else ("claude" if "claude" in cat else
+                                     (agents.order(cat) or ["claude"])[0])
+
+
+def agent_spec(agent_id=""):
+    """Záznam agenta. Neznámé jméno spadne na výchozího — tab se otevře vždy."""
+    extra = _agents_extra()
+    spec = agents.resolve(agent_id, extra) if agent_id else None
+    if not spec:
+        spec = agents.resolve(default_agent(), extra) or agents.resolve("claude")
+    return spec
+
+
+def project_agent(path):
+    """Agent zapamatovaný u konkrétního projektu, jinak výchozí."""
+    saved = CONFIG.get("project_agents")
+    if isinstance(saved, dict) and path:
+        want = str(saved.get(path) or "").strip().lower()
+        if want and want in agents.catalog(_agents_extra()):
+            return want
+    return default_agent()
+
+
+def agents_state(with_version=True):
+    """Co je na stroji k dispozici — pro nastavení, uvítací obrazovku i doctor."""
+    return {
+        "agents": agents.detect(_agents_extra(), with_version),
+        "default": default_agent(),
+        "ollama": agents.ollama_state(),
+    }
+
+
+def _wrapper_path():
+    """Společný wrapper, a když ho instalace ještě nemá, ten původní."""
+    return AGENT_WRAPPER if os.path.isfile(AGENT_WRAPPER) else WRAPPER
+
+
+def cmd_agent(path, agent_id="", slash="", model=""):
+    """(příkaz pro tab, proměnné prostředí) — tudy se spouští každý agent."""
+    spec = agent_spec(agent_id)
+    argv = agents.launch_args(spec, model, slash)
+    p = sh_quote(to_shell_path(path or HOME))
+    w = sh_quote(to_shell_path(_wrapper_path()))
+    args = "".join(" " + sh_quote(a) for a in argv)
+    script = (f'cd {p} && bash {w}{args}; '
+              f'echo; echo "[ session ukončena — tab zůstává jako shell ]"; exec bash')
+    return script, agents.env_for(spec)
+
+
+def cmd_install(agent_id):
+    """Instalace agenta běží jako tab, ne skrytě na pozadí.
+
+    Instalační příkazy stahují a spouštějí cizí kód (npm, curl | bash), takže
+    je správně, aby bylo vidět, co se děje, a dalo se to přerušit.
+    """
+    spec = agent_spec(agent_id)
+    cmd = agents.install_cmd(spec)
+    label = spec.get("label") or spec.get("id") or "agent"
+    if not cmd:
+        return (f'echo "Pro {sh_quote(label)} tady instalační příkaz nemám."; exec bash')
+    return (f'echo "Instaluji {label}:"; echo "  {cmd}"; echo; '
+            f'{cmd}; '
+            f'echo; echo "[ hotovo — zavři tab a agent se objeví v nabídce ]"; exec bash')
+
+
+def cmd_auth(agent_id):
+    """Přihlášení k agentovi — spustí jeho vlastní příkaz nebo rovnou jeho TUI."""
+    spec = agent_spec(agent_id)
+    auth = spec.get("auth") or {}
+    cmd = auth.get("cmd")
+    if not cmd:
+        note = auth.get("note") or "Tenhle agent přihlášení nepotřebuje."
+        return f'echo {sh_quote(note)}; exec bash'
+    hint = auth.get("slash")
+    lead = f'echo "Pak zvol {hint}."; ' if hint else ""
+    return f'{lead}{cmd}; echo; exec bash'
+
+
 def cmd_project(path, slash=""):
-    p = sh_quote(to_shell_path(path))
-    w = sh_quote(to_shell_path(WRAPPER))
-    arg = f" {sh_quote(slash)}" if slash else ""
-    return (f'cd {p} && bash {w}{arg}; '
-            f'echo; echo "[ session ukončena — tab zůstává jako shell ]"; exec bash')
+    """Výchozí agent nad projektem. Kdo chce jiného, volá cmd_agent()."""
+    script, _env = cmd_agent(path, "", slash)
+    return script
 
 
 def cmd_shell():
@@ -1945,7 +2039,14 @@ def doctor():
         "bash": BASH,
         "git": GIT,
         "claude": shutil.which("claude") or "",
+        # Jen co je v PATH — verze ani stav Ollamy se sem nedávají schválně:
+        # tenhle výpis se čte při každém načtení stránky a ptát se šesti CLI
+        # na --version by z toho udělalo čekání. Od toho je /api/agents.
+        "agents": {a["id"]: a["path"]
+                   for a in agents.detect(_agents_extra(), with_version=False)},
+        "default_agent": default_agent(),
         "wrapper": WRAPPER if os.path.isfile(WRAPPER) else "",
+        "agent_wrapper": AGENT_WRAPPER if os.path.isfile(AGENT_WRAPPER) else "",
         "ftp_deploy": FTP_DEPLOY if os.path.isfile(FTP_DEPLOY) else "",
         "brain": BRAIN if HAS_BRAIN else "",
         "clipboard": (_clipboard_tools("clipboard")[1] or [""])[0],

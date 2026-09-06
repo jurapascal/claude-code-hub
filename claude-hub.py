@@ -50,6 +50,8 @@ def doctor():
     # nejpomalejší část výpisu (~10 s). V --doctor to stojí za to: jinak se
     # „napojeno" pozná až tím, že v Claude Code nefunguje.
     mcp = core.mcp_list()
+    agents_found = core.agents.detect(core._agents_extra())
+    ollama = core.agents.ollama_state()
     browser = window.find_browser()
     webkit = window.has_webkit()
     host = ("chromium (" + os.path.basename(browser) + ")" if browser else
@@ -61,8 +63,10 @@ def doctor():
         ("platforma", info["platform"]),
         ("bash", info["bash"] or "CHYBÍ"),
         ("git", info["git"] or "chybí"),
-        ("claude CLI", info["claude"] or "chybí (tab bude obyčejný shell)"),
-        ("claude-wrapper.sh", info["wrapper"] or "chybí"),
+        ("AI agenti", _agents_summary(info)),
+        ("agent-wrapper.sh", info.get("agent_wrapper") or
+         (info["wrapper"] + "  (starý, jen Claude)" if info["wrapper"]
+          else "chybí")),
         # Na Windows je tohle jediná odpověď, která něco znamená: symlink tam
         # chce práva správce, křižovatka ne — a co projde, se dá jen vyzkoušet.
         ("odkaz na složku", info["link"] or
@@ -83,6 +87,16 @@ def doctor():
     ]:
         print(f"  {label:<20} {value}")
         # Rozpis patří hned pod svůj řádek, ne až za celou tabulku.
+        # Rozpis patří hned pod svůj řádek, ne až za celou tabulku.
+        if label == "AI agenti":
+            for a in agents_found:
+                mark = "+" if a["path"] else "-"
+                extra = f' {a["version"]}' if a["version"] else ""
+                where = a["path"] or ("není v PATH — " + (a["install"] or "?"))
+                if a["id"] == "ollama" and a["path"]:
+                    where += ("  " + _ollama_note(ollama))
+                star = " (výchozí)" if a["id"] == info.get("default_agent") else ""
+                print(f'  {"":<20} {mark} {a["label"]}{extra}{star} — {where}')
         if label == "napojení (MCP)":
             for server in mcp.get("servers") or []:
                 mark = MCP_MARKS.get(server["state"], "?")
@@ -94,6 +108,24 @@ def doctor():
               else "    sudo apt install bash")
         print()
     return 0 if (ok and info["bash"]) else 1
+
+
+def _ollama_note(state):
+    """Ollama je zvláštní: nestačí, že je nainstalovaná — musí i běžet."""
+    if not state.get("running"):
+        return "(neběží — spusť: ollama serve)"
+    n = len(state.get("models") or [])
+    slovo = "model" if n == 1 else ("modely" if n < 5 else "modelů")
+    jmena = ", ".join((state.get("models") or [])[:3])
+    return f"(běží, {n} {slovo}: {jmena})" if n else "(běží, žádný model stažený)"
+
+
+def _agents_summary(info):
+    """Kolik agentů je po ruce — detail se vypisuje pod tím řádkem."""
+    found = [k for k, v in (info.get("agents") or {}).items() if v]
+    if not found:
+        return "žádný (tab bude obyčejný shell)"
+    return f'{len(found)} z {len(info.get("agents") or {})} k dispozici'
 
 
 def _mcp_summary(mcp):
