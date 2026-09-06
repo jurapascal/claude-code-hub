@@ -221,11 +221,44 @@ def which(spec):
     return shutil.which(spec.get("bin") or "") or ""
 
 
+_NPM_PREFIX = None
+
+
+def npm_user_prefix():
+    """Kam smí `npm install -g` psát bez práv správce. Prázdno = stačí systémový.
+
+    Na tomhle typu instalace (node z distribuce, prefix /usr) skončí `npm -g`
+    na EACCES a tlačítko Nainstalovat by jen vypsalo chybu. Uživatelský prefix
+    to řeší bez sudo — a ~/.local/bin bývá v PATH, takže binárku pak vidíme.
+    """
+    global _NPM_PREFIX
+    if _NPM_PREFIX is not None:
+        return _NPM_PREFIX
+    _NPM_PREFIX = ""
+    npm = shutil.which("npm")
+    if npm:
+        try:
+            r = subprocess.run([npm, "config", "get", "prefix"], capture_output=True,
+                               text=True, timeout=6, creationflags=_NO_WINDOW)
+            prefix = (r.stdout or "").strip()
+            probe = os.path.join(prefix, "lib")
+            if prefix and not os.access(probe if os.path.isdir(probe) else prefix,
+                                        os.W_OK):
+                _NPM_PREFIX = os.path.join(os.path.expanduser("~"), ".local")
+        except Exception:
+            pass
+    return _NPM_PREFIX
+
+
 def install_cmd(spec):
     inst = spec.get("install") or {}
-    if isinstance(inst, str):
-        return inst
-    return inst.get(platform_key()) or ""
+    cmd = inst if isinstance(inst, str) else (inst.get(platform_key()) or "")
+    if cmd.startswith("npm install -g "):
+        prefix = npm_user_prefix()
+        if prefix:
+            cmd = cmd.replace("npm install -g ",
+                              f'npm install -g --prefix "{prefix}" ', 1)
+    return cmd
 
 
 def _version(path, spec):

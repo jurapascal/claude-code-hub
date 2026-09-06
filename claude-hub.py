@@ -65,8 +65,7 @@ def doctor():
         ("git", info["git"] or "chybí"),
         ("AI agenti", _agents_summary(info)),
         ("agent-wrapper.sh", info.get("agent_wrapper") or
-         (info["wrapper"] + "  (starý, jen Claude)" if info["wrapper"]
-          else "chybí")),
+         "CHYBÍ — spusť install.sh, jinak se taby otevřou jako holý shell"),
         # Na Windows je tohle jediná odpověď, která něco znamená: symlink tam
         # chce práva správce, křižovatka ne — a co projde, se dá jen vyzkoušet.
         ("odkaz na složku", info["link"] or

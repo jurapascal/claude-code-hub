@@ -213,6 +213,19 @@ body { display: flex; flex-direction: column; }
 .tab:hover { background: var(--card-hover); }
 .tab.active { background: var(--bg); color: var(--fg-bright); box-shadow: inset 0 2px 0 var(--amber); }
 .tab.exited .tab-title { text-decoration: line-through; opacity: .65; }
+/* Odznak agenta: tečka v jeho barvě. Jméno se dopisuje jen u toho, kdo není
+   výchozí — jinak by u každého tabu svítilo totéž slovo a nic to neřeklo. */
+.tab-agent {
+  flex: none; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--agent-color, var(--amber));
+}
+.tab-agent.named {
+  width: auto; height: auto; border-radius: 4px;
+  padding: 1px 5px; font-size: 10px; line-height: 1.5;
+  background: color-mix(in srgb, var(--agent-color, var(--amber)) 22%, transparent);
+  color: var(--agent-color, var(--amber));
+}
+.tab.exited .tab-agent { opacity: .45; }
 .tab-title { overflow: hidden; text-overflow: ellipsis; flex: 1; text-align: left; }
 .tab-title input {
   width: 100%; background: var(--bg); color: var(--fg-bright);

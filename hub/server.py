@@ -325,6 +325,11 @@ class Handler(BaseHTTPRequestHandler):
                 "memory": {"counts": counts, "recent": recent,
                            "enabled": core.HAS_BRAIN},
                 "skills": core.installed_skills(),
+                # Bez verzí (ty stojí spuštění každého CLI) — na nabídku
+                # „otevřít v…" a odznak na tabu stačí jméno, barva a PATH.
+                "agents": core.agents.detect(core._agents_extra(),
+                                             with_version=False),
+                "default_agent": core.default_agent(),
                 "model": core.current_model(),
                 "palette": {"dark": core.DARK, "light": core.LIGHT},
                 "doctor": core.doctor(),

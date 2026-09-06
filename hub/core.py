@@ -1651,16 +1651,32 @@ def agents_state(with_version=True):
 
 
 def _wrapper_path():
-    """Společný wrapper, a když ho instalace ještě nemá, ten původní."""
-    return AGENT_WRAPPER if os.path.isfile(AGENT_WRAPPER) else WRAPPER
+    """Společný wrapper: z instalace, jinak ten vedle běžícího kódu.
+
+    Druhá cesta je pro běh z klonu bez instalace — a hlavně pojistka proti
+    tichému omylu: kdyby se sáhlo po starém claude-wrapper.sh, spustil by se
+    Claude Code i v tabu, který si člověk otevřel jako Codex. Tab by se tvářil
+    správně a běželo by v něm něco jiného, což je horší než chyba.
+    """
+    if os.path.isfile(AGENT_WRAPPER):
+        return AGENT_WRAPPER
+    here = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "agent-wrapper.sh")
+    return here if os.path.isfile(here) else ""
 
 
 def cmd_agent(path, agent_id="", slash="", model=""):
     """(příkaz pro tab, proměnné prostředí) — tudy se spouští každý agent."""
     spec = agent_spec(agent_id)
     argv = agents.launch_args(spec, model, slash)
+    wrapper = _wrapper_path()
+    if not wrapper:
+        # Radši prázdný shell s vysvětlením než spustit někoho jiného.
+        return (f'cd {sh_quote(to_shell_path(path or HOME))}; '
+                f'echo "Chybí agent-wrapper.sh — spusť instalaci hubu znovu '
+                f'(install.sh)."; exec bash'), {}
     p = sh_quote(to_shell_path(path or HOME))
-    w = sh_quote(to_shell_path(_wrapper_path()))
+    w = sh_quote(to_shell_path(wrapper))
     args = "".join(" " + sh_quote(a) for a in argv)
     script = (f'cd {p} && bash {w}{args}; '
               f'echo; echo "[ session ukončena — tab zůstává jako shell ]"; exec bash')
@@ -2046,7 +2062,7 @@ def doctor():
                    for a in agents.detect(_agents_extra(), with_version=False)},
         "default_agent": default_agent(),
         "wrapper": WRAPPER if os.path.isfile(WRAPPER) else "",
-        "agent_wrapper": AGENT_WRAPPER if os.path.isfile(AGENT_WRAPPER) else "",
+        "agent_wrapper": _wrapper_path(),
         "ftp_deploy": FTP_DEPLOY if os.path.isfile(FTP_DEPLOY) else "",
         "brain": BRAIN if HAS_BRAIN else "",
         "clipboard": (_clipboard_tools("clipboard")[1] or [""])[0],

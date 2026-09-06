@@ -24,8 +24,9 @@
     ['vzhled',     'Vzhled',    'i-sun',      () => vzhled()],
     ['projekty',   'Projekty',  'i-folder',   () => projekty()],
     ['taby',       'Taby',      'i-terminal', () => taby()],
+    ['agenti',     'AI agenti', 'i-hub',      () => agenti()],
     ['pamet',      'Paměť',     'i-book',     () => pamet()],
-    ['napojeni',   'Napojení',  'i-hub',      () => napojeni()],
+    ['napojeni',   'Napojení',  'i-hub',      () => napojeni()],   // MCP — Claude Code
     ['aktualizace','Aktualizace', 'i-up',     () => aktualizace()],
     ['logy',       'Logy',      'i-status',   () => logy()],
   ];
@@ -47,6 +48,7 @@
   async function open(opts) {
     io = opts;
     state = opts.state;
+    if (opts.tab && SECTIONS.some(([id]) => id === opts.tab)) active = opts.tab;
     root = el('div', 'onb set-modal');
     root.innerHTML = `
       <div class="onb-box">
@@ -166,17 +168,23 @@
 
   function taby() {
     const box = section('Tlačítka nových tabů',
-      'Co má být vedle tabů. Kdo jede jen v Claude Code, nechce vedle sebe ' +
+      'Co má být vedle tabů. Kdo jede jen v agentovi, nechce vedle sebe ' +
       'pořád tlačítko na holý shell — a naopak.');
     const cfg = state.config.newtab || {};
+    const def = (state.agents || []).find((a) => a.id === state.default_agent);
     const list = el('div', 'onb-list');
-    for (const [key, label] of [['claude', 'Otevřít Claude Code'],
+    for (const [key, label] of [['agent', 'Otevřít ' + (def ? def.label : 'agenta')],
                                 ['shell', 'Otevřít terminál']]) {
       const row = el('label', 'onb-row');
       const cb = el('input');
       cb.type = 'checkbox';
-      cb.checked = cfg[key] !== false;
-      cb.onchange = () => save({newtab: {...cfg, [key]: cb.checked}});
+      // `claude` je jméno klíče z verzí do 1.6 — starý konfig se tím pádem
+      // nemusí přepisovat a zaškrtnutí se ukládá do obou, ať se nerozejdou.
+      cb.checked = key === 'agent'
+        ? (cfg.agent !== false && cfg.claude !== false) : cfg[key] !== false;
+      cb.onchange = () => save({newtab: key === 'agent'
+        ? {...cfg, agent: cb.checked, claude: cb.checked}
+        : {...cfg, [key]: cb.checked}});
       row.appendChild(cb);
       row.appendChild(el('span', null, label));
       list.appendChild(row);
@@ -302,8 +310,124 @@
     unknown: ['set-dim', '○', 'neznámý stav'],
   };
 
+  /* ── AI agenti ─────────────────────────────────────────────────────────────
+     Kdo je na stroji, kým se otevírají projekty, a jak doinstalovat zbytek.
+     Verze se zjišťují spuštěním každého CLI, takže to jede na pozadí stejně
+     jako MCP a mezitím je vidět, že se pracuje. */
+  let agentsLast = null;
+
+  function agenti() {
+    const box = section('AI agenti',
+      'Každý tab se otevírá jedním z nich. Volba u projektu se pamatuje, ' +
+      'takže e-shop může jezdit v Claudeovi a experiment v něčem jiném.');
+    const summary = el('div', 'set-row');
+    const list = el('div', 'onb-list');
+    const ollama = el('div', 'set-note');
+    const btns = el('div', 'onb-btns');
+    const check = el('button', 'btn ghost', 'Zkontrolovat znovu');
+    btns.appendChild(check);
+    box.append(summary, list, ollama, btns);
+
+    function busy(text) {
+      summary.textContent = '';
+      summary.appendChild(el('span', 'set-dim', text));
+      check.disabled = true;
+    }
+
+    function openIn(kind, title) {
+      close();
+      io.openTab({kind, path: state.home, title});
+    }
+
+    function row(a, def) {
+      const r = el('div', 'onb-row');
+      const dot = el('span', a.path ? 'set-ok' : 'set-dim', a.path ? '●' : '○');
+      dot.style.color = a.path ? a.color : '';
+      const col = el('span', 'onb-col');
+      const head = el('span', null, a.label + (a.version ? '  ' + a.version : ''));
+      if (a.id === def) head.appendChild(el('b', 'set-dim', '  · výchozí'));
+      col.appendChild(head);
+      col.appendChild(el('small', null, a.path
+        ? (a.note || a.path)
+        : (a.install ? 'není nainstalovaný — ' + a.install : 'není nainstalovaný')));
+      r.append(dot, col, el('span', 'spacer'));
+
+      if (!a.path && a.install) {
+        const inst = el('button', 'btn ghost', 'Nainstalovat');
+        inst.title = a.install + '\n\nPustí se v tabu, ať je vidět, co se děje.';
+        inst.onclick = () => openIn('install:' + a.id, 'instalace: ' + a.label);
+        r.appendChild(inst);
+      }
+      if (a.path && (a.auth || {}).cmd) {
+        const auth = el('button', 'btn ghost', 'Přihlásit');
+        auth.title = (a.auth.note || a.auth.cmd);
+        auth.onclick = () => openIn('auth:' + a.id, 'přihlášení: ' + a.label);
+        r.appendChild(auth);
+      }
+      if (a.path && a.id !== def) {
+        const use = el('button', 'btn ghost', 'Jako výchozí');
+        use.onclick = async () => {
+          await save({default_agent: a.id});
+          agentsLast = null;
+          load(true);
+        };
+        r.appendChild(use);
+      }
+      return r;
+    }
+
+    function draw(data) {
+      check.disabled = false;
+      agentsLast = data;
+      const all = data.agents || [];
+      const ready = all.filter((a) => a.path);
+      summary.textContent = '';
+      summary.appendChild(el('span', null,
+        ready.length + ' z ' + all.length + ' k dispozici'));
+      list.textContent = '';
+      for (const a of all) list.appendChild(row(a, data.default));
+      // Ollama je zvláštní: nainstalovaná nestačí, musí i běžet — bez toho
+      // z ní opencode ani aider nedostanou jediný model.
+      const o = data.ollama || {};
+      if (!o.installed) {
+        ollama.textContent = 'Lokální modely: Ollama není nainstalovaná. ' +
+          'S ní umí opencode i aider jet u tebe na počítači, bez placení za tokeny.';
+      } else if (!o.running) {
+        ollama.textContent = 'Lokální modely: Ollama je nainstalovaná, ale neběží ' +
+          '(spusť ollama serve). Dokud neběží, opencode ani aider z ní model nedostanou.';
+      } else if (!(o.models || []).length) {
+        ollama.textContent = 'Lokální modely: Ollama běží, ale žádný model není ' +
+          'stažený (třeba ollama pull qwen2.5-coder).';
+      } else {
+        ollama.textContent = 'Lokální modely z Ollamy: ' + o.models.join(', ') +
+          ' — nabídnou se v bublině u opencode, aidera i v tabu Ollamy.';
+      }
+    }
+
+    async function load(refresh) {
+      busy(refresh ? 'zjišťuji, co je na stroji…' : 'načítám…');
+      try {
+        let data = await io.api('agents' + (refresh ? '?refresh=1' : ''));
+        // Detekce běží na pozadí (spouští se každé CLI s --version), tak se
+        // na ni počká stejně jako u MCP — po sekundách, ne blokujícím čekáním.
+        for (let i = 0; data.running && i < 40; i++) {
+          await new Promise((r) => setTimeout(r, 500));
+          data = await io.api('agents');
+        }
+        if (data.running) { busy('pořád zjišťuji…'); return; }
+        draw(data);
+      } catch (err) {
+        busy('nepodařilo se zjistit: ' + err);
+      }
+    }
+
+    check.onclick = () => load(true);
+    if (agentsLast) draw(agentsLast); else load(false);
+    return box;
+  }
+
   function napojeni() {
-    const box = section('Napojení (MCP)',
+    const box = section('Napojení (MCP) — Claude Code',
       'Služby, do kterých Claude Code vidí — konektory z účtu claude.ai i ' +
       'servery zaregistrované na tomhle stroji. Kontrola se každého zeptá, ' +
       'takže je vidět i to, co je sice zapsané, ale nefunguje.');

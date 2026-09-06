@@ -147,7 +147,8 @@ function renderProjects(filter) {
                 p.brief ? '\n' + p.brief.slice(0, 300) : '']
       .filter(Boolean).join('\n');
     const open = () => openTab({kind: 'project', path: p.path,
-                                title: p.label || p.name});
+                                title: p.label || p.name,
+                                agent: agentFor(p.path)});
     el.onclick = (ev) => { if (!ev.target.closest('.card-more')) open(); };
     el.onkeydown = (ev) => {
       if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); }
@@ -493,9 +494,13 @@ function renderWelcome() {
   box.textContent = '';
   const cfg = STATE.config.newtab || {};
   const actions = [];
-  if (cfg.claude !== false) {
-    actions.push(['i-terminal', 'Otevřít Claude Code', true,
-      () => openTab({kind: 'project', path: STATE.home, title: 'Claude Code'})]);
+  if (cfg.agent !== false && cfg.claude !== false) {
+    const a = agentById(STATE.default_agent) || agentList(true)[0];
+    if (a) {
+      actions.push(['i-terminal', 'Otevřít ' + a.label, true,
+        () => openTab({kind: 'project', path: STATE.home, title: a.label,
+                       agent: a.id})]);
+    }
   }
   if (cfg.shell !== false) {
     actions.push(['i-terminal', 'Otevřít terminál', false,
@@ -652,21 +657,41 @@ function renderDoctor() {
       ? 'Nenašel jsem <b>Git for Windows</b> — bez něj hub neumí spustit bash a taby zůstanou prázdné.<br><code>winget install Git.Git</code>'
       : 'Nenašel jsem <b>bash</b> — taby se nespustí.');
   }
-  if (!d.claude) {
-    problems.push('Claude Code CLI (<b>claude</b>) není v PATH — tab se otevře jako obyčejný shell.' +
-      (d.platform === 'windows' ? '<br><code>winget install Anthropic.ClaudeCode</code>'
-                                : '<br><code>curl -fsSL https://claude.ai/install.sh | bash</code>'));
+  // Chybí-li úplně všechno, je to problém. Chybí-li jen ten vybraný, taky —
+  // ale ostatní se nabídnou, ať se dá pracovat hned.
+  const ready = agentList(true);
+  const def = agentById(STATE.default_agent);
+  if (!ready.length) {
+    const first = agentList()[0];
+    problems.push('Není nainstalovaný <b>žádný AI agent</b> — tab se otevře jako obyčejný shell.' +
+      (first && first.install ? '<br><code>' + first.install + '</code>' : '') +
+      '<br>Nebo v nastavení: ⚙ → AI agenti.');
+  } else if (def && !def.path) {
+    problems.push('Vybraný agent <b>' + def.label + '</b> není v PATH — ' +
+      'tab se otevře jako obyčejný shell.' +
+      (def.install ? '<br><code>' + def.install + '</code>' : '') +
+      '<br>K dispozici je: ' + ready.map((a) => a.label).join(', ') + '.');
   }
   warn.hidden = !problems.length;
   warn.innerHTML = problems.join('<hr style="border:none;border-top:1px solid var(--border);margin:8px 0">');
 }
 
-/* Které „+" tlačítko se ukazuje. Kdo jede jen v Claude Code, nechce vedle sebe
-   pořád tlačítko na holý shell — a naopak. */
+/* Které „+" tlačítko se ukazuje. Kdo jede jen v agentovi, nechce vedle sebe
+   pořád tlačítko na holý shell — a naopak. Klíč `claude` je tu z verzí do 1.6,
+   kde se tlačítko tak jmenovalo; starý konfig se tím pádem nemusí přepisovat. */
 function renderNewTabButtons() {
   const cfg = STATE.config.newtab || {};
-  $('btn-new-claude').hidden = cfg.claude === false;
+  const btn = $('btn-new-agent');
+  btn.hidden = cfg.agent === false || cfg.claude === false;
   $('btn-new-shell').hidden = cfg.shell === false;
+  // Tlačítko se jmenuje po tom, koho doopravdy spustí.
+  const a = agentById(STATE.default_agent) || agentList(true)[0];
+  const label = btn.querySelector('span');
+  if (a && label) {
+    label.textContent = a.label;
+    btn.title = agentList(true).length > 1
+      ? 'Otevřít agenta (šipka dolů = výběr)' : 'Otevřít ' + a.label;
+  }
 }
 
 async function reload() {
@@ -678,18 +703,75 @@ async function reload() {
   renderDoctor();
   renderWelcome();
   renderNewTabButtons();
+  for (const t of TABS) paintAgent(t);
   applyTheme();
 }
 
+/* ── agenti ───────────────────────────────────────────────────────────────── */
+/* Katalog i to, co je na stroji doopravdy k dispozici, přichází ze serveru
+   (/api/state → agents). Frontend si nic o agentech nedomýšlí — jen kreslí. */
+function agentList(onlyReady) {
+  const all = STATE.agents || [];
+  return onlyReady ? all.filter((a) => a.path) : all;
+}
+
+function agentById(id) {
+  return (STATE.agents || []).find((a) => a.id === id) || null;
+}
+
+/* Kterým agentem se otevře tenhle projekt: co si u něj člověk naposled vybral,
+   jinak výchozí z nastavení. */
+function agentFor(path) {
+  const saved = (STATE.config.project_agents || {})[path];
+  if (saved && agentById(saved)) return saved;
+  return STATE.default_agent || 'claude';
+}
+
+/* Volba u projektu přežije zavření hubu — proto do konfigu, ne do localStorage:
+   projekt otevírá i doctor a instalačka, a ty do prohlížeče nevidí. */
+async function rememberAgent(path, id) {
+  if (!path) return;
+  const map = {...(STATE.config.project_agents || {})};
+  if (map[path] === id) return;
+  map[path] = id;
+  STATE.config.project_agents = map;      // ať menu hned ukazuje novou volbu
+  try { await api('config', {project_agents: map}); } catch (_) { /* nevadí */ }
+}
+
+/* Nabídka „čím otevřít nový tab". Nedostupní agenti v ní zůstávají — jinak by
+   se z ní nedalo dostat k jejich instalaci. */
+function newAgentMenu(ev) {
+  const items = agentList().map((a) => ({
+    icon: 'i-terminal',
+    label: a.path ? a.label : a.label + ' — nainstalovat',
+    on: a.path && a.id === STATE.default_agent,
+    run: () => (a.path
+      ? openTab({kind: 'project', path: STATE.home, title: a.label, agent: a.id})
+      : openTab({kind: 'install:' + a.id, path: STATE.home,
+                 title: 'instalace: ' + a.label})),
+  }));
+  items.push({icon: 'i-gear', label: 'Nastavení agentů…',
+              run: () => HubSettings.open({...hubIO(), state: STATE, tab: 'agenti'})});
+  const b = ev.currentTarget ? ev.currentTarget.getBoundingClientRect() : null;
+  showMenu(b ? b.left : ev.clientX, b ? b.bottom : ev.clientY, items);
+}
+
 /* ── tabs ─────────────────────────────────────────────────────────────────── */
-function openTab({kind, path, title}) {
-  const tab = createTab({kind, path, title});
+function openTab({kind, path, title, agent, model}) {
+  const tab = createTab({kind, path, title, agent, model});
   const dims = measure(tab);
-  send({t: 'open', ref: tab.ref, kind, path, title, cols: dims.cols, rows: dims.rows});
+  send({t: 'open', ref: tab.ref, kind, path, title, agent: agent || '',
+        model: model || '', cols: dims.cols, rows: dims.rows});
   return tab;
 }
 
-function createTab({kind, path, title, id}) {
+/* Otevřít projekt konkrétním agentem a zapamatovat si tu volbu. */
+function openWith(agentId, {path, title}) {
+  rememberAgent(path, agentId);
+  return openTab({kind: 'project', path, title, agent: agentId});
+}
+
+function createTab({kind, path, title, id, agent, model}) {
   const ref = ++refSeq;
   const pane = document.createElement('div');
   pane.className = 'pane';
@@ -766,21 +848,42 @@ function createTab({kind, path, title, id}) {
   const el = document.createElement('button');
   el.className = 'tab';
   el.draggable = true;
-  el.innerHTML = '<span class="tab-title"></span>' +
+  el.innerHTML = '<span class="tab-agent" hidden></span>' +
+                 '<span class="tab-title"></span>' +
                  `<span class="tab-close" title="Zavřít tab">${icon('i-close')}</span>`;
   el.querySelector('.tab-title').textContent = title;
+  tab.agent = agent || '';
+  tab.model = model || '';
   el.onclick = (ev) => {
     if (ev.target.closest('.tab-close')) { requestCloseTab(tab); return; }
     activate(tab);
   };
   el.ondblclick = (ev) => { if (!ev.target.closest('.tab-close')) startRename(tab); };
   wireDrag(el, tab);
-  $('tabbar').insertBefore(el, $('btn-new-claude'));
+  $('tabbar').insertBefore(el, $('btn-new-agent'));
   tab.el = el;
+  paintAgent(tab);   // až teď — dřív tab své tlačítko ještě nemá
 
   TABS.push(tab);
   activate(tab);
   return tab;
+}
+
+/* Odznak agenta na tabu: barevná tečka vždy, jméno navíc u toho, kdo není
+   výchozí — jinak by u každého tabu svítilo totéž slovo. */
+function paintAgent(tab) {
+  const badge = tab.el && tab.el.querySelector('.tab-agent');
+  if (!badge) return;
+  const a = agentById(tab.agent || (tab.kind === 'shell' ? '' : STATE.default_agent));
+  if (!a || tab.kind === 'shell' || tab.kind === 'deploy') {
+    badge.hidden = true;
+    return;
+  }
+  badge.hidden = false;
+  badge.style.setProperty('--agent-color', a.color);
+  badge.textContent = a.id === (STATE.default_agent || 'claude') ? '' : a.short;
+  badge.classList.toggle('named', !!badge.textContent);
+  tab.el.title = a.label + (tab.model ? ' · ' + tab.model : '');
 }
 
 function measure(tab) {
@@ -1041,13 +1144,26 @@ function runSlash(cmd) {
 
 /* ── context menu ─────────────────────────────────────────────────────────── */
 function projectMenu(ev, p) {
-  const items = [
-    {icon: 'i-terminal', label: 'Otevřít v Claude',
-     run: () => openTab({kind: 'project', path: p.path, title: p.label || p.name})},
+  const title = p.label || p.name;
+  const ready = agentList(true);
+  const preferred = agentFor(p.path);
+  // Nejdřív ten, kterým se projekt otevírá teď — ať je klik na kartu a první
+  // položka v nabídce totéž.
+  ready.sort((a, b) => (b.id === preferred) - (a.id === preferred));
+  const items = ready.map((a) => ({
+    icon: 'i-terminal', label: 'Otevřít v ' + a.label,
+    on: a.id === preferred && ready.length > 1,
+    run: () => openWith(a.id, {path: p.path, title}),
+  }));
+  if (!ready.length) {
+    items.push({icon: 'i-terminal', label: 'Žádný agent není nainstalovaný…',
+                run: () => HubSettings.open({...hubIO(), state: STATE, tab: 'agenti'})});
+  }
+  items.push(
     {icon: 'i-note', label: 'Upravit…', run: () => editProject(p)},
     {icon: 'i-deploy', label: p.deployable ? 'Deploy (FTP)' : 'Deploy',
      run: () => openTab({kind: 'deploy', path: p.path, title: 'deploy: ' + p.name})},
-  ];
+  );
   if (p.repo) {
     items.push({icon: 'i-push', label: 'Otevřít na GitHubu',
       run: () => openExternal('https://github.com/' + p.repo)});
@@ -1215,7 +1331,8 @@ function restore(list) {
   for (const info of list) {
     let tab = TABS.find(t => t.id === info.id);
     if (!tab) {
-      tab = createTab({kind: info.kind, path: info.path, title: info.title, id: info.id});
+      tab = createTab({kind: info.kind, path: info.path, title: info.title,
+                       id: info.id, agent: info.agent, model: info.model});
     }
     tab.term.reset();          // the replay below is the full scrollback
     send({t: 'attach', id: info.id});
@@ -1260,6 +1377,9 @@ function hubIO() {
        i jiné konektory (třeba druhou gmailovou schránku). */
     login: () => openTab({kind: 'slash:login', path: STATE.home,
                           title: 'přihlášení'}),
+    // Nastavení agentů otevírá taby: instalaci i přihlášení je lepší vidět
+    // běžet, než je pustit skrytě na pozadí.
+    openTab: (opts) => openTab(opts),
   };
 }
 
@@ -1295,8 +1415,17 @@ async function main() {
   $('btn-settings').onclick = () => HubSettings.open({...hubIO(), state: STATE});
   $('btn-stats').onclick = () => HubStats.open(hubIO());
   $('btn-new-shell').onclick = () => openTab({kind: 'shell', path: '', title: 'terminál'});
-  $('btn-new-claude').onclick = () =>
-    openTab({kind: 'project', path: STATE.home, title: 'Claude Code'});
+  // Levý klik = výchozí agent, pravý klik nebo delší podržení = výběr.
+  // Nabídka se sama otevře i tehdy, když výchozí agent není nainstalovaný.
+  $('btn-new-agent').onclick = (ev) => {
+    const ready = agentList(true);
+    const def = agentById(STATE.default_agent);
+    if (ready.length > 1 && (ev.altKey || !def || !def.path)) return newAgentMenu(ev);
+    const a = (def && def.path) ? def : ready[0];
+    if (!a) return HubSettings.open({...hubIO(), state: STATE, tab: 'agenti'});
+    openTab({kind: 'project', path: STATE.home, title: a.label, agent: a.id});
+  };
+  $('btn-new-agent').oncontextmenu = (ev) => { ev.preventDefault(); newAgentMenu(ev); };
   $('btn-brain').onclick = () => openExternal('', 'brain');
   $('modal-close').onclick = closePicker;
   $('modal-cancel').onclick = closePicker;
