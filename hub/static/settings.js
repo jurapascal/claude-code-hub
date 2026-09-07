@@ -680,53 +680,108 @@
       }
     }
 
-    /* Přidání z katalogu. Klíč se zadává tady a putuje rovnou do
-       `claude mcp add` — hub si ho nikam neukládá a do logu se nedostane. */
+    /* Přidání z katalogu — „rozšíření": klikneš a napojí se.
+
+       Údaje, na které se ptáme, jdou rovnou do `claude mcp add`; hub si je
+       nikam neukládá a do logu se nedostanou. Rozsah je tu schválně na očích:
+       globální napojení platí všude, projektové se zapíše do .mcp.json ve
+       složce a veze se s repem, takže ho má i další člověk v týmu. */
     function pridat(key, spec) {
       const wrap = el('div', 'mcp-add');
       const head = el('div', 'set-row');
-      head.appendChild(el('strong', null, 'Přidat ' + spec.label));
+      head.appendChild(el('strong', null, spec.label));
       head.appendChild(el('span', 'spacer'));
       const open = el('button', 'btn ghost', 'Napojit');
       head.appendChild(open);
       wrap.appendChild(head);
       wrap.appendChild(el('div', 'set-note', spec.note));
 
+      // Odkud server je. U cizího kódu, který se bude spouštět, to má být
+      // vidět dřív, než se na něj klikne — ne až někde v dokumentaci.
+      const meta = el('div', 'mcp-meta');
+      if (spec.source) {
+        meta.appendChild(el('span', 'mcp-tag', 'open source'));
+        meta.appendChild(el('span', null, spec.source));
+      }
+      if (spec.license) meta.appendChild(el('span', null, spec.license));
+      if (spec.needs) meta.appendChild(el('span', null, 'spouští ' + spec.needs));
+      if (spec.docs) {
+        const a = el('button', 'linkbtn', 'návod');
+        a.onclick = () => io.api('open-path', {path: spec.docs})
+          .catch(() => io.toast('Nepodařilo se otevřít odkaz.'));
+        meta.appendChild(a);
+      }
+      if (meta.children.length) wrap.appendChild(meta);
+
       const form = el('div', 'mcp-form');
       form.hidden = true;
-      const input = el('input');
-      input.type = 'password';
-      input.placeholder = spec.key_label || 'API klíč';
-      input.autocomplete = 'off';
-      form.appendChild(input);
+      const inputs = [];
+      for (const field of spec.fields || []) {
+        const row = el('label', 'mcp-field');
+        row.appendChild(el('span', null, field.label));
+        const input = el('input');
+        input.type = field.secret ? 'password' : 'text';
+        input.placeholder = field.label;
+        input.autocomplete = 'off';
+        row.appendChild(input);
+        if (field.help) row.appendChild(el('small', null, field.help));
+        form.appendChild(row);
+        inputs.push([field.name, input]);
+      }
+
+      // Kam se to zapíše. Projekt si vybírá složku, jinak by nebylo kam.
+      const where = el('div', 'set-row');
+      const scope = el('select', 'set-input');
+      for (const [value, label] of [['user', 'Všude (globálně)'],
+                                    ['project', 'Jen v jedné složce']]) {
+        scope.appendChild(Object.assign(el('option', null, label), {value}));
+      }
+      where.appendChild(el('span', null, 'Kde má platit'));
+      where.appendChild(scope);
+      const folder = el('button', 'btn ghost', 'Vybrat složku…');
+      folder.hidden = true;
+      let path = '';
+      folder.onclick = async () => {
+        const picked = await io.pickFolder();
+        if (!picked) return;
+        path = picked;
+        folder.textContent = picked.split(/[\\/]/).pop() || picked;
+        folder.title = picked;
+      };
+      where.appendChild(folder);
+      scope.onchange = () => { folder.hidden = scope.value !== 'project'; };
+      form.appendChild(where);
+
       const go = el('button', 'btn primary', 'Napojit');
       form.appendChild(go);
       wrap.appendChild(form);
-      if (spec.key_help) {
-        const help = el('div', 'set-note', 'Kde ho vzít: ' + spec.key_help + ' ');
-        if (spec.docs) {
-          const a = el('button', 'linkbtn', 'návod');
-          a.onclick = () => io.api('open-path', {path: spec.docs})
-            .catch(() => io.toast('Nepodařilo se otevřít odkaz.'));
-          help.appendChild(a);
-        }
-        wrap.appendChild(help);
-      }
 
       open.onclick = () => {
         form.hidden = !form.hidden;
         // Dvě tlačítka „Napojit" vedle sebe by mátla — tohle jen otevírá pole.
         open.textContent = form.hidden ? 'Napojit' : 'Zavřít';
-        if (!form.hidden) input.focus();
+        const first = inputs.length ? inputs[0][1] : null;
+        if (!form.hidden && first) first.focus();
       };
-      input.onkeydown = (ev) => { if (ev.key === 'Enter') go.click(); };
+      for (const [, input] of inputs) {
+        input.onkeydown = (ev) => { if (ev.key === 'Enter') go.click(); };
+      }
       go.onclick = async () => {
-        const value = input.value.trim();
-        if (!value) { io.toast('Bez klíče se server nepřihlásí.'); return; }
+        const values = {};
+        for (const [name, input] of inputs) {
+          const v = input.value.trim();
+          if (!v) { io.toast('Vyplň ' + name + '.'); input.focus(); return; }
+          values[name] = v;
+        }
+        if (scope.value === 'project' && !path) {
+          io.toast('Vyber složku, ve které to má platit.');
+          return;
+        }
         go.disabled = true;
         go.textContent = 'Napojuju…';
         try {
-          const r = await io.api('mcp', {action: 'add', name: key, key: value});
+          const r = await io.api('mcp', {action: 'add', name: key,
+                                         values, scope: scope.value, path});
           io.toast(r.detail || 'Hotovo.');
         } catch (err) {
           io.toast('Nepovedlo se: ' + err.message);
@@ -734,7 +789,7 @@
           go.textContent = 'Napojit';
           return;
         }
-        input.value = '';
+        for (const [, input] of inputs) input.value = '';
         load(true);
       };
       return wrap;

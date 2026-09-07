@@ -575,10 +575,14 @@ class Handler(BaseHTTPRequestHandler):
             action = payload.get("action") or ""
             if action == "add":
                 result = core.mcp_add(payload.get("name", ""),
-                                      payload.get("key", ""))
+                                      payload.get("values") or {},
+                                      payload.get("scope") or "user",
+                                      payload.get("path") or "")
                 return self._json(result, 200 if result.get("ok") else 400)
             if action == "remove":
-                result = core.mcp_remove(payload.get("name", ""))
+                result = core.mcp_remove(payload.get("name", ""),
+                                         payload.get("scope") or "user",
+                                         payload.get("path") or "")
                 return self._json(result, 200 if result.get("ok") else 400)
             cached = core.job_state("mcp")
             # Účet se čte ze souboru, ne ze sítě — posílá se i do rozdělané

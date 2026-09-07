@@ -1815,19 +1815,138 @@ def browser_state():
 # jednotky sekund, proto to jede na pozadí a výsledek se drží v úloze "mcp".
 
 # Co se dá přidat jedním klikem. Klíč = jméno serveru u `claude mcp add`.
+#
+# Dva druhy: `http` je hotová služba na síti, `stdio` je program, který si
+# Claude Code spustí sám (uvx/npx si balíček stáhnou při prvním spuštění, nic
+# se nemusí instalovat dopředu). `fields` jsou údaje, na které se hub zeptá —
+# `target` říká, kam patří: do proměnné prostředí, do hlavičky, nebo za příkaz
+# jako argument.
+#
+# Do katalogu patří jen to, co je opravdu k mání: každý balíček tady byl
+# ověřený v registru, každá adresa oslovená.
 MCP_CATALOG = {
+    "google-workspace": {
+        "label": "Google Workspace",
+        "note": "Gmail, Disk, Dokumenty, Tabulky, Kalendář, Slides, Formuláře, "
+                "Úkoly, Kontakty a Apps Script — čtení i zápis do buněk.",
+        "kind": "stdio",
+        "needs": "uvx",
+        "command": "uvx",
+        "args": ["workspace-mcp", "--tool-tier", "extended"],
+        "source": "taylorwilsdon/google_workspace_mcp",
+        "license": "MIT",
+        "fields": [
+            {"name": "GOOGLE_OAUTH_CLIENT_ID", "target": "env",
+             "label": "Client ID",
+             "help": "Google Cloud Console → API a služby → Přihlašovací údaje "
+                     "→ Vytvořit → ID klienta OAuth → typ Desktopová aplikace"},
+            {"name": "GOOGLE_OAUTH_CLIENT_SECRET", "target": "env",
+             "label": "Client secret", "secret": True,
+             "help": "Ze stejné obrazovky jako Client ID."},
+        ],
+        "docs": "https://github.com/taylorwilsdon/google_workspace_mcp",
+    },
+    "google-sheets": {
+        "label": "Google Tabulky",
+        "note": "Jen tabulky, zato pořádně — čte i zapisuje rozsahy buněk a "
+                "umí rozeznat vzorec od vypočtené hodnoty.",
+        "kind": "stdio",
+        "needs": "uvx",
+        "command": "uvx",
+        "args": ["mcp-google-sheets@latest"],
+        "source": "xing5/mcp-google-sheets",
+        "license": "MIT",
+        "fields": [
+            {"name": "SERVICE_ACCOUNT_PATH", "target": "env",
+             "label": "Cesta k JSON klíči služebního účtu",
+             "help": "Google Cloud Console → Servisní účty → Klíče → "
+                     "Přidat klíč (JSON). Tabulku pak nasdílej na e-mail "
+                     "toho účtu."},
+        ],
+        "docs": "https://github.com/xing5/mcp-google-sheets",
+    },
+    "context7": {
+        "label": "Context7",
+        "note": "Aktuální dokumentace knihoven přímo do kontextu — místo "
+                "hádání z paměti, která je ke dni vydání modelu.",
+        "kind": "http",
+        "url": "https://mcp.context7.com/mcp",
+        "source": "upstash/context7",
+        "license": "MIT",
+        "docs": "https://github.com/upstash/context7",
+    },
+    "fetch": {
+        "label": "Fetch",
+        "note": "Stáhne stránku a převede ji na text, se kterým se dá "
+                "pracovat. Bez klíčů a bez přihlašování.",
+        "kind": "stdio",
+        "needs": "uvx",
+        "command": "uvx",
+        "args": ["mcp-server-fetch"],
+        "source": "modelcontextprotocol/servers",
+        "license": "MIT",
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/"
+                "src/fetch",
+    },
+    "filesystem": {
+        "label": "Souborový systém",
+        "note": "Čtení a zápis v jedné vybrané složce — i mimo projekt, "
+                "ve kterém je zrovna otevřený tab.",
+        "kind": "stdio",
+        "needs": "npx",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+        "source": "modelcontextprotocol/servers",
+        "license": "MIT",
+        "fields": [
+            {"name": "path", "target": "arg", "label": "Složka",
+             "help": "Server dovnitř téhle složky vidí a nikam jinam."},
+        ],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/"
+                "src/filesystem",
+    },
+    "memory": {
+        "label": "Paměť (graf znalostí)",
+        "note": "Trvalý graf entit a vztahů. Vedle Obsidian paměti hubu — "
+                "tahle je strojová, ta v Obsidianu psaná pro člověka.",
+        "kind": "stdio",
+        "needs": "npx",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-memory"],
+        "source": "modelcontextprotocol/servers",
+        "license": "MIT",
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/"
+                "src/memory",
+    },
+    "sequential-thinking": {
+        "label": "Sekvenční uvažování",
+        "note": "Rozloží těžší úlohu na kroky, ke kterým se dá vracet "
+                "a opravovat je.",
+        "kind": "stdio",
+        "needs": "npx",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+        "source": "modelcontextprotocol/servers",
+        "license": "MIT",
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/"
+                "src/sequentialthinking",
+    },
     "clockify": {
         "label": "Clockify",
         "note": "Výkazy času, projekty a spuštěné stopky přímo z Claude Code.",
+        "kind": "http",
         "url": "https://api.clockify.me/mcp-server/mcp",
-        "header": "x-api-key",
-        "key_label": "API klíč z Clockify",
-        "key_help": "Clockify → foto profilu → Preferences → Advanced → "
-                    "Manage API keys → Generate New",
+        "fields": [
+            {"name": "x-api-key", "target": "header", "secret": True,
+             "label": "API klíč z Clockify",
+             "help": "Clockify → foto profilu → Preferences → Advanced → "
+                     "Manage API keys → Generate New"},
+        ],
         "docs": "https://clockify.me/help/integrations-and-add-ons/"
                 "use-clockify-mcp-server-to-connect-to-ai-agent",
     },
 }
+
 
 _MCP_STATES = (
     # (co hledat ve zbytku řádku, stav, český popis)
@@ -1999,23 +2118,69 @@ def mcp_list():
             "available": missing, "checked": time.time()}
 
 
-def mcp_add(name, api_key=""):
-    """Zaregistruje server z katalogu do user scope. Vrací {ok, detail}."""
+def mcp_prereq(spec):
+    """Čím se server spouští, když je to program. '' = není co hlídat."""
+    need = spec.get("needs") or ""
+    if not need or shutil.which(need):
+        return ""
+    hints = {"uvx": "uv (uvx) — https://docs.astral.sh/uv/",
+             "npx": "Node.js (npx) — https://nodejs.org"}
+    return hints.get(need, need)
+
+
+def mcp_add(name, values=None, scope="user", path=""):
+    """Zaregistruje server z katalogu. Vrací {ok, detail}.
+
+    `values` jsou odpovědi na `fields` ze spisu, klíčované jménem pole. Scope
+    `user` platí všude, `project` zapíše .mcp.json do složky projektu — ten se
+    pak veze s repem, takže ho má i další člověk v týmu.
+    """
     spec = MCP_CATALOG.get(name)
     if not spec:
         return {"ok": False, "detail": f"Napojení {name} neznám."}
     claude = shutil.which("claude")
     if not claude:
         return {"ok": False, "detail": "Claude Code CLI (claude) není v PATH."}
-    api_key = (api_key or "").strip()
-    if spec.get("header") and not api_key:
-        return {"ok": False, "detail": "Bez klíče se server nepřihlásí."}
-    argv = [claude, "mcp", "add", name, spec["url"],
-            "-s", "user", "--transport", "http"]
-    if spec.get("header"):
-        argv += ["--header", f'{spec["header"]}: {api_key}']
+    if scope not in ("user", "project", "local"):
+        return {"ok": False, "detail": f"Neznámý rozsah {scope}."}
+
+    missing = mcp_prereq(spec)
+    if missing:
+        return {"ok": False, "detail": f"Chybí {missing}"}
+
+    cwd = HOME
+    if scope == "project":
+        cwd = os.path.expanduser(path or "")
+        if not os.path.isdir(cwd):
+            return {"ok": False, "detail": "Pro rozsah projektu chybí složka."}
+
+    values = values or {}
+    env, headers, extra_args = [], [], []
+    for field in spec.get("fields") or []:
+        key = field["name"]
+        value = str(values.get(key) or "").strip()
+        if not value:
+            return {"ok": False, "detail": f"Chybí {field.get('label') or key}."}
+        target = field.get("target") or "env"
+        if target == "env":
+            env += ["-e", f"{key}={value}"]
+        elif target == "header":
+            headers += ["--header", f"{key}: {value}"]
+        else:
+            extra_args.append(value)
+
+    if spec.get("kind") == "stdio":
+        # `--` odděluje spouštěný příkaz; bez něj by si jeho přepínače přebral
+        # `claude mcp add` sám.
+        argv = ([claude, "mcp", "add", name, "-s", scope] + env +
+                ["--", spec["command"]] + list(spec.get("args") or []) +
+                extra_args)
+    else:
+        argv = ([claude, "mcp", "add", name, spec["url"], "-s", scope,
+                 "--transport", "http"] + headers)
+
     try:
-        r = subprocess.run(argv, capture_output=True, text=True, cwd=HOME,
+        r = subprocess.run(argv, capture_output=True, text=True, cwd=cwd,
                            timeout=60, creationflags=_NO_WINDOW)
     except Exception as exc:
         return {"ok": False, "detail": str(exc)[:200]}
@@ -2024,21 +2189,28 @@ def mcp_add(name, api_key=""):
         detail = (r.stderr or r.stdout or "").strip()[:300] or "nepovedlo se"
         log(f"MCP {name}: registrace selhala — {detail}", "warn")
         return {"ok": False, "detail": detail}
-    log(f"MCP {name}: zaregistrováno (user scope)")
-    return {"ok": True, "detail": f"{spec['label']} je napojený."}
+    kde = "globálně" if scope == "user" else f"v {os.path.basename(cwd)}"
+    log(f"MCP {name}: zaregistrováno ({scope})")
+    return {"ok": True, "detail": f"{spec['label']} je napojený {kde}."}
 
 
-def mcp_remove(name):
-    """Odregistruje server z user scope."""
+def mcp_remove(name, scope="user", path=""):
+    """Odregistruje server. Projektový se odebírá ve složce, kde je zapsaný."""
     claude = shutil.which("claude")
     if not claude:
         return {"ok": False, "detail": "Claude Code CLI (claude) není v PATH."}
-    user, _ = mcp_scopes()
-    if name not in user:
-        return {"ok": False, "detail": "Tenhle server tu nezaložil hub — "
-                                       "odeber ho tam, kde je zapsaný."}
-    out = run([claude, "mcp", "remove", name, "-s", "user"], cwd=HOME, timeout=30)
-    log(f"MCP {name}: odebráno z user scope")
+    if scope == "project":
+        cwd = os.path.expanduser(path or "")
+        if not os.path.isdir(cwd):
+            return {"ok": False, "detail": "Chybí složka projektu."}
+    else:
+        scope, cwd = "user", HOME
+        user, _ = mcp_scopes()
+        if name not in user:
+            return {"ok": False, "detail": "Tenhle server tu nezaložil hub — "
+                                           "odeber ho tam, kde je zapsaný."}
+    out = run([claude, "mcp", "remove", name, "-s", scope], cwd=cwd, timeout=30)
+    log(f"MCP {name}: odebráno ({scope})")
     return {"ok": True, "detail": out or f"{name} odebrán."}
 
 

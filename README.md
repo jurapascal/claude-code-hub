@@ -69,8 +69,9 @@ dělá jednu aplikaci:
 - **Napojení (MCP)** — v nastavení je vidět, na co Claude Code dosáhne: konektory
   z účtu claude.ai i servery zaregistrované na stroji, u každého jestli opravdu
   odpovídá. Nečte se jen registrace — každý server se osloví, takže je poznat
-  i ten, který je sice zapsaný, ale chce přihlásit. Clockify se dá přidat jedním
-  klikem.
+  i ten, který je sice zapsaný, ale chce přihlásit. Pod seznamem je **katalog**:
+  Google Workspace, Context7, Fetch, souborový systém, paměť, Clockify a další
+  se napojí kliknutím — buď globálně, nebo jen do jedné složky.
 - **Nastavení po sekcích** — vzhled, projekty, taby, paměť, napojení, aktualizace
   a logy se přepínají tlačítky vlevo; vybraná sekce se pamatuje.
 - **Telefon** — hub se dá přes Tailscale otevřít i z mobilu (Android i iPhone):
@@ -390,6 +391,34 @@ python3 ~/.claude/claude-hub.py --doctor
 #                        + figma — připojeno
 #                        ! claude.ai Gmail — chce přihlásit
 ```
+
+### Katalog napojení
+
+Napojení se nemusí skládat ručně přes `claude mcp add`. V **Nastavení → Napojení**
+je pod seznamem katalog: klikneš na *Napojit*, vyplníš (když je co) a hotovo.
+
+| | Co to je | Čím jede |
+|---|---|---|
+| **Google Workspace** | Gmail, Disk, Dokumenty, Tabulky, Kalendář, Slides, Formuláře, Úkoly, Kontakty, Apps Script — čtení i zápis do buněk | `uvx workspace-mcp`, [MIT](https://github.com/taylorwilsdon/google_workspace_mcp) |
+| **Google Tabulky** | jen tabulky, zato i vzorce zvlášť od hodnot | `uvx mcp-google-sheets`, [MIT](https://github.com/xing5/mcp-google-sheets) |
+| **Context7** | aktuální dokumentace knihoven místo hádání z paměti modelu | https, [MIT](https://github.com/upstash/context7) |
+| **Fetch** | stáhne stránku a převede ji na text | `uvx mcp-server-fetch`, MIT |
+| **Souborový systém** | čtení a zápis ve vybrané složce | `npx @modelcontextprotocol/server-filesystem`, MIT |
+| **Paměť** | strojový graf entit a vztahů | `npx @modelcontextprotocol/server-memory`, MIT |
+| **Sekvenční uvažování** | rozloží úlohu na kroky, ke kterým se dá vracet | `npx @modelcontextprotocol/server-sequential-thinking`, MIT |
+| **Clockify** | výkazy času a stopky | https + API klíč |
+
+U každé položky je vidět, odkud je a pod jakou licencí — cizí kód, který se bude
+spouštět, to má mít napsané dřív, než se na něj klikne. Nic se neinstaluje
+dopředu: `uvx` i `npx` si balíček stáhnou při prvním spuštění.
+
+**Kde má platit** je součást formuláře:
+
+- *Všude (globálně)* — zapíše se do `~/.claude.json` (user scope) a platí ve všech projektech.
+- *Jen v jedné složce* — vznikne `.mcp.json` v projektu. Ten se veze s repem, takže stejné napojení má i další člověk v týmu.
+
+Údaje, na které se katalog ptá (API klíče, OAuth secret), jdou rovnou do
+`claude mcp add`. Hub si je nikam neukládá a do logu se nedostanou.
 
 ### Clockify
 
