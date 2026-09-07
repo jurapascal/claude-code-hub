@@ -12,7 +12,7 @@ android {
         minSdk = 26                 // WebView s ES2020, tedy vše, co hub v JS používá
         targetSdk = 35
         versionCode = 1
-        versionName = "1.7.0"
+        versionName = "2.0.0"
     }
 
     buildTypes {
