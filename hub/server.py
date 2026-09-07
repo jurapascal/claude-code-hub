@@ -24,12 +24,26 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import core, pty_backend, stats
+from . import core, pty_backend, qr, remote, stats
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_FRAME = 4 * 1024 * 1024          # a client frame is keystrokes; 4 MB is plenty
 SCROLLBACK = 256 * 1024              # replayed to the page after a reload
+COOKIE_NAME = "hub_phone"            # so a paired phone opens without the QR
+COOKIE_MAX_AGE = 60 * 60 * 24 * 365
+
+# A phone whose token was rotated still has the icon on its home screen; a bare
+# 403 there looks like the hub is broken.
+PAIR_AGAIN = """<!doctype html><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Claude Code Hub</title>
+<style>body{font:16px/1.6 system-ui,sans-serif;margin:0;min-height:100vh;
+display:grid;place-items:center;background:#16150f;color:#e8e3d3;padding:24px}
+div{max-width:22rem;text-align:center}b{color:#e0a458}</style>
+<div><p><b>Telefon už není spárovaný.</b></p>
+<p>Otevři na počítači Claude Code Hub → Nastavení → Telefon a načti QR kód znovu.</p></div>
+"""
 
 
 # ── WebSocket plumbing (RFC 6455, only what we need) ─────────────────────────
@@ -182,6 +196,9 @@ class Hub:
 
     def open(self, kind, path, title, cols, rows, agent="", model=""):
         script, cwd, env = self._command_for(kind, path, agent, model)
+        # Agent si model mohl doplnit sám (Ollama bez modelu nespustíš) —
+        # ať se to dozví i tab, jinak by chip v bublině hlásil „výchozí".
+        model = env.get("HUB_AGENT_MODEL") or model
         sid = self.new_id()
         session = Session(sid, title, kind, path, core.bash_argv(script), cwd,
                           cols, rows, agent=agent, model=model, env=env)
@@ -237,10 +254,44 @@ class Handler(BaseHTTPRequestHandler):
     def token(self):
         return self.server.token
 
+    def _cookie_token(self):
+        """Token left behind by pairing, so the phone's icon opens straight in."""
+        for part in self.headers.get("Cookie", "").split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == COOKIE_NAME:
+                return urllib.parse.unquote(value)
+        return ""
+
     def _authorised(self, query):
         given = (query.get("t", [""])[0]
-                 or self.headers.get("X-Hub-Token", ""))
+                 or self.headers.get("X-Hub-Token", "")
+                 or self._cookie_token())
         return secrets.compare_digest(given, self.token)
+
+    def _secure(self):
+        return self.headers.get("X-Forwarded-Proto", "") == "https"
+
+    def _origin_ok(self):
+        """Reject an Origin that is not this very page.
+
+        Behind `tailscale serve` the page is https://<stroj>.ts.net while we
+        listen on loopback, so the fixed loopback URL is no longer the whole
+        story: the addresses the listener was started for are kept on the
+        server object, and the request's own Host header is accepted too.
+        """
+        origin = self.headers.get("Origin", "")
+        if not origin:
+            return True
+        if origin in self.server.origins:
+            return True
+        host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host", "")
+        return bool(host) and urllib.parse.urlsplit(origin).netloc == host
+
+    def _pair_cookie(self):
+        """Set-Cookie value that keeps this phone paired."""
+        flags = "; Secure" if self._secure() else ""
+        return (f"{COOKIE_NAME}={urllib.parse.quote(self.token)}; Path=/; "
+                f"Max-Age={COOKIE_MAX_AGE}; SameSite=Lax; HttpOnly{flags}")
 
     def _send(self, code, body=b"", ctype="text/plain; charset=utf-8", extra=None):
         self.send_response(code)
@@ -267,8 +318,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._websocket(query)
         if route == "/":
             if not self._authorised(query):
+                if self.server.remote:
+                    return self._send(403, PAIR_AGAIN.encode("utf-8"),
+                                      "text/html; charset=utf-8")
                 return self._send(403, b"Neplatny token.")
-            return self._static("index.html")
+            extra = {"Set-Cookie": self._pair_cookie()} if (
+                self.server.remote and query.get("t")) else None
+            return self._static("index.html", extra)
         if route.startswith("/api/"):
             if not self._authorised(query):
                 return self._send(403, b"Neplatny token.")
@@ -287,7 +343,7 @@ class Handler(BaseHTTPRequestHandler):
             payload = {}
         return self._api(parsed.path[5:], query, payload)
 
-    def _static(self, relpath):
+    def _static(self, relpath, extra=None):
         # posixpath.normpath + strip leading separators keeps this inside STATIC_DIR
         rel = posixpath.normpath("/" + relpath).lstrip("/")
         full = os.path.join(STATIC_DIR, *rel.split("/"))
@@ -305,7 +361,7 @@ class Handler(BaseHTTPRequestHandler):
             ctype += "; charset=utf-8"
         with open(full, "rb") as fh:
             body = fh.read()
-        self._send(200, body, ctype)
+        self._send(200, body, ctype, extra)
 
     def _api(self, name, query, payload=None):
         try:
@@ -421,10 +477,43 @@ class Handler(BaseHTTPRequestHandler):
                     payload.get("name", ""), raw)})
             except Exception as exc:
                 return self._json({"error": f"Nepodařilo se uložit: {exc}"}, 500)
+        if name == "remote":
+            # Telefon: stav, párovací QR a zapnutí/vypnutí druhého listeneru.
+            action = (payload or {}).get("action", "")
+            if action == "enable":
+                core.save_config({"remote_enabled": True})
+                state = start_remote()
+            elif action == "disable":
+                core.save_config({"remote_enabled": False})
+                stop_remote()
+                state = remote_status()
+            elif action == "rotate":
+                remote.rotate()
+                state = start_remote() if REMOTE["server"] or \
+                    core.CONFIG.get("remote_enabled") else remote_status()
+            elif action == "port":
+                try:
+                    wanted = int((payload or {}).get("port") or 0)
+                except (TypeError, ValueError):
+                    wanted = 0
+                if not 1024 <= wanted <= 65535:
+                    return self._json({"error": "Port musí být 1024-65535."}, 400)
+                core.save_config({"remote_port": wanted})
+                state = start_remote() if core.CONFIG.get("remote_enabled") \
+                    else remote_status()
+            else:
+                state = remote_status()
+            if state.get("url"):
+                try:
+                    state["qr"] = qr.svg(state["url"])
+                except Exception as exc:
+                    core.log_error("QR kód se nepovedl", exc)
+            return self._json(state)
         if name == "config":
             allowed = ("project_dirs", "brain_dir", "onboarded", "vault_autosync",
                        "newtab", "extra_projects", "show_archived",
-                       "agents", "default_agent", "project_agents")
+                       "agents", "default_agent", "project_agents",
+                       "remote_keep_running")
             updates = {k: v for k, v in payload.items() if k in allowed}
             if not updates:
                 return self._json({"error": "Nic k uložení."}, 400)
@@ -618,9 +707,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- websocket ----
     def _websocket(self, query):
-        origin = self.headers.get("Origin", "")
-        expected = f"http://127.0.0.1:{self.server.server_address[1]}"
-        if not self._authorised(query) or (origin and origin != expected):
+        if not self._authorised(query) or not self._origin_ok():
             return self._send(403, b"Neplatny token.")
         key = self.headers.get("Sec-WebSocket-Key", "")
         if not key:
@@ -746,9 +833,11 @@ class HubHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, token):
-        super().__init__(("127.0.0.1", 0), Handler)
+    def __init__(self, token, address=("127.0.0.1", 0), remote=False):
+        super().__init__(address, Handler)
         self.token = token
+        self.remote = remote
+        self.origins = set()
 
 
 def start():
@@ -756,6 +845,86 @@ def start():
     token = secrets.token_urlsafe(24)
     httpd = HubHTTPServer(token)
     port = httpd.server_address[1]
+    httpd.origins = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
     threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.2},
                      daemon=True).start()
     return httpd, f"http://127.0.0.1:{port}/?t={urllib.parse.quote(token)}"
+
+
+
+# ── the phone listener ───────────────────────────────────────────────────────
+# Kept apart from the desktop one on purpose: turning the phone access on or off
+# must never touch the loopback server the open window is talking to.
+REMOTE = {"server": None, "mode": "", "url": "", "note": ""}
+_REMOTE_LOCK = threading.Lock()
+
+
+def remote_status():
+    """Everything the settings screen needs to draw the phone section."""
+    tail = remote.tailscale_state()
+    with _REMOTE_LOCK:
+        running = REMOTE["server"] is not None
+        state = {"running": running, "mode": REMOTE["mode"],
+                 "url": REMOTE["url"], "note": REMOTE["note"]}
+    state["port"] = remote.port()
+    state["tailscale"] = tail
+    state["wanted"] = bool(core.CONFIG.get("remote_enabled"))
+    return state
+
+
+def start_remote():
+    """Bring the phone listener up. Returns the same dict as remote_status()."""
+    stop_remote()
+    tail = remote.tailscale_state()
+    if not tail["installed"]:
+        return _remote_failed("Tailscale na tomhle stroji není nainstalovaný.")
+    if not tail["running"]:
+        return _remote_failed("Tailscale běží, ale nejsi přihlášený — spusť "
+                              "`tailscale up`.")
+
+    token = remote.token()
+    port = remote.port()
+    note = ""
+    mode = "serve"
+    address = ("127.0.0.1", port)
+    ok, message = remote.serve_start(port)
+    if not ok:
+        # No TLS front — bind straight to the tailnet address instead.
+        if not tail["ip"]:
+            return _remote_failed(message or "Tailscale nemá přidělenou adresu.")
+        mode, address, note = "bind", (tail["ip"], port), message
+
+    try:
+        httpd = HubHTTPServer(token, address, remote=True)
+    except OSError as exc:
+        if mode == "serve":
+            remote.serve_stop()
+        return _remote_failed(f"Port {port} nejde obsadit: {exc}")
+
+    httpd.origins = {f"https://{tail['host']}", f"http://{tail['host']}",
+                     f"http://{tail['ip']}:{port}", f"http://127.0.0.1:{port}"}
+    threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.2},
+                     daemon=True).start()
+    with _REMOTE_LOCK:
+        REMOTE.update(server=httpd, mode=mode, note=note,
+                      url=remote.url(mode, tail["host"], tail["ip"], port, token))
+    core.log(f"telefon: {mode} na {address[0]}:{port}")
+    return remote_status()
+
+
+def _remote_failed(note):
+    with _REMOTE_LOCK:
+        REMOTE.update(server=None, mode="", url="", note=note)
+    core.log(f"telefon: nespuštěno — {note}")
+    return remote_status()
+
+
+def stop_remote():
+    with _REMOTE_LOCK:
+        httpd, mode = REMOTE["server"], REMOTE["mode"]
+        REMOTE.update(server=None, mode="", url="", note="")
+    if httpd:
+        httpd.shutdown()
+        httpd.server_close()
+    if mode == "serve":
+        remote.serve_stop()

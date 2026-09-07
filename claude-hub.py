@@ -21,6 +21,7 @@ pywinpty on Windows). One code path, all three platforms.
 """
 import os
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -167,6 +168,11 @@ def wait_for_page(proc=None, grace=10, startup=60):
         if hub.clients > 0:
             continue
         if hub.last_empty_at and time.time() - hub.last_empty_at > grace:
+            # S "nechat běžet pro telefon" je zavřené okno jen zavřené okno —
+            # server musí zůstat, jinak se z mobilu není kam připojit.
+            if core.CONFIG.get("remote_enabled") and \
+                    core.CONFIG.get("remote_keep_running"):
+                continue
             core.log("okno zavřeno — končím")
             return
 
@@ -183,6 +189,9 @@ def main():
 
     httpd, url = server.start()
     core.log(f"start: port {httpd.server_address[1]}, platforma {core.doctor()['platform']}")
+    if core.CONFIG.get("remote_enabled"):
+        # Tailscale se ptáme přes CLI, což trvá — okno na to nesmí čekat.
+        threading.Thread(target=server.start_remote, daemon=True).start()
     try:
         if "--no-browser" in args:
             print(url, flush=True)
@@ -200,6 +209,7 @@ def main():
         core.log(f"CHYBA: {exc!r}")
         raise
     finally:
+        server.stop_remote()
         server.HUB.shutdown()
         httpd.shutdown()
     return 0

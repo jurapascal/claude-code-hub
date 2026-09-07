@@ -19,6 +19,7 @@ nebo instalační příkaz, ne celý záznam.
 import os
 import shutil
 import subprocess
+import sys
 
 IS_WINDOWS = os.name == "nt"
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0
@@ -217,8 +218,37 @@ def resolve(agent_id, extra=None):
     return spec
 
 
+def extra_bin_dirs():
+    """Kam instalátory agentů kladou binárky, aniž by je uviděl náš shell.
+
+    Naměřeno na opencode: jeho instalátor si přidá cestu do ~/.bashrc, jenže
+    tab startuje `bash -l -c`, a ten .bashrc nečte. Nainstalovaný agent by tak
+    zůstal „nenalezený" až do odhlášení — a v okně spuštěném ze zástupce
+    i potom, protože to prostředí z profilu nedostane vůbec.
+    """
+    home = os.path.expanduser("~")
+    names = [".local/bin", "bin", ".opencode/bin", ".bun/bin", ".cargo/bin",
+             ".deno/bin", ".npm-global/bin", ".local/share/pnpm"]
+    dirs = [os.path.join(home, n) for n in names]
+    if sys.platform == "darwin":
+        dirs += ["/opt/homebrew/bin", "/usr/local/bin"]
+    return [d for d in dirs if os.path.isdir(d)]
+
+
 def which(spec):
-    return shutil.which(spec.get("bin") or "") or ""
+    """Plná cesta k binárce agenta — z PATH, jinak z těch obvyklých složek."""
+    name = spec.get("bin") or ""
+    if not name:
+        return ""
+    found = shutil.which(name)
+    if found:
+        return found
+    for folder in extra_bin_dirs():
+        for suffix in ((".exe", ".cmd", "") if IS_WINDOWS else ("",)):
+            cand = os.path.join(folder, name + suffix)
+            if os.path.isfile(cand) and os.access(cand, os.X_OK):
+                return cand
+    return ""
 
 
 _NPM_PREFIX = None
@@ -364,7 +394,7 @@ def models_for(spec):
 
 
 # ── Jak se agent doopravdy spustí ────────────────────────────────────────────
-def env_for(spec):
+def env_for(spec, model=""):
     """HUB_AGENT_* proměnné pro agent-wrapper.sh.
 
     Wrapper tím pádem nemusí znát katalog ani parsovat JSON — dostane hotovou
@@ -374,31 +404,51 @@ def env_for(spec):
     hint = auth.get("cmd") or ""
     if hint and auth.get("slash"):
         hint = f'{hint} → {auth["slash"]}'
+    # Do binárky se dosazuje plná cesta, když ji známe — jinak by ji `bash -l`
+    # nenašel u agenta, který bydlí mimo systémové cesty.
+    path = which(spec)
+    extra = extra_bin_dirs()
+    env_path = os.pathsep.join(extra + [os.environ.get("PATH", "")]) if extra \
+        else os.environ.get("PATH", "")
     return {
+        "PATH": env_path,
         "HUB_AGENT_ID": spec.get("id") or spec.get("bin") or "",
-        "HUB_AGENT_BIN": spec.get("bin") or "",
+        "HUB_AGENT_BIN": path or spec.get("bin") or "",
         "HUB_AGENT_LABEL": (spec.get("label") or spec.get("bin") or "").lower(),
         "HUB_AGENT_ANSI": str(spec.get("ansi") or 208),
         "HUB_AGENT_INSTALL": install_cmd(spec),
         "HUB_AGENT_AUTH": hint,
         "HUB_AGENT_BRAIN": "1" if spec.get("skills") else "0",
+        # Co si o tabu odnese UI: který model v něm doopravdy běží.
+        "HUB_AGENT_MODEL": resolved_model(spec, model),
     }
+
+
+def resolved_model(spec, model=""):
+    """Model, se kterým se tab doopravdy spustí.
+
+    Ollama bez modelu nemá co pustit, tak dostane první stažený — a UI se to
+    musí dozvědět, jinak by chip v bublině hlásil „výchozí" u tabu, který běží
+    na konkrétním modelu.
+    """
+    if model:
+        return model
+    if spec.get("needs_model"):
+        first = (models_for(spec) or [["", ""]])[0][1]
+        return first or ""
+    return ""
 
 
 def launch_args(spec, model="", prompt=""):
     """Argumenty za jméno binárky: volba modelu a případný úvodní prompt."""
     args = []
+    model = resolved_model(spec, model)
     if model:
         # `ollama run <model>` je celý příkaz, ne přepínač
         template = spec.get("run_arg") or spec.get("model_arg") or ""
         if template:
             args += [part.replace("{model}", model)
                      for part in template.split(" ") if part]
-    elif spec.get("needs_model"):
-        # Ollama bez modelu nemá co spustit; ať to řekne rovnou v tabu.
-        first = (models_for(spec) or [["", ""]])[0][1]
-        if first:
-            args += ["run", first]
     if prompt:
         args.append(prompt)
     return args

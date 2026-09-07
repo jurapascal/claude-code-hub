@@ -73,6 +73,9 @@ dělá jednu aplikaci:
   klikem.
 - **Nastavení po sekcích** — vzhled, projekty, taby, paměť, napojení, aktualizace
   a logy se přepínají tlačítky vlevo; vybraná sekce se pamatuje.
+- **Telefon** — hub se dá přes Tailscale otevřít i z mobilu (Android i iPhone):
+  QR kód v nastavení, ikona na ploše, šuplík místo panelu a řádek kláves,
+  ze kterého jde poslat Esc, Tab i šipky. Podrobně níž.
 - **Dark/light** — řídí se motivem systému, přepínač v hlavičce.
 - **Obsidian paměť (volitelné)** — když máš vault, panel ukáže poslední poznámky
   (learnings/errors/wins) a klikem je otevře v Obsidianu. Bez vaultu se sekce
@@ -84,17 +87,23 @@ Okno je tenká slupka kolem lokální web appky — díky tomu je UI na všech s
 jedno a totéž a liší se jen dvě věci pod ním:
 
 ```
-  okno (chromium --app / WebKitGTK / prohlížeč)
-        │  http + websocket, jen 127.0.0.1, na token
-  Python server  ──►  pty  ──►  bash  ──►  claude
-   (stdlib)            │
-                       ├─ Linux/macOS: modul `pty` ze standardní knihovny
-                       └─ Windows:     ConPTY přes pywinpty
+  okno (chromium --app / WebKitGTK / prohlížeč)      telefon (PWA nebo .apk)
+        │  http + websocket, jen 127.0.0.1, na token       │  https, jen v tailnetu
+        │                                                  │
+        └──────────────►  Python server  ◄─────────────────┘
+                            (stdlib)  │
+                                      ▼
+                            pty ──► bash ──► claude
+                             ├─ Linux/macOS: modul `pty` ze standardní knihovny
+                             └─ Windows:     ConPTY přes pywinpty
 ```
 
 - Server poslouchá **jen na 127.0.0.1** na náhodném portu a každý požadavek musí mít
   token, který se generuje při startu a předává se oknu v URL. Zvenčí se k němu nedá
   dostat.
+- **Telefon** je druhý listener, který vzniká, jen když si ho zapneš — uvnitř
+  [Tailscale](https://tailscale.com) sítě, s vlastním dlouhodobým tokenem.
+  Podrobně v sekci [Telefon](#telefon-android-i-iphone).
 - **Windows jede na Git for Windows** — `claude-wrapper.sh` i bashové slash příkazy
   (`/deploy`, `/ftp`, `/audit`) tak běží beze změny na všech systémech.
 - Terminál je [xterm.js](https://xtermjs.org) přibalený v repu (`hub/static/vendor/`),
@@ -238,6 +247,67 @@ se z tvého konfigu při instalaci.
 Bez vaultu se čtyři paměťové příkazy vůbec neinstalují — a tlačítka na ně v Hubu
 se nezobrazí. Vlastní příkazy si přidáš jako další složku do `~/.claude/skills/`;
 instalátor je nemaže.
+
+## Telefon (Android i iPhone)
+
+Hub běží dál na počítači — telefon je jen jeho okno. Claude Code je program nad
+tvými soubory na disku, na iOS ho spustit nejde vůbec a na Androidu jen přes
+Termux, takže „appka, co si nese Claudea s sebou" neexistuje. Zato UI hubu je
+web, takže z mobilu vypadá a chová se stejně: projekty, běžící session, bublina
+i karta s dotazem.
+
+**Cesta dovnitř vede přes [Tailscale](https://tailscale.com)** — privátní síť
+mezi tvými zařízeními. Na routeru se nic neotvírá, ven z tvé sítě nevede žádný
+port a funguje to i z mobilních dat.
+
+### Nastavení (jednou)
+
+1. Nainstaluj Tailscale na počítač i na telefon a přihlas se na obou stejným
+   účtem. Na počítači potom:
+
+   ```bash
+   tailscale up
+   sudo tailscale set --operator=$USER    # aby hub směl sám nastavit `tailscale serve`
+   ```
+
+2. V hubu **Nastavení → Telefon → Zapnout přístup z telefonu**.
+3. Ukáže se QR kód. Namiř na něj foťák telefonu a otevři odkaz.
+4. V prohlížeči dej **Sdílet → Přidat na plochu**. Hub se od té chvíle otevírá
+   jako aplikace na celou obrazovku a token si drží v cookie, takže se QR
+   skenuje jenom poprvé.
+
+### Jak se to připojuje
+
+Hub zkusí dvě cesty a použije tu první, která projde:
+
+| | Adresa | Kdy |
+|---|---|---|
+| `tailscale serve` | `https://<stroj>.<tailnet>.ts.net` | běžně — tailscaled drží certifikát, takže Android nabídne plnou instalaci na plochu |
+| přímý bind | `http://100.x.y.z:8760` | když tailnet nemá zapnuté HTTPS certifikáty nebo `serve` nesmí běžet pod tvým účtem |
+
+V obou případech poslouchá jen uvnitř tailnetu a každý požadavek musí mít token.
+Okno na počítači si dál mluví se svým vlastním serverem na `127.0.0.1` —
+zapnutí ani vypnutí telefonu se běžících session nedotkne.
+
+**Na mobilu navíc:** postranní panel je šuplík, nad bublinou je řádek kláves
+(Esc, Tab, ⇧Tab, ^C, šipky, ⏎ — z měkké klávesnice se jinak nezmáčknou),
+podržení karty projektu zastupuje pravé tlačítko a když vyjede klávesnice,
+terminál se přepočítá.
+
+**Zaškrtávátko „nechat hub běžet i po zavření okna"** je tam kvůli tomu, že hub
+se normálně vypne, jakmile se zavře poslední okno. Bez něj by se z telefonu
+nebylo kam připojit, dokud si někdo u počítače hub nespustí.
+
+### Aplikace pro Android (.apk)
+
+PWA na plochu stačí, ale kdo chce skutečnou instalačku, najde v
+[`mobile/android/`](mobile/android) tenký obal (WebView + čtečka QR).
+Sestaví se v GitHub Actions (**Actions → Android APK → Run workflow**), hotové
+APK je pak ke stažení jako artefakt. Lokálně stačí Android SDK a `gradle
+assembleRelease`.
+
+Na iPhonu žádná .ipa nebude — bez placeného účtu Apple Developer se aplikace do
+telefonu nedostane a PWA na ploše umí přesně totéž.
 
 ## Playwright MCP (volitelné)
 
@@ -392,6 +462,10 @@ curl -fsSL https://raw.githubusercontent.com/jurapascal/claude-code-hub/main/get
 | `ftp_deploy_script` | skript pro FTP deploy (není součástí repa) | `~/.claude/ftp-deploy.sh` |
 | `bash` | cesta k `bash.exe` (Windows); prázdné = najde se sám | `""` |
 | `browser` | čím otevřít okno; prázdné = chromium → WebKitGTK → výchozí prohlížeč | `""` |
+| `remote_enabled` | přístup z telefonu přes Tailscale (přepíná se v nastavení) | `false` |
+| `remote_port` | port, na kterém poslouchá listener pro telefon | `8760` |
+| `remote_token` | dlouhodobý token spárovaného telefonu (vyrobí se sám) | `""` |
+| `remote_keep_running` | nechat hub běžet i po zavření okna, ať je telefon dostupný pořád | `false` |
 
 Projekt se do panelu dostane, když ve složce je `.git`, `package.json`, `composer.json`,
 soubor `*.php` nebo Shopify struktura (`sections/`, `templates/`) — podle toho se pozná
@@ -419,6 +493,13 @@ hub/static/settings.js    nastavení po sekcích (vzhled, projekty, paměť, nap
 hub/static/composer.js    bublina místo vstupního řádku (text, model, slash příkazy, přílohy, režimy)
                           + karta s dotazem, když se Claude Code ptá
 hub/static/stats.js       statistiky používání
+hub/remote.py             přístup z telefonu: stav Tailscalu, `tailscale serve`, párovací adresa
+hub/qr.py                 QR kód jako SVG, jen ze standardní knihovny (bez závislostí)
+hub/static/mobile.js      chování na telefonu: šuplík, dlouhý stisk, klávesnice, service worker
+hub/static/manifest.webmanifest  aby se hub dal nainstalovat na plochu jako aplikace
+hub/static/sw.js          service worker — nekešuje, jen slušná hláška, když server nejede
+mobile/android/           obal pro Android (.apk): WebView + čtečka QR
+.github/workflows/android.yml  sestavení APK v GitHub Actions
 hub/stats.py              počítání statistik z ~/.claude (přírůstkově, s mezipamětí)
 hooks/save-session.py     Stop hook — uloží stav projektů do session-state.md
 hooks/session-start.py    SessionStart hook — kategorie skillů z vaultu + stav minulé session
@@ -451,7 +532,11 @@ Soubor leží v `~/.claude/hub.log` a po megabajtu se odloží stranou
 ## Bezpečnost
 
 Hub umí spouštět shell, takže stojí za to vědět, čím je to ohraničené: server
-poslouchá jen na `127.0.0.1`, na náhodném portu a na token. Co revize našla a co
+poslouchá jen na `127.0.0.1`, na náhodném portu a na token. Přístup z telefonu
+přidává druhý listener — ten je vypnutý, dokud si ho nezapneš, poslouchá jen
+uvnitř tailnetu (nikdy na `0.0.0.0`), má vlastní dlouhodobý token, který jde
+kdykoli vyměnit tlačítkem „Odpojit telefon", a odmítne požadavek s cizím
+`Origin`. Co revize našla a co
 se s tím udělalo — hlavně spuštění cizího příkazu přes jméno složky — je
 v [SECURITY.md](SECURITY.md).
 

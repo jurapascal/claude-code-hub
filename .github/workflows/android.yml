@@ -1,0 +1,37 @@
+name: Android APK
+
+# Sestavit se dá kdykoli ručně (Actions → Android APK → Run workflow); samo to
+# jede jen když se v aplikaci něco změní, ať se kvůli úpravě hubu nestaví APK.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'mobile/android/**'
+      - '.github/workflows/android.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Bez wrapperu schválně: gradle-wrapper.jar je binárka a do repa, který
+      # je jinak celý čitelný, nepatří. Verzi Gradlu drží tenhle soubor.
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Sestavit APK
+        working-directory: mobile/android
+        run: gradle --no-daemon assembleRelease
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: claude-hub-apk
+          path: mobile/android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error

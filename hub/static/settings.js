@@ -26,6 +26,7 @@
     ['taby',       'Taby',      'i-terminal', () => taby()],
     ['agenti',     'AI agenti', 'i-hub',      () => agenti()],
     ['pamet',      'Paměť',     'i-book',     () => pamet()],
+    ['telefon',    'Telefon',   'i-phone',    () => telefon()],
     ['napojeni',   'Napojení',  'i-hub',      () => napojeni()],   // MCP — Claude Code
     ['aktualizace','Aktualizace', 'i-up',     () => aktualizace()],
     ['logy',       'Logy',      'i-status',   () => logy()],
@@ -423,6 +424,148 @@
 
     check.onclick = () => load(true);
     if (agentsLast) draw(agentsLast); else load(false);
+    return box;
+  }
+
+  function telefon() {
+    const box = section('Telefon',
+      'Hub běží dál na počítači — telefon je jen jeho okno. Pustí se do něj ' +
+      'přes Tailscale, takže nemusíš nic otevírat na routeru a ven z tvé sítě ' +
+      'nevede žádný port.');
+
+    const stav = el('div', 'set-row');
+    box.appendChild(stav);
+    const sw = el('div', 'set-row');
+    box.appendChild(sw);
+    const pair = el('div', 'phone-pair');
+    box.appendChild(pair);
+    const opts = el('div');
+    box.appendChild(opts);
+
+    function busy(text) {
+      stav.textContent = '';
+      stav.appendChild(el('span', 'set-note', text));
+      sw.textContent = '';
+      pair.textContent = '';
+      opts.textContent = '';
+    }
+
+    async function call(payload) {
+      busy('pracuji…');
+      try {
+        draw(await io.api('remote', payload));
+      } catch (err) {
+        busy('nepovedlo se: ' + err.message);
+      }
+    }
+
+    function drawTailscale(ts) {
+      // Bez Tailscalu nemá smysl ukazovat vypínač — napřed musí být na čem jet.
+      if (!ts.installed) {
+        stav.appendChild(el('span', 'set-warn', '! Tailscale není nainstalovaný'));
+        const a = el('button', 'btn ghost', 'Jak ho nainstalovat');
+        a.onclick = () => io.api('open-path', {path: 'https://tailscale.com/download'});
+        stav.appendChild(a);
+        return false;
+      }
+      if (!ts.running) {
+        stav.appendChild(el('span', 'set-warn', '! Tailscale běží, ale nejsi přihlášený'));
+        stav.appendChild(el('small', null, 'V terminálu spusť: tailscale up'));
+        return false;
+      }
+      stav.appendChild(el('span', 'set-ok', '✓ Tailscale běží'));
+      stav.appendChild(el('small', null, ts.host || ts.ip));
+      return true;
+    }
+
+    function drawPairing(data) {
+      if (!data.running) {
+        if (data.note) pair.appendChild(el('div', 'set-note', data.note));
+        return;
+      }
+      const grid = el('div', 'phone-qr');
+      const code = el('div', 'phone-code');
+      code.innerHTML = data.qr || '';
+      grid.appendChild(code);
+
+      const side = el('div', 'phone-how');
+      side.appendChild(el('div', 'set-title', 'Naskenuj foťákem'));
+      const steps = el('ol', 'phone-steps');
+      for (const text of ['Namiř foťák telefonu na kód a otevři odkaz.',
+                          'V prohlížeči dej Sdílet → Přidat na plochu.',
+                          'Hub se pak otevírá jako aplikace, na celou obrazovku.']) {
+        steps.appendChild(el('li', null, text));
+      }
+      side.appendChild(steps);
+      const link = el('div', 'phone-url', data.url);
+      link.title = 'Klikni pro zkopírování';
+      link.onclick = () => {
+        navigator.clipboard.writeText(data.url).then(
+          () => io.toast('Adresa zkopírována.'),
+          () => io.toast('Zkopírovat se nepovedlo.'));
+      };
+      side.appendChild(link);
+      if (data.mode === 'bind') {
+        side.appendChild(el('div', 'set-note',
+          'Jede se bez certifikátu (http), takže Android nabídne jen zástupce, ' +
+          'ne plnou instalaci. ' + (data.note || '')));
+      }
+      grid.appendChild(side);
+      pair.appendChild(grid);
+    }
+
+    function drawOptions(data) {
+      const keep = el('label', 'onb-row');
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.checked = !!state.config.remote_keep_running;
+      cb.onchange = () => save({remote_keep_running: cb.checked});
+      keep.appendChild(cb);
+      keep.appendChild(el('span', null,
+        'Nechat hub běžet i po zavření okna, ať je telefon dostupný pořád'));
+      opts.appendChild(keep);
+
+      const row = el('div', 'set-row');
+      row.appendChild(el('span', null, 'Port'));
+      const port = el('input', 'set-input');
+      port.type = 'number';
+      port.value = data.port;
+      port.min = 1024;
+      port.max = 65535;
+      port.onchange = () => call({action: 'port', port: Number(port.value)});
+      row.appendChild(port);
+      row.appendChild(el('span', 'spacer'));
+      const rot = el('button', 'btn ghost', 'Odpojit telefon');
+      rot.title = 'Vyrobí nový token — spárované telefony se odhlásí a musí ' +
+        'znovu načíst QR kód.';
+      rot.onclick = () => call({action: 'rotate'});
+      row.appendChild(rot);
+      opts.appendChild(row);
+    }
+
+    function draw(data) {
+      stav.textContent = '';
+      sw.textContent = '';
+      pair.textContent = '';
+      opts.textContent = '';
+      const ready = drawTailscale(data.tailscale || {});
+
+      const btn = el('button', 'btn ' + (data.running ? 'ghost' : 'primary'),
+        data.running ? 'Vypnout přístup z telefonu' : 'Zapnout přístup z telefonu');
+      btn.disabled = !ready && !data.running;
+      btn.onclick = () => call({action: data.running ? 'disable' : 'enable'});
+      sw.appendChild(btn);
+      if (data.running) {
+        sw.appendChild(el('span', 'set-ok',
+          data.mode === 'serve' ? '✓ https přes Tailscale' : '✓ na tailnet adrese'));
+      } else if (data.wanted && data.note) {
+        sw.appendChild(el('span', 'set-warn', '! ' + data.note));
+      }
+      drawPairing(data);
+      if (data.running) drawOptions(data);
+    }
+
+    call({});
     return box;
   }
 

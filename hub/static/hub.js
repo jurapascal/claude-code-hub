@@ -784,7 +784,8 @@ function createTab({kind, path, title, id, agent, model}) {
 
   const term = new Terminal({
     fontFamily: '"Cascadia Mono","JetBrains Mono","DejaVu Sans Mono",Menlo,Consolas,monospace',
-    fontSize: 13,
+    // Na telefonu je 13 px na 80 sloupců moc — Claude Code pak láme rámečky.
+    fontSize: window.matchMedia('(max-width: 820px)').matches ? 11 : 13,
     scrollback: 100000,
     cursorBlink: true,
     allowProposedApi: true,
@@ -797,7 +798,9 @@ function createTab({kind, path, title, id, agent, model}) {
   term.open(termbox);
 
   const tab = {ref, id: id || null, title, kind, path, term, fit, pane, termbox,
-               exited: false};
+               // Agent musí být na tabu hned: bublina se podle něj rozhoduje,
+               // co umí, a instaluje se o pár řádků níž.
+               agent: agent || '', model: model || '', exited: false};
   const toPty = (d) => { if (tab.id) send({t: 'in', id: tab.id, d}); };
   term.onData(toPty);
   // Diacritics arrive from the GTK input method as composition events, which
@@ -811,8 +814,8 @@ function createTab({kind, path, title, id, agent, model}) {
     notice: toast,
   });
   wireFiles(tab);
-  // Bublina jen tam, kde běží Claude Code. V holém shellu ani při deployi
-  // není co překrývat — a odeslaný text by skončil v bashi.
+  // Bublina jen tam, kde běží agent. V holém shellu, při deployi ani během
+  // instalace není co překrývat — a odeslaný text by skončil v bashi.
   if (kind === 'project' || kind.startsWith('slash:')) {
     tab.composer = HubComposer.install(tab, {
       send,
@@ -823,6 +826,18 @@ function createTab({kind, path, title, id, agent, model}) {
       /* Model ze settings.json — s ním Claude Code v tomhle tabu nastartoval.
          Přepnutí si Claude Code do settings.json uloží taky, ale my ho víme
          hned, tak si ho tu rovnou přepíšeme: další tab pak ukáže to samé. */
+      // Kdo běží v tomhle tabu — bublina si podle toho vybere, co umí.
+      agent: () => agentById(tab.agent || STATE.default_agent),
+      agents: (ready) => agentList(!!ready),
+      /* Přepnout agenta ani model v běžícím tabu nejde: je to jiný program,
+         případně jiný startovací argument. Otevře se proto nový tab nad tímtéž
+         projektem — a ten starý zůstane, dokud ho člověk sám nezavře. */
+      openWith: (agentId, model) => {
+        rememberAgent(tab.path, agentId);
+        const a = agentById(agentId);
+        openTab({kind: 'project', path: tab.path,
+                 title: (a && a.label) || agentId, agent: agentId, model});
+      },
       model: (key) => {
         if (key) STATE.model = key;
         return STATE.model || '';
@@ -843,6 +858,10 @@ function createTab({kind, path, title, id, agent, model}) {
         refit(tab);
       },
     });
+  } else {
+    // Bublina se v holém shellu neinstaluje, ale řádek kláves ano — na
+    // telefonu je Tab i Ctrl+C jinak nedosažitelný. Na počítači ho CSS skryje.
+    tab.keys = HubComposer.installKeys(tab, send);
   }
 
   const el = document.createElement('button');
@@ -852,8 +871,6 @@ function createTab({kind, path, title, id, agent, model}) {
                  '<span class="tab-title"></span>' +
                  `<span class="tab-close" title="Zavřít tab">${icon('i-close')}</span>`;
   el.querySelector('.tab-title').textContent = title;
-  tab.agent = agent || '';
-  tab.model = model || '';
   el.onclick = (ev) => {
     if (ev.target.closest('.tab-close')) { requestCloseTab(tab); return; }
     activate(tab);
@@ -984,6 +1001,7 @@ function closeTab(tab) {
   if (tab.releaseIME) tab.releaseIME();
   if (tab.releaseClipboard) tab.releaseClipboard();
   if (tab.composer) tab.composer.release();
+  if (tab.keys) tab.keys.release();
   tab.term.dispose();
   tab.el.remove();
   tab.pane.remove();
@@ -1308,7 +1326,17 @@ function handle(msg) {
     if (tab) tab.term.write(msg.d);
   } else if (msg.t === 'opened') {
     const tab = TABS.find(t => t.ref === msg.ref);
-    if (tab) { tab.id = msg.id; refit(tab); }
+    if (tab) {
+      tab.id = msg.id;
+      // Server mohl model doplnit sám (Ollama bez modelu nespustíš), tak se
+      // tím, co doopravdy běží, přepíše i to, s čím se tab zakládal.
+      if (msg.model && msg.model !== tab.model) {
+        tab.model = msg.model;
+        if (tab.composer && tab.composer.setModel) tab.composer.setModel(msg.model);
+        paintAgent(tab);
+      }
+      refit(tab);
+    }
   } else if (msg.t === 'exit') {
     const tab = TABS.find(t => t.id === msg.id);
     if (tab) { tab.exited = true; tab.el.classList.add('exited'); }

@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.Hub" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:statusBarColor">@color/hub_bg</item>
+        <item name="android:navigationBarColor">@color/hub_bg</item>
+        <item name="android:windowBackground">@color/hub_bg</item>
+    </style>
+</resources>

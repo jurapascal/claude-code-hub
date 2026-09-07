@@ -266,8 +266,29 @@
   const HINT_PLAIN = 'Enter potvrdí vybranou volbu';
 
   // Vestavěné příkazy Claude Code, které se nedají vyčíst ze složky skillů.
+  // Ostatní agenti si svoje nesou v katalogu (hub/agents.py).
   const BUILTIN = ['/clear', '/compact', '/context', '/model', '/status',
                    '/resume', '/cost', '/help'];
+
+  /* Co bublina o agentovi ví. Vše, co je Claude-specifické — dialogy, režimy
+     přes Shift+Tab, měření vstupního pole — platí jen pro profil `full`.
+     U ostatních se nic nedomýšlí: bublina je vidět, text a Enter dojdou do
+     TUI, a terminál se o její výšku zkrátí, aby se nic nepřekrylo.
+
+     Profily se doladí, až bude na čem měřit; hádat cizí TUI dopředu by
+     znamenalo odpovídat naslepo na dialogy, kterým nerozumíme. */
+  function profileOf(agent) {
+    const full = !agent || agent.composer === 'full';
+    return {
+      full,
+      id: (agent && agent.id) || 'claude',
+      label: (agent && agent.label) || 'Claude',
+      models: (agent && agent.models) || (full ? MODELS : []),
+      slash: (agent && agent.slash) || (full ? BUILTIN : []),
+      skills: agent ? !!agent.skills : true,
+      modelCmd: (agent && agent.model_cmd) || '',
+    };
+  }
 
   function el(tag, cls, text) {
     const node = document.createElement(tag);
@@ -325,8 +346,57 @@
       '--composer-h', (on ? on.offsetHeight : 0) + 'px');
   }
 
+
+  /* Řádek kláves. Na měkké klávesnici není Esc, Tab ani šipky kde vzít, a bez
+     nich se agent ani shell neovládají: Shift+Tab přepíná režim oprávnění,
+     šipkami se vybírá v seznamech, Ctrl+C ukončí běžící příkaz, Tab doplňuje
+     cesty. Na počítači je řádek skrytý přes CSS (`.is-touch`). */
+  const KEYS = [
+    ['Esc', '\x1b', 'Zavřít dialog nebo přerušit, co agent dělá'],
+    ['Tab', '\t', 'Doplnit'],
+    ['\u21e7Tab', '\x1b[Z', 'Přepnout režim oprávnění'],
+    ['^C', '\x03', 'Ukončit běžící příkaz'],
+    ['\u2191', '\x1b[A', 'Nahoru'],
+    ['\u2193', '\x1b[B', 'Dolů'],
+    ['\u2190', '\x1b[D', 'Doleva'],
+    ['\u2192', '\x1b[C', 'Doprava'],
+    ['\u23ce', '\r', 'Potvrdit'],
+  ];
+
+  function buildKeys(toPty) {
+    const row = el('div', 'composer-keys');
+    for (const [label, code, title] of KEYS) {
+      const b = el('button', 'composer-key', label);
+      b.type = 'button';
+      b.title = title;
+      // pointerdown, ne click: klepnutí by nejdřív sebralo fokus poli a měkká
+      // klávesnice by sjela dolů, což u šipek při výběru vypadá jako porucha.
+      b.addEventListener('pointerdown', (ev) => {
+        ev.preventDefault();
+        toPty(code);
+      });
+      row.appendChild(b);
+    }
+    return row;
+  }
+
+  /* Taby bez bubliny (holý shell, deploy) řádek potřebují taky — spíš víc,
+     protože v nich se doplňuje tabulátorem a přerušuje Ctrl+C. Dostanou ho
+     samotný ve stejném obalu, takže sedí na stejném místě jako u bubliny;
+     třída na panelu o jeho výšku zkrátí terminál, aby řádek nepřekryl prompt. */
+  function installKeys(tab, send) {
+    const wrap = el('div', 'composer keys-only');
+    wrap.appendChild(buildKeys((data) => {
+      if (tab.id) send({t: 'in', id: tab.id, d: data});
+    }));
+    tab.pane.appendChild(wrap);
+    tab.pane.classList.add('keys');
+    return {release() { wrap.remove(); tab.pane.classList.remove('keys'); }};
+  }
+
   function install(tab, io) {
     const term = tab.term;
+    const AG = profileOf(io.agent ? io.agent() : null);
     const root = el('div', 'composer');
     root.innerHTML = `
       <div class="composer-answer" hidden>
@@ -339,10 +409,13 @@
       <div class="composer-box">
         <div class="composer-atts" hidden></div>
         <textarea class="composer-input" rows="1" spellcheck="false"
-                  placeholder="Napiš, co má Claude udělat… (Enter odešle, Shift+Enter nový řádek)"></textarea>
+                  placeholder="Napiš, co má agent udělat… (Enter odešle, Shift+Enter nový řádek)"></textarea>
         <div class="composer-bar">
+          <button class="composer-chip" data-act="agent"
+                  title="Čím tenhle tab jede. Přepnout se dá jen novým tabem — agent běží jako vlastní program.">
+            <span class="composer-dot"></span><span class="val"></span> ▾</button>
           <button class="composer-chip" data-act="model"
-                  title="Přepne model. Claude Code si volbu uloží i jako výchozí pro nové sessions.">Model: <span class="val"></span> ▾</button>
+                  title="Přepne model.">Model: <span class="val"></span> ▾</button>
           <button class="composer-chip" data-act="slash">/ příkazy</button>
           <button class="composer-chip" data-act="history"
                   title="Dřívější zadání. Co je napsané v poli, tím se seznam rovnou filtruje.">${icon('i-refresh')} Historie</button>
@@ -384,9 +457,11 @@
     const modelChip = modelBtn.querySelector('.val');
     const modeBtn = root.querySelector('[data-act=mode]');
     const modeChip = modeBtn.querySelector('.val');
+    const agentBtn = root.querySelector('[data-act=agent]');
     // Historie zadání. Ukládá se po projektech, ať přežije zavření okna —
     // jinak by pro ni člověk musel do Claudeova vlastního hledání v terminálu.
-    const HIST_KEY = 'hub.history:' + (tab.path || 'home');
+    // Po agentech zvlášť: co se psalo Claudeovi, nemusí dávat smysl v aiderovi.
+    const HIST_KEY = 'hub.history:' + AG.id + ':' + (tab.path || 'home');
     const HIST_MAX = 200;
     const history = loadHistory();
 
@@ -412,7 +487,12 @@
     let lastInsert = 0;      // kdy naposledy do pole přistála cesta k souboru
     // Klíč pro `/model <jméno>`. Ze settings.json (co si Claude Code uložil),
     // a když tam nic není, aspoň to, co se naposledy vybralo tady.
-    let model = (io.model && io.model()) || localStorage.getItem('hub.model') || '';
+    // Model tabu: co se s ním spustilo, jinak poslední volba u tohohle agenta.
+    // U Claudea navíc to, co má zapsané v settings.json.
+    const MODEL_KEY = 'hub.model:' + AG.id;
+    let model = tab.model ||
+      (AG.full && io.model ? io.model() : '') ||
+      localStorage.getItem(MODEL_KEY) || '';
     let mode = 'normal';     // co dole hlásí Claude Code
     let seenBypass = false;  // bypass je v cyklu jen u takhle spuštěné session
     let switching = false;   // běží přepínání režimu, nemačkat další
@@ -422,6 +502,9 @@
     function toPty(data) {
       if (tab.id) io.send({t: 'in', id: tab.id, d: data});
     }
+
+    const keyRow = buildKeys(toPty);
+    root.insertBefore(keyRow, root.querySelector('.composer-box'));
 
     /* Enter se posílá zvlášť a s odstupem: slepený s textem ho Claude Code
        přečte jako nový řádek, ne jako odeslání. (Stejný důvod jako u tlačítek
@@ -495,31 +578,61 @@
        hledá i podle kusu jména. */
     function modelName(key) {
       if (!key) return 'výchozí';
-      const exact = MODELS.find(m => m[1] === key);
+      const exact = AG.models.find(m => m[1] === key);
       if (exact) return exact[0];
-      const near = MODELS.find(m => key.toLowerCase().includes(m[1]));
+      const near = AG.models.find(m => key.toLowerCase().includes(m[1]));
       return near ? near[0] : key;
     }
 
     function syncModel() {
-      modelChip.textContent = modelName(model);
+      modelChip.textContent = AG.models.length ? modelName(model)
+        : (AG.modelCmd || '').replace('{model}', '').trim();
     }
 
+    /* Přepnutí modelu má u každého agenta jinou cenu:
+
+       - Claude Code umí `/model <jméno>` za běhu, takže se přepne rovnou.
+       - Ollama, opencode a aider berou model jako argument při startu —
+         přepnout se dá jedině novým tabem, a tak to menu i řekne.
+       - Kdo si nabídku drží sám (Codex, Gemini), dostane svůj vlastní příkaz;
+         vypisovat tady jména jejich modelů by znamenalo nabízet i ta, která
+         u poskytovatele mezitím zmizela. */
     function modelMenu(ev) {
       const [x, y] = anchor(ev);
-      io.menu(x, y, MODELS.map(([label, key]) => ({
+      if (!AG.models.length) {
+        if (AG.modelCmd) submit(AG.modelCmd.replace('{model}', '').trim());
+        return;
+      }
+      io.menu(x, y, AG.models.map(([label, key]) => ({
         icon: 'i-star',
-        label,
+        label: AG.full ? label : label + '  (nový tab)',
         on: modelName(model) === label,
         run: () => {
-          // /model <jméno> přepne rovnou, bez procházení výběru v terminálu.
-          submit('/model ' + key);
-          model = key;
-          if (io.model) io.model(key);
-          try { localStorage.setItem('hub.model', key); } catch (err) { /* soukromé okno */ }
-          syncModel();
+          if (AG.full) {
+            submit('/model ' + key);
+            model = key;
+            if (io.model) io.model(key);
+            syncModel();
+          } else if (io.openWith) {
+            io.openWith(AG.id, key);
+          }
+          try { localStorage.setItem(MODEL_KEY, key); } catch (err) { /* soukromé okno */ }
         },
       })), {above: true});
+    }
+
+    /* Agenta v běžícím tabu přepnout nejde — je to jiný program, ne přepínač.
+       Nabídka proto otevírá nový tab a říká to nahlas. */
+    function agentMenu(ev) {
+      const [x, y] = anchor(ev);
+      const list = (io.agents ? io.agents(true) : []);
+      const items = list.map(a => ({
+        icon: 'i-terminal',
+        label: a.id === AG.id ? a.label : a.label + '  (nový tab)',
+        on: a.id === AG.id,
+        run: () => { if (a.id !== AG.id && io.openWith) io.openWith(a.id, ''); },
+      }));
+      if (items.length) io.menu(x, y, items, {above: true});
     }
 
     /* ── režim oprávnění ──────────────────────────────────────────────────── */
@@ -578,10 +691,12 @@
 
     function slashMenu(ev) {
       const [x, y] = anchor(ev);
-      const own = (io.skills() || []).map(s => '/' + s).sort();
+      // Naše skilly z ~/.claude/skills čte jen Claude Code; jinému agentovi by
+      // se `/save` poslalo jako holý text a nic by se nestalo.
+      const own = AG.skills ? (io.skills() || []).map(s => '/' + s).sort() : [];
       // Vlastní skill může mít stejné jméno jako vestavěný příkaz (/status),
       // a dvakrát v nabídce by jen mátl.
-      const items = [...new Set([...own, ...BUILTIN])].map(cmd => ({
+      const items = [...new Set([...own, ...AG.slash])].map(cmd => ({
         icon: cmd === '/clear' || cmd === '/compact' ? 'i-refresh' : 'i-terminal',
         label: cmd,
         run: () => insert(cmd + ' '),
@@ -659,6 +774,9 @@
     }
 
     function renderAnswer() {
+      // Rozebírat cizí dialogy podle regexů naměřených na Claudeovi by
+      // znamenalo odpovídat naslepo — u ostatních se karta nekreslí.
+      if (!AG.full) return;
       const buf = term.buffer.active;
       // Odrolováno nahoru: dole je historie, ne živý dotaz.
       const live = !shown && !tab.exited && buf.viewportY >= buf.baseY - 1;
@@ -997,8 +1115,11 @@
     let dirty = true;        // je co přeměřit (jinak se sahá jen na regexy)
 
     function fitOver() {
-      const own = lastLines ? ownRows(lastLines) : 0;
-      if (!own) return;
+      // U cizího agenta se nepočítá, kolik řádků patří jeho vstupnímu poli —
+      // to je měřené na Claudeovi. own = 0 znamená „nepřekrývat nic",
+      // takže se terminál zkrátí přesně o výšku bubliny.
+      const own = AG.full ? (lastLines ? ownRows(lastLines) : 0) : 0;
+      if (AG.full && !own) return;
       // Přeměřovat při každém překreslení by znamenalo vynutit si přepočet
       // rozvržení stránky uprostřed výpisu. Sáhne se na to, jen když se něco
       // změnilo — jinak stačí porovnat čísla řádků.
@@ -1039,6 +1160,12 @@
       const buf = term.buffer.active;
       // Odrolováno nahoru: tam bublina jen zakrývá historii.
       if (buf.viewportY < buf.baseY - 1) return false;
+      if (!AG.full) {
+        // Cizí TUI neumíme číst, tak se do něj nehádáme: bublina je vidět,
+        // psát jde pořád, a terminál se o ni zkrátí, takže nic nezakryje.
+        lastLines = visibleBottom(term, PROBE_ROWS);
+        return true;
+      }
       const lines = visibleBottom(term, PROBE_ROWS);
       if (lines.some(l => DIALOG.test(l))) return false;
       if (!lines.some(l => PROMPT.test(l)) || !lines.some(l => HINT.test(l))) {
@@ -1183,9 +1310,22 @@
       picker.value = '';
     };
 
+    agentBtn.onclick = agentMenu;
     syncModel();
     modeChip.textContent = modeLabel(mode);
     modeBtn.classList.add('normal');
+    // Režim oprávnění cykluje Shift+Tab a hlásí se pod vstupním polem —
+    // obojí je Claude Code. Jinde by to tlačítko jen mačkalo tabulátor.
+    modeBtn.hidden = !AG.full;
+    // Model, který se nedá vybrat ani poslat vlastním příkazem, nemá chip.
+    modelBtn.hidden = !AG.models.length && !AG.modelCmd;
+    agentBtn.querySelector('.val').textContent = AG.label;
+    if (io.agent) {
+      const a = io.agent();
+      if (a) agentBtn.querySelector('.composer-dot').style.background = a.color;
+    }
+    input.placeholder = 'Napiš, co má ' + AG.label +
+      ' udělat… (Enter odešle, Shift+Enter nový řádek)';
     schedule();
 
     return {
@@ -1195,6 +1335,14 @@
          přiložit tentýž screenshot dvakrát — jednou jako nahraný soubor,
          podruhé jako kopii odloženou serverem. */
       browserPaste: () => { byBrowser = Date.now(); },
+      /* Model, se kterým se tab doopravdy spustil. Ollama si ho doplňuje sama
+         (bez modelu není co pustit), a to se pozná až z odpovědi serveru —
+         tou dobou už bublina dávno stojí. */
+      setModel: (m) => {
+        if (!m || m === model) return;
+        model = m;
+        syncModel();
+      },
       /* Rychlé akce z pravého panelu. Příkaz bez koncového \r se má jen
          napsat — třeba /screenshot čeká, až doplníš adresu. */
       run: (cmd) => {
@@ -1221,6 +1369,6 @@
     };
   }
 
-  global.HubComposer = {install};
+  global.HubComposer = {install, installKeys};
 
 })(window);

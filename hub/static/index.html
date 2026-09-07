@@ -2,7 +2,9 @@
 <html lang="cs">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- viewport-fit=cover kvůli výřezu na iPhonu, interactive-widget kvůli
+     Androidu: bez něj klávesnice bublinu jen překryje místo aby ji vytlačila. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Claude Code Hub</title>
 <!-- Okno hubu je na Windows prohlížeč v režimu --app a ikonu v panelu, v Alt+Tab
      i v záhlaví si bere z favicony stránky, ne ze zástupce, kterým se spustil.
@@ -10,6 +12,15 @@
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="256x256" href="/icon-256.png">
 <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
+<!-- Na telefonu se hub instaluje jako PWA — ikona na ploše, celá obrazovka. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#faf8f3" media="(prefers-color-scheme: light)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Claude Hub">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <link rel="stylesheet" href="/vendor/xterm.css">
 <link rel="stylesheet" href="/hub.css">
 </head>
@@ -43,9 +54,13 @@
   <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 6l6 6-1.4 1.4L13 9.8V20h-2V9.8l-3.6 3.6L6 12l6-6z"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M9.6 16.2L5.4 12l-1.4 1.4 5.6 5.6L20.4 7.8 19 6.4 9.6 16.2z"/></symbol>
   <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M7 1.5h10a2 2 0 0 1 2 2v17a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-17a2 2 0 0 1 2-2zm0 3.5v13h10V5H7zm3.6 14.6h2.8v1.2h-2.8v-1.2z"/></symbol>
 </defs></svg>
 
 <header class="topbar">
+  <!-- Jen na úzké obrazovce: postranní panel je tam šuplík, tohle je klika. -->
+  <button id="btn-drawer" class="iconbtn drawer-toggle" title="Projekty">
+    <svg class="ico"><use href="#i-hub"/></svg></button>
   <div class="topbar-title">
     <svg class="ico brand-ico"><use href="#i-hub"/></svg>
     <strong>Claude Code</strong><span class="topbar-badge">HUB</span>
@@ -144,6 +159,7 @@
   </div>
 </div>
 
+<div class="drawer-scrim" id="drawer-scrim" hidden></div>
 <div class="ctxmenu" id="ctxmenu" hidden></div>
 <div class="toast" id="toast" hidden></div>
 
@@ -157,5 +173,6 @@
 <script src="/settings.js"></script>
 <script src="/stats.js"></script>
 <script src="/hub.js"></script>
+<script src="/mobile.js"></script>
 </body>
 </html>

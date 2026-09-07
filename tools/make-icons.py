@@ -117,6 +117,66 @@ def _master():
     return Image.open(io.BytesIO(raw)).convert("RGBA"), True
 
 
+# Pozadí maskovatelné ikony. Android si z ní vyřízne kolečko nebo čtvereček
+# podle launcheru, takže značka musí sedět v prostředních 80 % a zbytek být
+# plocha — průhlednost by se na ploše projevila jako díra.
+MASKABLE_BG = (13, 17, 23, 255)      # --bg z hub.css
+
+
+def write_pwa_icons(src):
+    """Ikony pro manifest: dvě běžné a jedna maskovatelná."""
+    for size in (192, 512):
+        src.resize((size, size), Image.LANCZOS).save(
+            os.path.join(STATIC, "icon-%d.png" % size),
+            format="PNG", optimize=True)
+
+    canvas = Image.new("RGBA", (512, 512), MASKABLE_BG)
+    inner = int(512 * 0.70)                       # značka do bezpečné zóny
+    mark = src.resize((inner, inner), Image.LANCZOS)
+    canvas.paste(mark, ((512 - inner) // 2,) * 2, mark)
+    canvas.save(os.path.join(STATIC, "icon-512-maskable.png"),
+                format="PNG", optimize=True)
+
+
+# Ikony aplikace pro Android. Legacy ikona je značka na celý čtverec, pro
+# adaptivní se kreslí zvlášť popředí (značka v bezpečné zóně) a pozadí (barva).
+ANDROID_RES = os.path.join(ROOT, "mobile", "android", "app", "src", "main", "res")
+ANDROID_DPI = {"mdpi": 1, "hdpi": 1.5, "xhdpi": 2, "xxhdpi": 3, "xxxhdpi": 4}
+
+
+def write_android_icons(src):
+    """Spouštěče pro APK. Když složka s aplikací není, tiše se přeskočí."""
+    if not os.path.isdir(ANDROID_RES):
+        return False
+    for name, scale in ANDROID_DPI.items():
+        folder = os.path.join(ANDROID_RES, "mipmap-" + name)
+        os.makedirs(folder, exist_ok=True)
+        legacy = int(48 * scale)
+        src.resize((legacy, legacy), Image.LANCZOS).save(
+            os.path.join(folder, "ic_launcher.png"), format="PNG", optimize=True)
+
+        # Popředí adaptivní ikony je 108 dp, ale vidět je jen prostředních 72 —
+        # zbytek si systém ořízne podle tvaru, který má launcher rád.
+        full = int(108 * scale)
+        inner = int(full * 0.58)
+        canvas = Image.new("RGBA", (full, full), (0, 0, 0, 0))
+        mark = src.resize((inner, inner), Image.LANCZOS)
+        canvas.paste(mark, ((full - inner) // 2,) * 2, mark)
+        canvas.save(os.path.join(folder, "ic_launcher_foreground.png"),
+                    format="PNG", optimize=True)
+
+    anydpi = os.path.join(ANDROID_RES, "mipmap-anydpi-v26")
+    os.makedirs(anydpi, exist_ok=True)
+    with open(os.path.join(anydpi, "ic_launcher.xml"), "w", encoding="utf-8") as fh:
+        fh.write('<?xml version="1.0" encoding="utf-8"?>\n'
+                 '<adaptive-icon xmlns:android='
+                 '"http://schemas.android.com/apk/res/android">\n'
+                 '    <background android:drawable="@color/hub_bg"/>\n'
+                 '    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>\n'
+                 '</adaptive-icon>\n')
+    return True
+
+
 def main():
     src, from_svg = _master()
     if src.size[0] != src.size[1]:
@@ -132,13 +192,17 @@ def main():
                             format="PNG", optimize=True)
     frames[(32, 32)].save(os.path.join(STATIC, "icon-32.png"),
                           format="PNG", optimize=True)
+    write_pwa_icons(src)
+    android = write_android_icons(src)
 
     for w, h, kind, size in verify_ico(ICO):
         want = "PNG" if (w, h) in PNG_SIZES else "BMP"
         flag = "ok" if kind == want else "ŠPATNĚ (čekal " + want + ")"
         print("  %3dx%-3d  %s  %6d B  %s" % (w, h, kind, size, flag))
     print("hotovo: assets/claude-code.{png,ico}"
-          " + hub/static/{favicon.ico,icon-256.png,icon-32.png}")
+          " + hub/static/{favicon.ico,icon-32.png,icon-256.png,"
+          "icon-192.png,icon-512.png,icon-512-maskable.png}"
+          + (" + mobile/android/.../mipmap-*" if android else ""))
 
 
 if __name__ == "__main__":

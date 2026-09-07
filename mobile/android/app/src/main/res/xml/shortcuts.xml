@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Podržení ikony na ploše. Odpojení je jinak nedostupné: okno je celé
+     WebView bez action baru, aby na terminál zbylo co nejvíc místa. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="forget"
+        android:enabled="true"
+        android:shortcutShortLabel="@string/menu_forget">
+        <intent
+            android:action="io.github.jurapascal.claudehub.FORGET"
+            android:targetPackage="io.github.jurapascal.claudehub"
+            android:targetClass="io.github.jurapascal.claudehub.SetupActivity"/>
+    </shortcut>
+</shortcuts>

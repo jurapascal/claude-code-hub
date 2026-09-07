@@ -36,6 +36,12 @@ DEFAULTS = {
     "ftp_deploy_script": "~/.claude/ftp-deploy.sh",
     "bash": "",     # Windows: path to Git for Windows bash.exe; empty = autodetect
     "browser": "",  # empty = autodetect an app-window capable browser
+    # Telefon přes Tailscale — dokud si to uživatel nezapne, žádný druhý
+    # listener nevzniká a chování hubu je přesně jako dřív.
+    "remote_enabled": False,
+    "remote_port": 8760,
+    "remote_token": "",       # dlouhodobý token spárovaného telefonu
+    "remote_keep_running": False,  # nechat server běžet i po zavření okna
 }
 
 
@@ -1680,7 +1686,7 @@ def cmd_agent(path, agent_id="", slash="", model=""):
     args = "".join(" " + sh_quote(a) for a in argv)
     script = (f'cd {p} && bash {w}{args}; '
               f'echo; echo "[ session ukončena — tab zůstává jako shell ]"; exec bash')
-    return script, agents.env_for(spec)
+    return script, agents.env_for(spec, model)
 
 
 def cmd_install(agent_id):

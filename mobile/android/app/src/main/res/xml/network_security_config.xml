@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Hub jede přes https jen tehdy, když `tailscale serve` dostane certifikát.
+     Když ho tailnet nemá zapnutý, spadne se na holé http na adrese 100.x —
+     ta vede uvnitř šifrovaného WireGuard tunelu, ven z něj nikdy nejde. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true"/>
+</network-security-config>

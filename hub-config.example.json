@@ -7,5 +7,9 @@
 
   "icon": "~/.local/share/icons/claude-code.png",
 
-  "ftp_deploy_script": "~/.claude/ftp-deploy.sh"
+  "ftp_deploy_script": "~/.claude/ftp-deploy.sh",
+
+  "remote_enabled": false,
+  "remote_port": 8760,
+  "remote_keep_running": false
 }

@@ -8,13 +8,29 @@ stojí, a ať je z čeho vyjít při další změně.
 
 | | |
 |---|---|
-| **Poslouchá jen na `127.0.0.1`** | na náhodném portu, nikdy na `0.0.0.0` |
+| **Poslouchá jen na `127.0.0.1`** | na náhodném portu, nikdy na `0.0.0.0` (o telefonu níž) |
 | **Token na každý požadavek** | 24 bajtů z `secrets.token_urlsafe`, porovnává se `compare_digest`; stránka ho dostane v URL při startu |
-| **Websocket navíc kontroluje `Origin`** | když hlavičku pošle prohlížeč, musí sedět na náš port |
+| **Websocket navíc kontroluje `Origin`** | když hlavičku pošle prohlížeč, musí sedět na adresu, na kterou listener odpovídá |
 | **Nic se neposílá ven** | jediné spojení do světa je kontrola verze na GitHubu a stažení aktualizace |
 
 Token je celá obrana: bez něj vrací každý endpoint 403. Cizí stránka v prohlížeči
 na port dosáhne, ale token neuhodne a odpověď si kvůli CORS stejně nepřečte.
+
+## Přístup z telefonu
+
+Zapíná se v nastavení a dokud se nezapne, žádný druhý listener nevzniká.
+Když se zapne, platí navíc:
+
+| | |
+|---|---|
+| **Nikdy na `0.0.0.0`** | buď `127.0.0.1` a před tím `tailscale serve` (tailscaled drží TLS), nebo přímo adresa `100.x` z tailnetu. Mimo tailnet žádný listener není. |
+| **Vlastní dlouhodobý token** | 24 bajtů z `secrets.token_urlsafe` v `hub-config.json`, oddělený od tokenu okna. Tlačítko „Odpojit telefon" ho vymění a spárované telefony odhlásí. |
+| **Token v cookie** | `HttpOnly`, `SameSite=Lax`, `Secure` za https — aby se QR kód skenoval jen poprvé. Nastaví se, jen když token dorazil v URL, tedy po naskenování kódu. |
+| **`Origin` z cizí stránky neprojde** | povolené jsou adresy, na kterých listener běží, plus vlastní `Host` požadavku |
+| **Odpárovaný telefon dostane vysvětlení** | místo holého 403 stránka „naskenuj QR znovu"; aplikace pro Android se na ni rovnou přepne do párování |
+
+Za tenhle kus zodpovídá Tailscale: kdo není v tailnetu, nemá se kam připojit.
+Token je druhá vrstva pro případ, že by se do tailnetu dostal někdo cizí.
 
 ## Co revize našla a co se s tím udělalo
 
