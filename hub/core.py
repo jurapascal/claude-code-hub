@@ -1845,6 +1845,44 @@ MCP_CATALOG = {
              "help": "Ze stejné obrazovky jako Client ID."},
         ],
         "docs": "https://github.com/taylorwilsdon/google_workspace_mcp",
+        # Google klienta OAuth nerozdá — musí si ho každý naklikat ve své
+        # konzoli. Průvodce aspoň ví, kam přesně, takže se nikde nehledá.
+        "setup": [
+            {"title": "Založ projekt v Google Cloudu",
+             "text": "Na jméně nezáleží, třeba „Claude Code“. Když už nějaký "
+                     "projekt máš, tenhle krok přeskoč.",
+             "button": "Otevřít konzoli",
+             "url": "https://console.cloud.google.com/projectcreate"},
+            {"title": "Zapni API, na která to sahá",
+             "text": "Jedním kliknutím všech deset naráz: Disk, Tabulky, "
+                     "Dokumenty, Gmail, Kalendář, Slides, Úkoly, Kontakty, "
+                     "Formuláře a Apps Script. Nahoře zkontroluj, že jsi ve "
+                     "správném projektu.",
+             "button": "Zapnout API",
+             "url": "https://console.cloud.google.com/flows/enableapi?apiid="
+                    "drive.googleapis.com,sheets.googleapis.com,"
+                    "docs.googleapis.com,gmail.googleapis.com,"
+                    "calendar-json.googleapis.com,slides.googleapis.com,"
+                    "tasks.googleapis.com,people.googleapis.com,"
+                    "forms.googleapis.com,script.googleapis.com"},
+            {"title": "Vyplň přihlašovací obrazovku",
+             "text": "Typ Externí, název aplikace a tvůj e-mail. Pak se ještě "
+                     "přidej mezi testovací uživatele — k vlastní aplikaci tě "
+                     "Google jinak nepustí.",
+             "button": "Otevřít obrazovku",
+             "url": "https://console.cloud.google.com/apis/credentials/consent"},
+            {"title": "Vytvoř klienta OAuth",
+             "text": "Typ Desktopová aplikace. Adresy pro přesměrování se u ní "
+                     "neřeší. Po vytvoření se ukáže Client ID a Client secret "
+                     "— ty patří sem dolů.",
+             "button": "Vytvořit klienta",
+             "url": "https://console.cloud.google.com/apis/credentials/"
+                    "oauthclient"},
+        ],
+        "warn": "Při prvním použití tě Google pošle odsouhlasit oprávnění a "
+                "cestou ukáže „Tuto aplikaci Google neověřil“. U vlastního "
+                "klienta v testovacím režimu je to normální — Rozšířená "
+                "nastavení → Přejít na…",
     },
     "google-sheets": {
         "label": "Google Tabulky",
@@ -1864,6 +1902,25 @@ MCP_CATALOG = {
                      "toho účtu."},
         ],
         "docs": "https://github.com/xing5/mcp-google-sheets",
+        "setup": [
+            {"title": "Založ servisní účet",
+             "text": "Je to „robot“ s vlastní e-mailovou adresou. Na rozdíl od "
+                     "OAuth se nepřihlašuje člověk, takže odpadá souhlasná "
+                     "obrazovka.",
+             "button": "Vytvořit účet",
+             "url": "https://console.cloud.google.com/iam-admin/"
+                    "serviceaccounts/create"},
+            {"title": "Stáhni mu klíč",
+             "text": "U hotového účtu → Klíče → Přidat klíč → JSON. Soubor si "
+                     "ulož někam, kde zůstane — jeho cesta patří sem dolů.",
+             "button": "Otevřít účty",
+             "url": "https://console.cloud.google.com/iam-admin/"
+                    "serviceaccounts"},
+            {"title": "Nasdílej mu tabulku",
+             "text": "V tabulce dej Sdílet a vlož e-mail servisního účtu "
+                     "(končí na .iam.gserviceaccount.com). Bez toho robot "
+                     "nevidí nic — a to je záměr."},
+        ],
     },
     "context7": {
         "label": "Context7",
@@ -1944,6 +2001,13 @@ MCP_CATALOG = {
         ],
         "docs": "https://clockify.me/help/integrations-and-add-ons/"
                 "use-clockify-mcp-server-to-connect-to-ai-agent",
+        "setup": [
+            {"title": "Vygeneruj API klíč",
+             "text": "Preferences → Advanced → Manage API keys → Generate New. "
+                     "Klíč se ukáže jednou, tak ho rovnou vlož sem dolů.",
+             "button": "Otevřít Clockify",
+             "url": "https://app.clockify.me/user/settings"},
+        ],
     },
 }
 

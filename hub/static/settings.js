@@ -705,6 +705,10 @@
       }
       if (spec.license) meta.appendChild(el('span', null, spec.license));
       if (spec.needs) meta.appendChild(el('span', null, 'spouští ' + spec.needs));
+      if ((spec.setup || []).length) {
+        meta.appendChild(el('span', 'mcp-tag guide',
+          'návod na ' + spec.setup.length + ' kroky'));
+      }
       if (spec.docs) {
         const a = el('button', 'linkbtn', 'návod');
         a.onclick = () => io.api('open-path', {path: spec.docs})
@@ -715,6 +719,48 @@
 
       const form = el('div', 'mcp-form');
       form.hidden = true;
+
+      /* Návod přímo v okně. Google klienta OAuth nerozdá a odkaz do
+         dokumentace znamená hledání v cizí konzoli — tady je u každého kroku
+         tlačítko, které otevře přesně tu stránku, o které krok mluví.
+         Odškrtnuté kroky přežijí zavření nastavení, ať se člověk po přerušení
+         vrátí tam, kde skončil. */
+      const DONE_KEY = 'hub.mcp-setup:' + key;
+      let done = [];
+      try {
+        const raw = JSON.parse(localStorage.getItem(DONE_KEY) || '[]');
+        if (Array.isArray(raw)) done = raw;
+      } catch (err) { /* soukromé okno */ }
+
+      const steps = spec.setup || [];
+      if (steps.length) {
+        const list = el('ol', 'mcp-steps');
+        steps.forEach((step, i) => {
+          const li = el('li', 'mcp-step' + (done.includes(i) ? ' done' : ''));
+          const head = el('div', 'mcp-step-head');
+          head.appendChild(el('strong', null, step.title));
+          if (step.url) {
+            const go = el('button', 'btn ghost', step.button || 'Otevřít');
+            go.onclick = () => {
+              io.api('open-path', {path: step.url})
+                .catch(() => io.toast('Nepodařilo se otevřít odkaz.'));
+              if (!done.includes(i)) done.push(i);
+              li.classList.add('done');
+              try {
+                localStorage.setItem(DONE_KEY, JSON.stringify(done));
+              } catch (err) { /* nevadí, jen se to nezapamatuje */ }
+            };
+            head.appendChild(el('span', 'spacer'));
+            head.appendChild(go);
+          }
+          li.appendChild(head);
+          li.appendChild(el('div', 'set-note', step.text));
+          list.appendChild(li);
+        });
+        form.appendChild(list);
+      }
+      if (spec.warn) form.appendChild(el('div', 'mcp-warn', spec.warn));
+
       const inputs = [];
       for (const field of spec.fields || []) {
         const row = el('label', 'mcp-field');

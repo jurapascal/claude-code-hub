@@ -412,6 +412,13 @@ U každé položky je vidět, odkud je a pod jakou licencí — cizí kód, kter
 spouštět, to má mít napsané dřív, než se na něj klikne. Nic se neinstaluje
 dopředu: `uvx` i `npx` si balíček stáhnou při prvním spuštění.
 
+**Návod je uvnitř.** Co se neobejde bez přípravy jinde, má v kartě očíslované
+kroky a u každého tlačítko, které otevře přesně tu stránku, o které krok mluví —
+u Google Workspace se tím naklikáním projde od založení projektu přes zapnutí
+všech deseti API jedním odkazem až po klienta OAuth. Odškrtnuté kroky zůstanou
+odškrtnuté i po zavření okna, takže se dá kdykoli přestat a vrátit se k tomu.
+Pod kroky je rovnou pole na údaje, takže se nikam nepřepisuje.
+
 **Kde má platit** je součást formuláře:
 
 - *Všude (globálně)* — zapíše se do `~/.claude.json` (user scope) a platí ve všech projektech.

@@ -1254,3 +1254,47 @@ body { display: flex; flex-direction: column; }
   color: var(--green); font-weight: 700; letter-spacing: .3px;
   padding: 1px 7px; border-radius: 999px;
 }
+
+/* ── návod k napojení ───────────────────────────────────────────────────────
+   Kroky jsou očíslované a odškrtnuté zůstanou odškrtnuté i po zavření okna:
+   naklikat si vlastního klienta OAuth je na několik minut a málokdo to udělá
+   napoprvé bez přerušení. */
+.mcp-steps {
+  list-style: none; counter-reset: krok;
+  margin: 0 0 4px; padding: 0;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.mcp-step {
+  counter-increment: krok;
+  position: relative; padding: 9px 10px 9px 38px;
+  border: 1px solid transparent; border-radius: 8px;
+}
+.mcp-step::before {
+  content: counter(krok);
+  position: absolute; left: 9px; top: 9px;
+  width: 20px; height: 20px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-card); border: 1px solid var(--border);
+  color: var(--dim); font-size: 11px; font-weight: 700;
+}
+.mcp-step.done::before {
+  content: "✓";
+  background: var(--green); border-color: var(--green); color: var(--bg);
+}
+.mcp-step.done { background: color-mix(in srgb, var(--green) 6%, transparent); }
+.mcp-step.done strong { color: var(--dim); }
+.mcp-step-head {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; color: var(--fg-bright); margin-bottom: 2px;
+}
+.mcp-step .set-note { margin-bottom: 0; }
+/* Co člověka na cestě čeká a vypadá to jako chyba, ale není. */
+.mcp-warn {
+  border-left: 2px solid var(--amber); border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--amber) 8%, transparent);
+  padding: 8px 11px; font-size: 12px; color: var(--fg); line-height: 1.55;
+}
+.mcp-tag.guide {
+  background: color-mix(in srgb, var(--amber) 16%, transparent);
+  color: var(--amber);
+}
