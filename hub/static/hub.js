@@ -930,7 +930,15 @@ function activate(tab) {
 function refit(tab) {
   if (!tab || tab.pane.offsetWidth === 0) return;
   try { tab.fit.fit(); } catch (_) { return; }
-  if (tab.id) send({t: 'resize', id: tab.id, cols: tab.term.cols, rows: tab.term.rows});
+  if (!tab.id) return;
+  /* Stejný rozměr se posílat nemusí — a hlavně nemá: ConPTY na Windows
+     překreslí při resize celou obrazovku i tehdy, když se nic nezměnilo.
+     Přepočet se přitom spouští z několika stran (ResizeObserver, změna okna,
+     rezervace místa pro bublinu), takže se sem chodí i bez změny velikosti. */
+  if (tab.sentCols === tab.term.cols && tab.sentRows === tab.term.rows) return;
+  tab.sentCols = tab.term.cols;
+  tab.sentRows = tab.term.rows;
+  send({t: 'resize', id: tab.id, cols: tab.sentCols, rows: tab.sentRows});
 }
 
 /* Potvrzení „Ano / Ne" jako slib. Vrací true, když člověk klikl na Ano.

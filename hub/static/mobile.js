@@ -139,7 +139,10 @@
      v <meta viewport>), kdežto na iOS se jen posune vizuální výřez a `resize`
      nepřijde. Terminál by pak počítal se starou výškou. hub.js na `resize`
      přepočítává sám, takže stačí ho poslat. */
-  if (window.visualViewport) {
+  // Jen na dotykovém zařízení. Na počítači měkká klávesnice není, zato tam
+  // visualViewport umí přijít i jindy — a každé takové „přepočítej" jde přes
+  // refit až do pty, kde ConPTY na Windows překreslí celou obrazovku.
+  if (touch && window.visualViewport) {
     let pending = 0;
     const nudge = () => {
       clearTimeout(pending);
