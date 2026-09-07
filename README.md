@@ -131,14 +131,16 @@ sudo apt install gir1.2-webkit2-4.1     # nebo prostě chromium
 
 ## Instalace
 
-Jeden řádek, ať už na stroji je cokoli:
+Jeden řádek — ale **na každém systému jiný**. Windows má PowerShell, ne bash:
+`curl -fsSL … | bash` tam skončí na `A parameter cannot be found that matches
+parameter name 'fsSL'`, protože `curl` je v PowerShellu jenom jiné jméno pro
+`Invoke-WebRequest`.
+
+### Linux a macOS
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jurapascal/claude-code-hub/main/get.sh | bash
 ```
-
-Stáhne repo do `~/.claude/hub-src` a spustí instalačku. Podruhé spuštěný stejný
-příkaz hub **zaktualizuje**.
 
 ### Windows
 
@@ -147,6 +149,9 @@ V PowerShellu (**bez** práv správce):
 ```powershell
 irm https://raw.githubusercontent.com/jurapascal/claude-code-hub/main/get.ps1 | iex
 ```
+
+Obojí stáhne repo do `~/.claude/hub-src` a spustí instalačku. Podruhé spuštěný
+stejný příkaz hub **zaktualizuje**.
 
 Zástupce **Claude Code** v nabídce Start spouští `pythonw.exe`, takže se vedle okna
 neotevírá černá konzole; kdyby okno zůstalo prázdné, důvod je v

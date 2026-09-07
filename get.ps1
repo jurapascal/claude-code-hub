@@ -1,4 +1,4 @@
-﻿# Claude Code Hub — jednořádková instalace pro Windows.
+# Claude Code Hub — jednořádková instalace pro Windows.
 #
 #     irm https://raw.githubusercontent.com/jurapascal/claude-code-hub/main/get.ps1 | iex
 #
@@ -7,6 +7,13 @@
 #
 # Proměnné pro nestandardní případy:
 #     $env:HUB_REPO = 'owner/repo'   $env:HUB_BRANCH = 'main'   $env:HUB_YES = '1'
+#
+# POZOR: tenhle soubor NESMÍ mít BOM. Ostatní .ps1 v repu ho mají, protože
+# PowerShell 5.1 bez něj čte soubor z disku v systémové kódové stránce a
+# rozsype si diakritiku. Tenhle se ale nikdy nespouští z disku — teče do `iex`
+# jako řetězec, a tam BOM zůstane znakem U+FEFF na začátku první řádky.
+# PowerShell si ho pak přilepí k mřížce a místo komentáře vidí příkaz:
+#     # : The term '#' is not recognized as the name of a cmdlet
 
 $ErrorActionPreference = 'Stop'
 
@@ -65,6 +72,19 @@ $installer = Join-Path $dest 'install.ps1'
 if (-not (Test-Path $installer)) { Die "v $dest není install.ps1 — něco se stáhlo špatně" }
 
 Write-Host ''
-# Přes `irm | iex` neexistuje soubor skriptu, takže se instalačka musí zavolat
-# jako samostatný soubor — jinak by si $MyInvocation nenašla vlastní složku.
-if ($env:HUB_YES) { & $installer -Yes } else { & $installer }
+# Instalačka si podle $MyInvocation hledá vlastní složku, takže se musí spustit
+# jako soubor. Jenže na spouštění .ps1 souborů má Windows ve výchozím stavu
+# zámek (ExecutionPolicy Restricted) a `irm | iex` ho obchází jen sám pro sebe,
+# ne pro to, co zavolá dál — proto vlastní PowerShell s výjimkou na jeden běh.
+$psExe = 'powershell.exe'
+try {
+    $own = (Get-Process -Id $PID).Path
+    if ($own) { $psExe = $own }     # ať se pokračuje tím, čím se začalo (i pwsh)
+} catch { }
+
+$argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $installer)
+if ($env:HUB_YES) { $argv += '-Yes' }
+& $psExe @argv
+
+if ($null -eq $LASTEXITCODE) { exit 0 }
+exit $LASTEXITCODE

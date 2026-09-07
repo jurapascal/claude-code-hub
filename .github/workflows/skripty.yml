@@ -1,0 +1,75 @@
+name: Instalační skripty
+
+# Instalačky nikdo nespouští při vývoji — poprvé je pustí až člověk, který si
+# hub instaluje, a to je nejhorší chvíle na překlep. Tenhle běh je proto projde
+# parserem dřív, než se k němu dostane.
+on:
+  push:
+    paths:
+      - '**.ps1'
+      - '**.sh'
+      - '.github/workflows/skripty.yml'
+  pull_request:
+    paths:
+      - '**.ps1'
+      - '**.sh'
+  workflow_dispatch:
+
+jobs:
+  powershell:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Projít .ps1 parserem
+        shell: pwsh
+        run: |
+          $bad = 0
+          foreach ($f in Get-ChildItem -Recurse -Filter *.ps1) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+                $f.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors -and $errors.Count) {
+              $bad = 1
+              Write-Host "::error file=$($f.Name)::syntaktická chyba"
+              $errors | ForEach-Object {
+                Write-Host ("  ř." + $_.Extent.StartLineNumber + ": " + $_.Message)
+              }
+            } else {
+              Write-Host "$($f.Name): OK"
+            }
+          }
+          exit $bad
+
+  kodovani:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zkontrolovat BOM
+        shell: bash
+        run: |
+          # Skript, který teče do `iex` nebo do `bash`, nesmí mít BOM: zůstal by
+          # v řetězci jako U+FEFF na začátku první řádky a interpret by si ho
+          # přilepil k prvnímu tokenu. Naopak .ps1 spouštěný z disku ho mít MÁ,
+          # jinak PowerShell 5.1 přečte diakritiku v systémové kódové stránce.
+          fail=0
+          bom() { [ "$(head -c3 "$1" | xxd -p)" = "efbbbf" ]; }
+          for f in get.sh get.ps1; do
+            if bom "$f"; then
+              echo "::error file=$f::teče do interpretu jako řetězec, BOM tam nesmí být"
+              fail=1
+            else
+              echo "$f: bez BOM, správně"
+            fi
+          done
+          for f in install.ps1 tools/windows-check.ps1; do
+            if bom "$f"; then
+              echo "$f: s BOM, správně"
+            else
+              echo "::error file=$f::spouští se z disku, BOM tam patří (PowerShell 5.1)"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: Projít .sh parserem
+        run: for f in $(git ls-files '*.sh'); do bash -n "$f" && echo "$f: OK"; done
