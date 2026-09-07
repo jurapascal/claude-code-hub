@@ -484,6 +484,13 @@
     let draft = '';
     let hiddenByUser = false;
     let shown = false;
+    /* Bublina se ukáže, když je dole klidný prompt — jenže tím, že se ukáže,
+       terminál zkrátí; agent překreslí TUI a prompt může zmizet. Pak by se
+       schovala, terminál povyroste, prompt je zpátky, a takhle dokola. Po
+       vlastním přepnutí se proto chvíli nepřepíná zpátky; co si vyžádá člověk
+       (proužek, Esc) jde okamžitě. */
+    const DWELL_MS = 450;
+    let flippedAt = 0;
     let lastInsert = 0;      // kdy naposledy do pole přistála cesta k souboru
     // Klíč pro `/model <jméno>`. Ze settings.json (co si Claude Code uložil),
     // a když tam nic není, aspoň to, co se naposledy vybralo tady.
@@ -1110,6 +1117,17 @@
     }
 
     let reserved = -1;       // kolik pixelů dole si bublina drží
+    /* Rezervace se počítá z výšky bubliny, jenže bublina se řídí tím, kolik
+       řádků terminálu zbylo — a to rezervace mění. Když si dvě hodnoty vymění
+       místo, obraz skáče: terminál se přepočítá, agent překreslí celé TUI,
+       z něj vyjde původní rezervace a jede se dokola. Pojistky níž porovnávají
+       jen s poslední hodnotou, takže cyklus A→B→A→B nezastaví — proto se
+       pamatuje, co bylo nasazeno za poslední chvilku, a návrat na to se
+       přeskočí. Po CYCLE_MS klidu se paměť zapomene, ať pozdější poctivá
+       změna projde. */
+    const CYCLE_MS = 1500;
+    let seen = [];           // {v, t} rezervace nasazené za poslední chvilku
+    let seenSpace = -1;      // pro kterou výšku panelu paměť platí
     let lastLines = null;    // poslední naměřený spodek terminálu
     let lastOwn = 0;
     let dirty = true;        // je co přeměřit (jinak se sahá jen na regexy)
@@ -1149,6 +1167,13 @@
       // znamenalo terminál pořád zvětšovat a zmenšovat, a překreslování v něm
       // je vidět víc než prázdný proužek dole.
       if (Math.abs(reserved - keep) < 1) return;
+      // Jiná výška panelu = jiný výpočet, paměť z té minulé neplatí.
+      const now = Date.now();
+      if (Math.abs(space - seenSpace) >= 1) { seenSpace = space; seen = []; }
+      while (seen.length && now - seen[0].t > CYCLE_MS) seen.shift();
+      // Sem už jsme před chvílí sáhli — další přepnutí by byl jenom kmit.
+      if (seen.some((s) => Math.abs(s.v - keep) < 1)) return;
+      seen.push({v: keep, t: now});
       reserved = keep;
       io.reserve(keep);
     }
@@ -1178,9 +1203,10 @@
       return true;
     }
 
-    function apply() {
+    function apply(force) {
       const want = !hiddenByUser && looksIdle();
-      if (want !== shown) {
+      if (want !== shown && (force || Date.now() - flippedAt >= DWELL_MS)) {
+        flippedAt = Date.now();
         const hadTerm = tab.pane.contains(document.activeElement) &&
                         document.activeElement !== input;
         shown = want;
@@ -1192,6 +1218,8 @@
         // (skládané klávesy) skončilo v poli schovaném pod bublinou.
         if (shown && hadTerm) input.focus();
         if (!shown && document.activeElement === input) term.focus();
+      } else if (want !== shown) {
+        schedule();          // rozhodne se, až se překreslování ustálí
       }
       // Měřit jde až s nasazenou třídou: složená bublina je jenom proužek
       // a vyšla by z ní čtvrtinová výška.
@@ -1296,7 +1324,7 @@
     root.querySelector('.composer-send').onclick = send;
     root.querySelector('.composer-peek').onclick = () => {
       hiddenByUser = false;
-      apply();
+      apply(true);
       if (shown) input.focus();
     };
     modelBtn.onclick = modelMenu;
@@ -1353,7 +1381,7 @@
       },
       focus: () => { if (shown) input.focus(); },
       visible: () => shown,
-      hide: () => { hiddenByUser = true; apply(); },
+      hide: () => { hiddenByUser = true; apply(true); },
       release: () => {
         offRender.dispose();
         offScroll.dispose();
