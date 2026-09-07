@@ -306,14 +306,33 @@
 
      `from` je číslo prvního vráceného řádku v terminálu — podle něj se pozná,
      kde Claudeovo vstupní pole začíná. */
+  /* Spodek výpisu — počítáno od posledního neprázdného řádku, ne od fyzického
+     spodku okna.
+
+     Dokud je konverzace krátká, vstupní pole agenta na spodek terminálu
+     nedosáhne a pod ním zůstává prázdno. Kdyby se četlo prostě posledních N
+     řádků, byly by prázdné: klidný prompt by se nenašel, bublina by se
+     neotevřela a zbyl by po ní jen proužek. Přesně tohle řeší o kus níž
+     dialogLines pro dialogy — pro prompt to chybělo.
+
+     `from` je index prvního vráceného řádku v okně; ownRows() z něj počítá,
+     odkud dolů patří obrazovka vstupnímu poli, takže musí zůstat sedět. */
   function visibleBottom(term, count) {
     const buf = term.buffer.active;
-    const from = Math.max(0, term.rows - count);
-    const lines = [];
-    for (let i = from; i < term.rows; i++) {
+    const text = (i) => {
       const row = buf.getLine(buf.viewportY + i);
-      if (row) lines.push(row.translateToString(true));
+      return row ? row.translateToString(true) : '';
+    };
+    let last = term.rows - 1;
+    while (last >= 0 && !text(last).trim()) last--;
+    if (last < 0) {
+      const empty = [];
+      empty.from = 0;
+      return empty;
     }
+    const from = Math.max(0, last - count + 1);
+    const lines = [];
+    for (let i = from; i <= last; i++) lines.push(text(i));
     lines.from = from;
     return lines;
   }
