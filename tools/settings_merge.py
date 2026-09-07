@@ -40,6 +40,24 @@ def load(path):
     return json.loads(text), True
 
 
+def shell_path(path):
+    """Cesta tak, aby ji přežil bash — i ta z Windows.
+
+    Claude Code pouští hooky přes bash (na Windows ten z Git for Windows).
+    Nezaobalená `C:\\Users\\...` v něm přijde o všechna zpětná lomítka, protože
+    je bere jako escape, a zbude `C:Users...`, což nespustí nic:
+
+        /usr/bin/bash: C:UsersadamuAppData...python.exe: command not found
+
+    Lomítka dopředu rozumí Windows i bash, takže odpadá i otázka uvozovek.
+    """
+    return str(path).replace("\\", "/")
+
+
+def hook_command(python, target):
+    return f'"{shell_path(python)}" "{shell_path(target)}"'
+
+
 def hook_entry(command, message, timeout=10):
     return {"hooks": [{"type": "command", "command": command,
                        "timeout": timeout, "statusMessage": message}]}
@@ -57,6 +75,20 @@ def has_hook(settings, event, needle):
 def ensure_hook(settings, event, needle, command, message, notes):
     existing = settings.get("hooks", {}).get(event) or []
     if has_hook(settings, event, needle):
+        # Dřívější verze psaly cestu k Pythonu bez uvozovek, takže na Windows
+        # zapsaly hook, který se nikdy nespustí. Přeskočit ho jako „už je
+        # zapojený" by znamenalo, že se to přeinstalací nikdy nespraví — je to
+        # náš hook, poznáme ho podle jména skriptu, tak ho opravíme.
+        fixed = 0
+        for group in settings.get("hooks", {}).get(event, []) or []:
+            for hook in group.get("hooks", []) or []:
+                have = str(hook.get("command", ""))
+                if needle in have and have != command:
+                    hook["command"] = command
+                    fixed += 1
+        if fixed:
+            notes.append(f"{event}: opraven zápis příkazu")
+            return True
         notes.append(f"{event}: už je zapojený, nechávám být")
         return False
     if existing:
@@ -98,7 +130,7 @@ def main():
                 ("SessionStart", "session-start.py", "Loading Brain & session state...")):
             target = os.path.join(claude_dir, "hooks", script)
             ensure_hook(settings, event, script,
-                        f'{args.python} "{target}"', msg, notes)
+                        hook_command(args.python, target), msg, notes)
 
     if args.bypass:
         perms = settings.setdefault("permissions", {})
