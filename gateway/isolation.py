@@ -26,6 +26,11 @@ import shutil
 MODES = ("none", "bwrap", "docker")
 DOCKER_IMAGE = "claude-hub-workspace"
 
+# Kolik si smí jedna session vzít. Naměřeno: session Claude Code drží kolem
+# 400-500 MB, takže 1,5 GB je pohodlný strop i pro delší konverzaci a zároveň
+# se jich na 8GB stroj vejde několik, aniž by shodily weby nebo mail.
+LIMITS = {"memory": "1500M", "tasks": 256, "cpu_weight": 100}
+
 
 def available():
     """Které režimy jde na tomhle stroji doopravdy použít."""
@@ -53,19 +58,46 @@ def check(mode, host):
     return ""
 
 
-def wrap(mode, argv, home, extra_ro=()):
+def wrap(mode, argv, home, extra_ro=(), limits=None):
     """argv, kterým se session doopravdy spustí.
 
     `home` je domov uživatele na bráně — jediné místo, kam smí zapisovat.
     `extra_ro` jsou cesty, které má vidět jen ke čtení (přihlášení Claude Code).
+    `limits` je strop na paměť, procesy a podíl na procesoru; None = LIMITS.
     """
+    limits = LIMITS if limits is None else limits
     if mode == "none":
-        return list(argv)
+        return _limited(list(argv), limits)
     if mode == "bwrap":
-        return _bwrap(argv, home, extra_ro)
+        return _limited(_bwrap(argv, home, extra_ro), limits)
     if mode == "docker":
-        return _docker(argv, home, extra_ro)
+        # Docker si limity řeší sám, přes systemd by se počítaly dvakrát.
+        return _docker(argv, home, extra_ro, limits)
     raise ValueError(f"Neznámý režim izolace: {mode}")
+
+
+def _limited(argv, limits):
+    """Obalí příkaz cgroupou, aby jedna session neshodila zbytek serveru.
+
+    bwrap odděluje, co session *vidí*, ale ne kolik si vezme — paměť ani
+    procesy neomezuje vůbec. Na stroji, kde vedle běží weby a mail, je to
+    zásadní: bez stropu stačí jedna ukecaná session a OOM killer sáhne po tom,
+    co má nejvíc paměti, tedy nejspíš po databázi.
+
+    MemorySwapMax=0 tam není navíc. Se samotným MemoryMax proces neumře, jen
+    přeteče do swapu a celý stroj se začne plazit — naměřeno: bez něj 300 MB
+    při stropu 200 MB v klidu projde, s ním skončí kódem 137.
+    """
+    if not limits or not shutil.which("systemd-run"):
+        return argv
+    scope = ["systemd-run", "--user", "--scope", "--quiet", "--collect"]
+    if limits.get("memory"):
+        scope += ["-p", f"MemoryMax={limits['memory']}", "-p", "MemorySwapMax=0"]
+    if limits.get("tasks"):
+        scope += ["-p", f"TasksMax={limits['tasks']}"]
+    if limits.get("cpu_weight"):
+        scope += ["-p", f"CPUWeight={limits['cpu_weight']}"]
+    return scope + argv
 
 
 def _bwrap(argv, home, extra_ro):
@@ -109,13 +141,16 @@ def _bwrap(argv, home, extra_ro):
     return cmd + ["--"] + list(argv)
 
 
-def _docker(argv, home, extra_ro):
+def _docker(argv, home, extra_ro, limits=None):
+    limits = LIMITS if limits is None else limits
     cmd = ["docker", "run", "--rm", "-i",
            "--network", "bridge",
            # Bez práv navíc a bez možnosti si je vzít.
            "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
            # Aby jeden uživatel nemohl serveru sníst paměť ani procesor.
-           "--memory", "2g", "--pids-limit", "512",
+           "--memory", str(limits.get("memory", "1500M")),
+           "--memory-swap", str(limits.get("memory", "1500M")),
+           "--pids-limit", str(limits.get("tasks", 256)),
            "-v", f"{home}:{home}:rw",
            "-e", f"HOME={home}",
            "-w", home]

@@ -37,9 +37,50 @@ navzájem Obsidian i zbytek serveru. Proto:
   práva správce.
 - `docker` — kontejner na session, s limity na paměť a procesy.
 
+K izolaci se přidávají **limity přes cgroup** (`systemd-run --scope`): paměť,
+počet procesů a podíl na procesoru. bwrap odděluje, co session *vidí*, ale ne
+kolik si vezme — na stroji s weby a mailem je to zásadní rozdíl.
+
 Naměřeno, ne odhadnuto (`bwrap`): session přečte svůj vault a dostane se na
 API, ale vault kolegy, přihlášení Claude Code, `/etc/shadow`, zápis mimo domov
 ani projekty na serveru pro ni neexistují.
+
+## Kolik se toho vejde
+
+Měřeno na živých session, ne odhadnuto: **jedna session Claude Code drží
+400–500 MB** (naměřeno 386, 403 a 464 MB na třech běžících).
+
+Rozvaha pro VPS 8 GB / 4 vCPU (sdílené 1:3) / 60 GB, kde vedle běží weby a mail:
+
+| položka | GB |
+|---|---|
+| Ubuntu 24.04 + systemd | 0,4 |
+| nginx + PHP-FPM | 0,8 |
+| MariaDB | 0,8 |
+| Postfix + Dovecot + rspamd | 0,7 |
+| rezerva na špičky | 1,0 |
+| **zbývá na session** | **4,3** |
+
+Papírově je to devět session. Skutečný strop je ale jinde: **stačí, aby si dvě
+session vzaly svoje maximum, a je po rezervě.** Proto brána nesmí spoléhat na
+průměr — potřebuje strop na počet současných session a uspávání nečinných.
+
+Doporučení pro tuhle konfiguraci:
+
+- **nejvýš 4 současné session**, další čekají
+- **uspat session po 30 minutách bez psaní** — největší jediná úspora
+- **1,5 GB na session** (`MemoryMax` + `MemorySwapMax=0`)
+- **odkládací soubor 2–4 GB**. Bez něj sáhne OOM killer po tom, co má nejvíc
+  paměti — tedy nejspíš po databázi, ne po session, která to způsobila.
+- **ClamAV v mailu si vezme dalších ~1,3 GB.** Když ho chceš, počítej se dvěma
+  session místo čtyř.
+- **60 GB je sdílených s weby, mailem i zálohami.** Vaulty jsou v řádu MB, ale
+  `node_modules` a klony repozitářů narostou rychle — chce to kvótu na domov.
+
+Limity nejsou teorie: se samotným `MemoryMax` proces neumře, jen přeteče do
+swapu a stroj se plazí. Naměřeno — 300 MB při stropu 200 MB v klidu projde;
+teprve s `MemorySwapMax=0` skončí zabito. Otestované je i to, že limity a
+izolace fungují dohromady, ne každé zvlášť.
 
 ## Co izolace nevyřeší
 
