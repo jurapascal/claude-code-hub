@@ -547,6 +547,8 @@ hooks/session-start.py    SessionStart hook — kategorie skillů z vaultu + sta
 tools/settings_merge.py   přidá hooky (a volitelně bypass) do settings.json, se zálohou
 tools/windows-check.ps1   kontrola na Windows: odkazy, ConPTY, schránka, složka paměti
 tools/make-icons.py       ze značky vyrobí .png, .ico i favicony (jediná cesta, jak vznikají)
+tools/uitest.mjs          zkouška UI na všech jádrech a velikostech (Chromium, Firefox, WebKit)
+gateway/                  víceuživatelská brána — účty, izolace session (rozestavěné)
 skills/<jméno>/SKILL.md   šablony slash příkazů ({{MEMORY_DIR}} apod. doplní instalátor)
 legacy/claude-hub-gtk.py  původní GTK 3 + VTE verze (Linux only, už se neinstaluje)
 hub-config.example.json   vzor konfigurace
@@ -558,6 +560,34 @@ assets/claude-code.ico    ikona zástupců na Windows (16–64 px jako BMP, 128/
 hub/static/favicon.ico    ikona okna na Windows — bere se z favicony, ne ze zástupce
 assets/vault/MEMORY.md    rozcestník paměti pro nově založený vault
 ```
+
+## Zkouška klientů
+
+Hub je jedno UI na pěti systémech, takže se nejlíp rozbije tam, kde zrovna
+nekoukáš. `tools/uitest.mjs` ho projde na všech jádrech prohlížečů a
+velikostech, na kterých má běžet, a ověří přesně to, co se v praxi rozbíjelo:
+že se **načte pole na psaní**, že jde **přepnout model**, že se otevřou
+slash příkazy a nastavení — a že se **v klidu nic nepřepočítává**.
+
+```bash
+python3 claude-hub.py --no-browser        # v jednom okně, vypíše URL
+node tools/uitest.mjs <url>               # v druhém; nebo jen: … <url> ios mac
+```
+
+| profil | jádro | co zastupuje |
+|---|---|---|
+| `windows` | Chromium 1536×824 @1,25 | notebook s Windows ve výchozím škálování |
+| `linux` | Chromium 1920×1000 | běžný desktop |
+| `firefox` | Firefox 1600×900 | jiné jádro, jiné chyby |
+| `mac` | **WebKit** 1440×860 @2 | Safari na Macu (stejný engine) |
+| `android` | Chromium, Pixel 7, dotyk | telefon |
+| `ios` | **WebKit**, iPhone 13, dotyk | Safari na iPhonu (stejný engine) |
+
+Mac a iOS nejsou napodobenina: WebKit v Playwrightu je engine Safari, takže
+chyby v CSS a v JS to najde stejně jako cílový stroj.
+
+**Co to nepokrývá** a musí se zkusit ručně: ConPTY na Windows, instalačky,
+chování nativních aplikací a cokoli, co dělá operační systém pod prohlížečem.
 
 ## Když něco nehraje
 
