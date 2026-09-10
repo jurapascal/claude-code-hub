@@ -42,6 +42,14 @@ DEFAULTS = {
     "remote_port": 8760,
     "remote_token": "",       # dlouhodobý token spárovaného telefonu
     "remote_keep_running": False,  # nechat server běžet i po zavření okna
+    # Vývojářský režim: nasazování a práce s GitHubem. Vypnuto znamená, že se
+    # hub o nic z toho nepokouší — ani se nenabízí, ani nic neinstaluje.
+    "dev_mode": False,
+    # Účet na bráně (serverový hub). Heslo se neukládá — jen token zařízení,
+    # který brána vydá při přihlášení a kdykoli zneplatní.
+    "gw_server": "",
+    "gw_token": "",
+    "gw_user": None,
 }
 
 

@@ -58,21 +58,27 @@ def check(mode, host):
     return ""
 
 
-def wrap(mode, argv, home, extra_ro=(), limits=None):
+def wrap(mode, argv, home, extra_ro=(), extra_rw=(), limits=None):
     """argv, kterým se session doopravdy spustí.
 
     `home` je domov uživatele na bráně — jediné místo, kam smí zapisovat.
-    `extra_ro` jsou cesty, které má vidět jen ke čtení (přihlášení Claude Code).
+    `extra_ro` jsou cesty, které má vidět jen ke čtení (zdroj hubu, sdílené
+    přihlášení, když nemá přežít úpravy session).
+    `extra_rw` jsou cesty vně domova, do kterých session **smí** zapsat — jediný
+    případ je sdílené přihlášení Claude Code, které si samo obnovuje token, a
+    obnovený token má vidět i zbytek session (jinak by po expiraci vypadly
+    všechny naráz). Drž `extra_rw` co nejmenší; každá cesta v něm je díra
+    v izolaci.
     `limits` je strop na paměť, procesy a podíl na procesoru; None = LIMITS.
     """
     limits = LIMITS if limits is None else limits
     if mode == "none":
         return _limited(list(argv), limits)
     if mode == "bwrap":
-        return _limited(_bwrap(argv, home, extra_ro), limits)
+        return _limited(_bwrap(argv, home, extra_ro, extra_rw), limits)
     if mode == "docker":
         # Docker si limity řeší sám, přes systemd by se počítaly dvakrát.
-        return _docker(argv, home, extra_ro, limits)
+        return _docker(argv, home, extra_ro, limits, extra_rw)
     raise ValueError(f"Neznámý režim izolace: {mode}")
 
 
@@ -100,7 +106,7 @@ def _limited(argv, limits):
     return scope + argv
 
 
-def _bwrap(argv, home, extra_ro):
+def _bwrap(argv, home, extra_ro, extra_rw=()):
     cmd = ["bwrap",
            # Systém ke čtení. Zápis nikam mimo domov: i kdyby session někoho
            # napadlo sáhnout na /usr, nemá kam.
@@ -117,7 +123,12 @@ def _bwrap(argv, home, extra_ro):
            "--chdir", home,
            # Síť potřebujeme (API Anthropicu), všechno ostatní se odděluje.
            "--unshare-pid", "--unshare-ipc", "--unshare-uts",
-           "--die-with-parent",
+           # POZN.: schválně BEZ `--die-with-parent`. Když bránu (systemd user
+           # službu) pouští `systemd-run --user --scope`, systemd-run v tom
+           # kontextu po založení scope skončí — a die-with-parent by pak
+           # sandbox okamžitě zabil (session by umřela pár vteřin po startu).
+           # Úklid proto řeší brána sama (HubProc.stop pkillem podle domova
+           # + úklid osiřelých při startu).
            "--new-session"]
     # /bin a /lib jsou na dnešních distribucích symlinky do /usr. Přeskočit je
     # nejde: v sandboxu by pak nebyl ani shell („execvp /bin/sh: No such file“).
@@ -138,10 +149,13 @@ def _bwrap(argv, home, extra_ro):
     for path in extra_ro:
         if os.path.exists(path):
             cmd += ["--ro-bind", path, path]
+    for path in extra_rw:
+        if os.path.exists(path):
+            cmd += ["--bind", path, path]
     return cmd + ["--"] + list(argv)
 
 
-def _docker(argv, home, extra_ro, limits=None):
+def _docker(argv, home, extra_ro, limits=None, extra_rw=()):
     limits = LIMITS if limits is None else limits
     cmd = ["docker", "run", "--rm", "-i",
            "--network", "bridge",
@@ -157,4 +171,7 @@ def _docker(argv, home, extra_ro, limits=None):
     for path in extra_ro:
         if os.path.exists(path):
             cmd += ["-v", f"{path}:{path}:ro"]
+    for path in extra_rw:
+        if os.path.exists(path):
+            cmd += ["-v", f"{path}:{path}:rw"]
     return cmd + [DOCKER_IMAGE] + list(argv)

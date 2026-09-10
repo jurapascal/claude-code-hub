@@ -177,6 +177,38 @@ def wait_for_page(proc=None, grace=10, startup=60):
             return
 
 
+def _normalize_url(url):
+    """Z holé adresy udělá https:// URL. `test.alba-rosa.cz` → `https://test.alba-rosa.cz`."""
+    url = (url or "").strip()
+    if not url:
+        return ""
+    if "://" not in url:
+        url = "https://" + url
+    return url.rstrip("/")
+
+
+def run_server_client(url, prefer=""):
+    """Tenký klient: okno appky míří rovnou na bránu, žádný lokální server.
+
+    Přihlášení i celý hub servíruje server; okno má vlastní profil, který si
+    drží přihlašovací cookie, takže po prvním přihlášení naskočí hub rovnou.
+    """
+    core.log(f"server režim: okno na {url}")
+    host, proc, blocking = window.open_window(url, prefer)
+    core.log(f"okno: {host}")
+    try:
+        if blocking:
+            blocking()            # WebKitGTK: smyčka drží okno
+        elif proc is not None:
+            proc.wait()           # vlastní profil → proces je to okno
+        else:
+            while True:           # holá záložka v prohlížeči — není na co čekat
+                time.sleep(3600)
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
 def main():
     args = sys.argv[1:]
     if "--doctor" in args:
@@ -186,6 +218,27 @@ def main():
     for arg in args:
         if arg.startswith("--window="):
             prefer = arg.split("=", 1)[1]
+
+    # Server (týmový) režim: appka je jen okno na bránu. Volba se pamatuje
+    # v hub-config.json (server_url); `--server=URL` ji nastaví, `--local` zruší.
+    server_url = ""
+    for arg in args:
+        if arg.startswith("--server="):
+            server_url = _normalize_url(arg.split("=", 1)[1])
+    if server_url:
+        core.save_config({"server_url": server_url})
+    if "--local" in args:
+        core.save_config({"server_url": ""})
+        server_url = ""
+    else:
+        server_url = server_url or _normalize_url(core.CONFIG.get("server_url", ""))
+    if server_url:
+        # --no-browser znamená „neotvírej okno" i tady. Bez téhle kontroly ho
+        # serverový režim otevřel i tak a příznak platil jen pro lokální hub.
+        if "--no-browser" in args:
+            core.log(f"server režim: {server_url} (okno neotevírám, --no-browser)")
+            return 0
+        return run_server_client(server_url, prefer)
 
     httpd, url = server.start()
     core.log(f"start: port {httpd.server_address[1]}, platforma {core.doctor()['platform']}")

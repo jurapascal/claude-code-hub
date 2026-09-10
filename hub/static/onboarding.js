@@ -17,7 +17,18 @@
   let chosen = {dirs: [], vault: '', backup: 'later', cloudPath: '', repo: 'claude-brain'};
   let root = null;
 
-  const STEPS = ['vitej', 'vzhled', 'projekty', 'pamet', 'zaloha', 'hotovo'];
+/* Kroky se liší podle režimu, který si člověk vybere hned na uvítanou.
+ *
+ * Základní režim nemá v nastavení Projekty, Paměť ani zálohu — ptát se na ně
+ * v průvodci by znamenalo nastavit něco, k čemu se pak nedá vrátit. Zbydou
+ * tedy tři kroky a hub naskočí na výchozích složkách; kdo je bude chtít jinak,
+ * zapne si vývojářský režim a projde průvodce znovu. */
+  const STEPS_ZAKLAD = ['vitej', 'vzhled', 'hotovo'];
+  const STEPS_VYVOJ = ['vitej', 'vzhled', 'projekty', 'pamet', 'zaloha', 'hotovo'];
+
+  function steps() {
+    return chosen.dev ? STEPS_VYVOJ : STEPS_ZAKLAD;
+  }
 
   /* ── kostra ─────────────────────────────────────────────────────────────── */
   function el(tag, cls, text) {
@@ -46,6 +57,7 @@
     chosen.dirs = (state.config.project_dirs || []).slice();
     if (!chosen.dirs.length) chosen.dirs = (state.suggest_dirs || []).slice();
     chosen.vault = state.config.brain_dir || '';
+    chosen.dev = !!(state.config && state.config.dev_mode);
     chosen.backup = state.vault_git.is_repo ? 'git' : 'later';
     build();
     render();
@@ -83,16 +95,16 @@
     box.textContent = '';
     const dots = root.querySelector('.onb-dots');
     dots.textContent = '';
-    STEPS.forEach((_, i) => {
+    steps().forEach((_, i) => {
       const d = el('i', 'onb-dot' + (i === step ? ' on' : (i < step ? ' done' : '')));
       dots.appendChild(d);
     });
     root.querySelector('.onb-back').style.visibility = step === 0 ? 'hidden' : '';
     root.querySelector('.onb-skip').style.visibility =
-      step === STEPS.length - 1 ? 'hidden' : '';
+      step === steps().length - 1 ? 'hidden' : '';
     root.querySelector('.onb-next').textContent =
-      step === STEPS.length - 1 ? 'Začít' : 'Dál';
-    ({vitej, vzhled, projekty, pamet, zaloha, hotovo})[STEPS[step]](box);
+      step === steps().length - 1 ? 'Začít' : 'Dál';
+    ({vitej, vzhled, projekty, pamet, zaloha, hotovo})[steps()[step]](box);
   }
 
   function head(title, sub) {
@@ -103,9 +115,75 @@
   /* ── kroky ──────────────────────────────────────────────────────────────── */
   function vitej(box) {
     head('Claude Code Hub', 'Chvilka nastavení a pak už jen práce.');
+    // Věta se musí trefit do počtu kroků, které pak přijdou — jinak průvodce
+    // slíbí nastavení projektů a paměti a hned skončí.
+    const uvod = el('p', 'onb-lead');
+    uvod.textContent = 'Každý projekt se otevře jako vlastní tab se skutečným ' +
+      'terminálem. ' + (chosen.dev
+        ? 'Teď si nastavíme vzhled, kde máš projekty a kde bydlí paměť.'
+        : 'Zbývá vybrat vzhled a můžeme začít.');
+    box.appendChild(uvod);
+
+    // Týmový režim: appka se připojí k serveru (bráně). Po přihlášení běží
+    // všechno na serveru — vlastní účet, vlastní paměť, vlastní MCP.
+    const server = el('div');
+    server.style.cssText = 'margin:2px 0 18px;padding:14px;border:1px solid var(--border,#322e20);border-radius:10px;background:rgba(224,164,88,.06)';
+    const sBtn = el('button', null, '☁  Připojit se k serveru (týmový režim)');
+    sBtn.style.cssText = 'width:100%;padding:9px;border:0;border-radius:8px;background:#2a2618;color:#e8b76a;font-weight:600;cursor:pointer';
+    const sForm = el('div');
+    sForm.style.cssText = 'display:none;gap:8px;margin-top:10px';
+    const sInput = el('input');
+    sInput.type = 'text';
+    sInput.placeholder = 'adresa serveru, např. test.alba-rosa.cz';
+    sInput.style.cssText = 'flex:1;padding:9px 11px;border-radius:8px;border:1px solid #3a3524;background:#14130d;color:#e8e3d3';
+    if (state.config && state.config.server_url) sInput.value = state.config.server_url;
+    const sGo = el('button', null, 'Přihlásit se');
+    sGo.style.cssText = 'padding:9px 16px;border:0;border-radius:8px;background:#e0a458;color:#1a1710;font-weight:600;cursor:pointer;white-space:nowrap';
+    const sMsg = el('div');
+    sMsg.style.cssText = 'margin-top:8px;font-size:.85rem;color:#9a927c;min-height:1em';
+    sBtn.onclick = () => {
+      const open = sForm.style.display === 'none';
+      sForm.style.display = open ? 'flex' : 'none';
+      if (open) sInput.focus();
+    };
+    sGo.onclick = async () => {
+      let url = (sInput.value || '').trim();
+      if (!url) { sMsg.textContent = 'Zadej adresu serveru.'; return; }
+      if (!/:\/\//.test(url)) url = 'https://' + url;
+      url = url.replace(/\/+$/, '');
+      sGo.disabled = true; sMsg.textContent = 'Ukládám a otevírám přihlášení…';
+      try {
+        await io.api('config', {server_url: url});
+        location.href = url;   // dál už servíruje brána: přihlášení → hub
+      } catch (e) { sMsg.textContent = e.message || 'Nepovedlo se.'; sGo.disabled = false; }
+    };
+    sInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sGo.click(); });
+    sForm.appendChild(sInput); sForm.appendChild(sGo);
+    server.appendChild(sBtn); server.appendChild(sForm); server.appendChild(sMsg);
+    box.appendChild(server);
+
     box.appendChild(el('p', 'onb-lead',
-      'Každý projekt se otevře jako vlastní tab se skutečným terminálem. ' +
-      'Teď si nastavíme vzhled, kde máš projekty a kde bydlí paměť.'));
+      'Nebo pokračuj a nastav si Hub na tomhle počítači:'));
+
+    // Volba režimu. Rozhoduje o zbytku průvodce, tak patří sem, ne na konec.
+    box.appendChild(el('div', 'onb-lead', 'Jak hub používáš?'));
+    const rezim = el('div', 'onb-tiles');
+    for (const [dev, label, note] of [
+      [false, 'Píšu s agentem',
+       'Terminál, paměť, agenti. Nic o nasazování a GitHubu.'],
+      [true, 'Vyvíjím a nasazuju',
+       'Navíc Deploy, Push na GitHub, složky projektů a logy.'],
+    ]) {
+      const t = el('button', 'onb-tile' + (chosen.dev === dev ? ' on' : ''));
+      t.appendChild(el('span', 'onb-tile-t', label));
+      t.appendChild(el('span', 'onb-tile-s', note));
+      t.onclick = () => { chosen.dev = dev; render(); };
+      rezim.appendChild(t);
+    }
+    box.appendChild(rezim);
+    box.appendChild(el('div', 'onb-note',
+      'Dá se přepnout kdykoli v Nastavení → Vzhled.'));
+
     const list = el('ul', 'onb-check');
     for (const [ok, text] of [
       [!!state.doctor.bash, 'bash — bez něj se tab neotevře'],
@@ -249,6 +327,8 @@
     head('Záloha paměti', 'Aby poznámky nežily jen na jednom disku.');
     const cloud = state.cloud || [];
     const opts = [];
+    // Tenhle krok se ukazuje jen ve vývojářském režimu, takže GitHub tu může
+    // být bez další podmínky — kdo si režim vybral, o `gh` stojí.
     opts.push({
       key: 'git', label: 'Do privátního repa na GitHubu',
       note: state.doctor.git && state.vault_git.is_repo
@@ -299,14 +379,21 @@
   function hotovo(box) {
     head('Hotovo', 'Můžeme začít.');
     const list = el('ul', 'onb-check');
-    list.appendChild(el('li', 'ok', 'projekty: ' +
-      (chosen.dirs.length ? chosen.dirs.join(', ') : '(žádné)')));
-    list.appendChild(el('li', chosen.vault ? 'ok' : 'miss',
-      'paměť: ' + (chosen.vault || 'vypnutá')));
-    const zal = {git: 'privátní repo na GitHubu', cloud: chosen.cloudPath,
-                 folder: 'vlastní složka', later: 'zatím ne'}[chosen.backup];
-    list.appendChild(el('li', chosen.backup === 'later' ? 'miss' : 'ok',
-      'záloha paměti: ' + zal));
+    list.appendChild(el('li', 'ok',
+      'režim: ' + (chosen.dev ? 'vývojářský' : 'základní')));
+    if (chosen.dev) {
+      list.appendChild(el('li', 'ok', 'projekty: ' +
+        (chosen.dirs.length ? chosen.dirs.join(', ') : '(žádné)')));
+      list.appendChild(el('li', chosen.vault ? 'ok' : 'miss',
+        'paměť: ' + (chosen.vault || 'vypnutá')));
+      const zal = {git: 'privátní repo na GitHubu', cloud: chosen.cloudPath,
+                   folder: 'vlastní složka', later: 'zatím ne'}[chosen.backup];
+      list.appendChild(el('li', chosen.backup === 'later' ? 'miss' : 'ok',
+        'záloha paměti: ' + zal));
+    } else {
+      // Nic z toho se v základním režimu neptalo — ať je vidět, co platí.
+      list.appendChild(el('li', 'ok', 'projekty a paměť: výchozí nastavení'));
+    }
     box.appendChild(list);
     box.appendChild(el('p', 'onb-lead',
       'Kdykoli později: tlačítko ⚙ v hlavičce.'));
@@ -317,17 +404,17 @@
     const btn = root.querySelector('.onb-next');
     btn.disabled = true;
     try {
-      if (STEPS[step] === 'projekty') {
+      if (steps()[step] === 'projekty') {
         await io.api('config', {project_dirs: chosen.dirs});
-      } else if (STEPS[step] === 'pamet' && chosen.vault) {
+      } else if (steps()[step] === 'pamet' && chosen.vault) {
         // Existující složku jen napojíme; create by jinak přepsal rozcestník.
         const known = (state.vaults || []).some(v => v.path === chosen.vault);
         await io.api('vault',
           {action: known ? 'use' : 'create', path: chosen.vault});
-      } else if (STEPS[step] === 'zaloha') {
+      } else if (steps()[step] === 'zaloha') {
         // Nepovedenou zálohu nepřeskakujeme — ať je vidět, co se stalo.
         if (!await applyBackup()) return;
-      } else if (STEPS[step] === 'hotovo') {
+      } else if (steps()[step] === 'hotovo') {
         await finish(false);
         return;
       }
@@ -405,7 +492,7 @@
 
   async function finish(skipped) {
     try {
-      await io.api('config', {onboarded: true});
+      await io.api('config', {onboarded: true, dev_mode: !!chosen.dev});
     } catch (_) { /* nastavení se nepovedlo uložit — průvodce přesto zavíráme */ }
     close();
     if (!skipped) io.toast('Nastaveno. Ať to jde od ruky.');

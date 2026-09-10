@@ -360,19 +360,26 @@ function renderMemory() {
   }
 }
 
+// `dev: true` = nasazení a GitHub. Ukáže se až ve vývojářském režimu; komu
+// hub slouží na psaní s agentem, tomu deploy ani push nemá co nabízet.
 const ACTIONS = [
   {skill: 'save', label: 'Uložit do paměti', icon: 'i-save', cmd: '/save\r'},
   {skill: 'project', label: 'Poznámka projektu', icon: 'i-note', cmd: '/project\r'},
-  {skill: 'deploy', label: 'Deploy', icon: 'i-deploy', cmd: '/deploy\r'},
-  {skill: 'push', label: 'Push na GitHub', icon: 'i-push', cmd: '/push\r'},
+  {skill: 'deploy', label: 'Deploy', icon: 'i-deploy', cmd: '/deploy\r', dev: true},
+  {skill: 'push', label: 'Push na GitHub', icon: 'i-push', cmd: '/push\r', dev: true},
   {skill: 'status', label: 'Přehled projektů', icon: 'i-status', cmd: '/status\r'},
   {skill: 'screenshot', label: 'Screenshot…', icon: 'i-image', cmd: '/screenshot '},
 ];
+
+function devMode() {
+  return !!(STATE.config && STATE.config.dev_mode);
+}
 
 function renderActions() {
   const box = $('actions');
   box.textContent = '';
   for (const a of ACTIONS) {
+    if (a.dev && !devMode()) continue;
     if (!STATE.skills.includes(a.skill)) continue;  // never offer "Unknown command"
     const el = document.createElement('button');
     el.className = 'barbtn';
@@ -1185,14 +1192,14 @@ function projectMenu(ev, p) {
     items.push({icon: 'i-terminal', label: 'Žádný agent není nainstalovaný…',
                 run: () => HubSettings.open({...hubIO(), state: STATE, tab: 'agenti'})});
   }
-  items.push(
-    {icon: 'i-note', label: 'Upravit…', run: () => editProject(p)},
-    {icon: 'i-deploy', label: p.deployable ? 'Deploy (FTP)' : 'Deploy',
-     run: () => openTab({kind: 'deploy', path: p.path, title: 'deploy: ' + p.name})},
-  );
-  if (p.repo) {
-    items.push({icon: 'i-push', label: 'Otevřít na GitHubu',
-      run: () => openExternal('https://github.com/' + p.repo)});
+  items.push({icon: 'i-note', label: 'Upravit…', run: () => editProject(p)});
+  if (devMode()) {
+    items.push({icon: 'i-deploy', label: p.deployable ? 'Deploy (FTP)' : 'Deploy',
+      run: () => openTab({kind: 'deploy', path: p.path, title: 'deploy: ' + p.name})});
+    if (p.repo) {
+      items.push({icon: 'i-push', label: 'Otevřít na GitHubu',
+        run: () => openExternal('https://github.com/' + p.repo)});
+    }
   }
   if (STATE.skills.includes('project')) {
     items.push({icon: 'i-note', label: 'Poznámka do paměti (/project)',
@@ -1322,7 +1329,8 @@ function closePicker() { $('modal').hidden = true; settlePicker(null); }
 
 /* ── websocket ────────────────────────────────────────────────────────────── */
 function connect() {
-  WS = new WebSocket(`ws://${location.host}/ws?t=${encodeURIComponent(TOKEN)}`);
+  const wsProto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  WS = new WebSocket(`${wsProto}${location.host}/ws?t=${encodeURIComponent(TOKEN)}`);
   WS.onopen = () => send({t: 'hello'});
   WS.onmessage = (ev) => handle(JSON.parse(ev.data));
   WS.onclose = () => setTimeout(connect, 1000);

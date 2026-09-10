@@ -24,7 +24,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import core, pty_backend, qr, remote, stats
+from . import account, core, pty_backend, qr, remote, stats
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -395,7 +395,12 @@ class Handler(BaseHTTPRequestHandler):
                 "config": {"project_dirs": core.CONFIG.get("project_dirs") or [],
                            "brain_dir": core.CONFIG.get("brain_dir") or "",
                            "newtab": core.CONFIG.get("newtab") or {},
-                           "show_archived": bool(core.CONFIG.get("show_archived"))},
+                           "show_archived": bool(core.CONFIG.get("show_archived")),
+                           "dev_mode": bool(core.CONFIG.get("dev_mode")),
+                           "server_url": core.CONFIG.get("server_url") or "",
+                           # Vyplněné jen na instanci běžící na bráně — podle
+                           # toho nastavení pozná, že je na serveru.
+                           "gateway_user": core.CONFIG.get("gateway_user") or None},
                 "cloud": core.cloud_folders(),
                 "vaults": core.obsidian_vaults(),
                 "memory_link": core.memory_link_path(),
@@ -477,6 +482,19 @@ class Handler(BaseHTTPRequestHandler):
                     payload.get("name", ""), raw)})
             except Exception as exc:
                 return self._json({"error": f"Nepodařilo se uložit: {exc}"}, 500)
+        if name == "account":
+            # Účet na bráně: přihlášení, stav a předání přihlášení prohlížeči.
+            action = (payload or {}).get("action", "status")
+            if action == "login":
+                return self._json(account.login(
+                    (payload or {}).get("server", ""),
+                    (payload or {}).get("email", ""),
+                    (payload or {}).get("password", "")))
+            if action == "logout":
+                return self._json(account.logout())
+            if action == "handoff":
+                return self._json(account.handoff())
+            return self._json(account.status())
         if name == "remote":
             # Telefon: stav, párovací QR a zapnutí/vypnutí druhého listeneru.
             action = (payload or {}).get("action", "")
@@ -513,7 +531,7 @@ class Handler(BaseHTTPRequestHandler):
             allowed = ("project_dirs", "brain_dir", "onboarded", "vault_autosync",
                        "newtab", "extra_projects", "show_archived",
                        "agents", "default_agent", "project_agents",
-                       "remote_keep_running")
+                       "remote_keep_running", "server_url", "dev_mode")
             updates = {k: v for k, v in payload.items() if k in allowed}
             if not updates:
                 return self._json({"error": "Nic k uložení."}, 400)
@@ -836,6 +854,10 @@ def listdir(path):
 class HubHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    # Prohlížeč (a přes bránu i reverzní proxy) otevře najednou spoustu spojení
+    # na assety. Výchozí backlog 5 některé odmítne (RemoteDisconnected) — proto
+    # větší fronta příchozích spojení.
+    request_queue_size = 128
 
     def __init__(self, token, address=("127.0.0.1", 0), remote=False):
         super().__init__(address, Handler)

@@ -775,6 +775,16 @@ body { display: flex; flex-direction: column; }
 }
 .onb-tile:hover { background: var(--card-hover); }
 .onb-tile.on { border-color: var(--amber); color: var(--fg-bright); }
+/* Dlaždice s popiskem pod nadpisem — volba režimu na uvítanou. Text vlevo,
+   ne na střed jako u barevných dlaždic vzhledu: čte se to jako věta. */
+.onb-tile-t { display: block; font-weight: 600; }
+.onb-tile-s { display: block; font-size: 12px; line-height: 1.45; opacity: .7;
+  margin-top: 3px; }
+/* align-items u .onb-tile je `center` kvůli barevným vzorkům vzhledu;
+   textová dlaždice ho musí přebít, jinak visí obojí na střed. */
+.onb-tile:has(.onb-tile-s) { flex: 1 1 15rem; text-align: left;
+  align-items: stretch; gap: 0; }
+.onb-note { font-size: 12px; opacity: .6; margin: 8px 0 16px; }
 .onb-swatch { width: 100%; height: 46px; border-radius: 6px; border: 1px solid var(--border); }
 .onb-swatch.dark   { background: linear-gradient(135deg,#161b22 50%,#0d1117 50%); }
 .onb-swatch.light  { background: linear-gradient(135deg,#f6f8fa 50%,#ffffff 50%); }
@@ -1297,4 +1307,30 @@ body { display: flex; flex-direction: column; }
 .mcp-tag.guide {
   background: color-mix(in srgb, var(--amber) 16%, transparent);
   color: var(--amber);
+}
+
+/* Účet na bráně — kdo jsi a na kterém z obou hubů se zrovna díváš. */
+.acc-who{font-size:1.05rem;font-weight:600;margin:2px 0 1px}
+.acc-server{font-size:.85rem;opacity:.7;margin-top:2px;font-family:var(--mono,monospace);
+  word-break:break-all}
+.acc-label{min-width:9.5rem;flex:0 0 auto}
+.acc-where{display:flex;gap:6px;margin:14px 0 4px;flex-wrap:wrap}
+.acc-pill{font-size:.8rem;padding:3px 10px;border-radius:999px;
+  border:1px solid var(--line,#3a3524);opacity:.55}
+/* Zvýrazněná je ta strana, na které uživatel právě je — ne ta, kam může jít. */
+.acc-pill.on{opacity:1;border-color:var(--accent,#e0a458);color:var(--accent,#e0a458);
+  font-weight:600}
+/* Volba, čím se hub otevře po spuštění. Vybraná je vypnutá — klikat na to,
+   co už platí, nedává smysl a jen to bliká. */
+.acc-choice{flex:1 1 12rem;text-align:left;padding:10px 12px;border-radius:10px;
+  border:1px solid var(--line,#3a3524);background:transparent;color:inherit;
+  cursor:pointer;font:inherit}
+.acc-choice:hover:not(:disabled){border-color:var(--accent,#e0a458)}
+.acc-choice.on{border-color:var(--accent,#e0a458);
+  background:color-mix(in srgb,var(--accent,#e0a458) 10%,transparent);cursor:default}
+.acc-choice-t{font-weight:600;font-size:.9rem}
+.acc-choice-s{font-size:.78rem;opacity:.65;margin-top:2px;word-break:break-word}
+@media (max-width:600px){
+  .acc-label{min-width:0;flex:1 1 100%}
+  .acc-choice{flex:1 1 100%}
 }
