@@ -25,8 +25,12 @@
  * zapne si vývojářský režim a projde průvodce znovu. */
   const STEPS_ZAKLAD = ['vitej', 'vzhled', 'hotovo'];
   const STEPS_VYVOJ = ['vitej', 'vzhled', 'projekty', 'pamet', 'zaloha', 'hotovo'];
+  /* Na serveru je všechno nastavené v prostoru, tady se jen přihlásí. Vzhled
+     a zbytek průvodce patří hubu na serveru, ne tomuhle počítači. */
+  const STEPS_SERVER = ['vitej', 'server'];
 
   function steps() {
+    if (chosen.place === 'server') return STEPS_SERVER;
     return chosen.dev ? STEPS_VYVOJ : STEPS_ZAKLAD;
   }
 
@@ -58,6 +62,12 @@
     if (!chosen.dirs.length) chosen.dirs = (state.suggest_dirs || []).slice();
     chosen.vault = state.config.brain_dir || '';
     chosen.dev = !!(state.config && state.config.dev_mode);
+    // Na hubu, který běží na serveru, se volba místa nenabízí — už tam jsi.
+    chosen.onServer = !!(state.config && state.config.gateway_user) ||
+      !HubServer.isAppWindow();
+    chosen.place = (!chosen.onServer && opts.place) || 'pc';
+    chosen.connected = false;
+    chosen.checked = false;
     chosen.backup = state.vault_git.is_repo ? 'git' : 'later';
     build();
     render();
@@ -86,7 +96,6 @@
     root.querySelector('.onb-mark').appendChild(mark(34));
     root.querySelector('.onb-skip').onclick = () => finish(true);
     root.querySelector('.onb-back').onclick = () => { if (step > 0) { step--; render(); } };
-    root.querySelector('.onb-next').onclick = next;
     document.body.appendChild(root);
   }
 
@@ -102,9 +111,11 @@
     root.querySelector('.onb-back').style.visibility = step === 0 ? 'hidden' : '';
     root.querySelector('.onb-skip').style.visibility =
       step === steps().length - 1 ? 'hidden' : '';
-    root.querySelector('.onb-next').textContent =
-      step === steps().length - 1 ? 'Začít' : 'Dál';
-    ({vitej, vzhled, projekty, pamet, zaloha, hotovo})[steps()[step]](box);
+    const next = root.querySelector('.onb-next');
+    next.disabled = false;
+    next.onclick = goNext;             // krok `server` si ho přebije svým
+    next.textContent = step === steps().length - 1 ? 'Začít' : 'Dál';
+    ({vitej, vzhled, projekty, pamet, zaloha, hotovo, server})[steps()[step]](box);
   }
 
   function head(title, sub) {
@@ -115,6 +126,35 @@
   /* ── kroky ──────────────────────────────────────────────────────────────── */
   function vitej(box) {
     head('Claude Code Hub', 'Chvilka nastavení a pak už jen práce.');
+
+    // Kde se bude pracovat — rozhoduje o celém zbytku, tak je to první otázka.
+    if (!chosen.onServer) {
+      box.appendChild(el('div', 'onb-lead', 'Kde chceš pracovat?'));
+      const misto = el('div', 'onb-tiles');
+      for (const [id, label, note] of [
+        ['pc', 'Na tomto počítači',
+         'Hub běží tady a pracuje s projekty a pamětí na tomhle disku.'],
+        ['server', 'Na serveru',
+         'Přihlásíš se ke svému prostoru. Projekty, paměť i napojení máš ' +
+         'tam a dostaneš se k nim odkudkoli.'],
+      ]) {
+        const t = el('button', 'onb-tile' + (chosen.place === id ? ' on' : ''));
+        t.appendChild(el('span', 'onb-tile-t', label));
+        t.appendChild(el('span', 'onb-tile-s', note));
+        t.onclick = () => { chosen.place = id; render(); };
+        misto.appendChild(t);
+      }
+      box.appendChild(misto);
+    }
+
+    if (chosen.place === 'server') {
+      box.appendChild(el('div', 'onb-note',
+        'Na dalším kroku zadáš adresu serveru a přihlásíš se. Adresu, e-mail ' +
+        'a heslo ti dá ten, kdo server spravuje.'));
+      return;
+    }
+    if (!chosen.onServer) box.appendChild(el('div', 'onb-gap'));
+
     // Věta se musí trefit do počtu kroků, které pak přijdou — jinak průvodce
     // slíbí nastavení projektů a paměti a hned skončí.
     const uvod = el('p', 'onb-lead');
@@ -123,47 +163,6 @@
         ? 'Teď si nastavíme vzhled, kde máš projekty a kde bydlí paměť.'
         : 'Zbývá vybrat vzhled a můžeme začít.');
     box.appendChild(uvod);
-
-    // Týmový režim: appka se připojí k serveru (bráně). Po přihlášení běží
-    // všechno na serveru — vlastní účet, vlastní paměť, vlastní MCP.
-    const server = el('div');
-    server.style.cssText = 'margin:2px 0 18px;padding:14px;border:1px solid var(--border,#322e20);border-radius:10px;background:rgba(224,164,88,.06)';
-    const sBtn = el('button', null, '☁  Připojit se k serveru (týmový režim)');
-    sBtn.style.cssText = 'width:100%;padding:9px;border:0;border-radius:8px;background:#2a2618;color:#e8b76a;font-weight:600;cursor:pointer';
-    const sForm = el('div');
-    sForm.style.cssText = 'display:none;gap:8px;margin-top:10px';
-    const sInput = el('input');
-    sInput.type = 'text';
-    sInput.placeholder = 'adresa serveru, např. test.alba-rosa.cz';
-    sInput.style.cssText = 'flex:1;padding:9px 11px;border-radius:8px;border:1px solid #3a3524;background:#14130d;color:#e8e3d3';
-    if (state.config && state.config.server_url) sInput.value = state.config.server_url;
-    const sGo = el('button', null, 'Přihlásit se');
-    sGo.style.cssText = 'padding:9px 16px;border:0;border-radius:8px;background:#e0a458;color:#1a1710;font-weight:600;cursor:pointer;white-space:nowrap';
-    const sMsg = el('div');
-    sMsg.style.cssText = 'margin-top:8px;font-size:.85rem;color:#9a927c;min-height:1em';
-    sBtn.onclick = () => {
-      const open = sForm.style.display === 'none';
-      sForm.style.display = open ? 'flex' : 'none';
-      if (open) sInput.focus();
-    };
-    sGo.onclick = async () => {
-      let url = (sInput.value || '').trim();
-      if (!url) { sMsg.textContent = 'Zadej adresu serveru.'; return; }
-      if (!/:\/\//.test(url)) url = 'https://' + url;
-      url = url.replace(/\/+$/, '');
-      sGo.disabled = true; sMsg.textContent = 'Ukládám a otevírám přihlášení…';
-      try {
-        await io.api('config', {server_url: url});
-        location.href = url;   // dál už servíruje brána: přihlášení → hub
-      } catch (e) { sMsg.textContent = e.message || 'Nepovedlo se.'; sGo.disabled = false; }
-    };
-    sInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sGo.click(); });
-    sForm.appendChild(sInput); sForm.appendChild(sGo);
-    server.appendChild(sBtn); server.appendChild(sForm); server.appendChild(sMsg);
-    box.appendChild(server);
-
-    box.appendChild(el('p', 'onb-lead',
-      'Nebo pokračuj a nastav si Hub na tomhle počítači:'));
 
     // Volba režimu. Rozhoduje o zbytku průvodce, tak patří sem, ne na konec.
     box.appendChild(el('div', 'onb-lead', 'Jak hub používáš?'));
@@ -195,6 +194,73 @@
       list.appendChild(li);
     }
     box.appendChild(list);
+  }
+
+  /* Přihlášení na server. „Dál" se změní na „Otevřít můj prostor" a pustí,
+     až když přihlášení prošlo — dřív není kam jít. */
+  function server(box) {
+    head('Přihlášení na server', 'Tvůj prostor, tvoje paměť, odkudkoli.');
+    const next = root.querySelector('.onb-next');
+    const skip = root.querySelector('.onb-skip');
+    skip.style.visibility = 'hidden';
+    next.textContent = 'Otevřít můj prostor';
+    next.disabled = !chosen.connected;
+
+    const err = el('div', 'srv-status err');
+    err.hidden = true;
+
+    function ready(status) {
+      chosen.connected = true;
+      box.textContent = '';
+      const u = status.user || {};
+      box.appendChild(el('div', 'srv-status ok',
+        '✓ Přihlášeno jako ' + (u.name || u.email || '') +
+        ' na ' + (status.host || HubServer.hostOf(status.server))));
+      box.appendChild(el('p', 'onb-lead',
+        'Appka si to pamatuje: příště se otevře rovnou ve tvém prostoru. ' +
+        'Zpátky na počítač se přepneš v Nastavení → Účet.'));
+      const other = el('button', 'btn ghost', 'Přihlásit se jiným účtem');
+      other.onclick = () => { chosen.connected = false; render(); };
+      box.appendChild(other);
+      box.appendChild(err);
+      next.disabled = false;
+      next.focus();
+    }
+
+    // Klik na „Dál" v posledním kroku by průvodce zavřel; tady má okno odejít.
+    next.onclick = async () => {
+      if (!chosen.connected) return;
+      next.disabled = true;
+      next.textContent = 'Otevírám…';
+      const res = await HubServer.go(io).catch((e) => ({error: e.message}));
+      if (res.ok) return;
+      err.textContent = res.error || 'Prostor se nepodařilo otevřít.';
+      err.hidden = false;
+      next.disabled = false;
+      next.textContent = 'Otevřít můj prostor';
+      if (res.kind === 'auth') { chosen.connected = false; render(); }
+    };
+
+    const cfg = state.config || {};
+    if (cfg.gw_logged_in && !chosen.connected && !chosen.checked) {
+      // Na serveru už přihlášený (třeba se vrátil ze serveru) — neptat se znovu.
+      chosen.checked = true;
+      box.appendChild(el('p', 'onb-lead', 'Zjišťuji přihlášení…'));
+      io.api('account', {action: 'status', quick: true}).then((st) => {
+        if (steps()[step] !== 'server') return;
+        if (st.logged_in && !st.offline) ready(st); else render();
+      }, () => render());
+      return;
+    }
+    if (chosen.connected) {
+      io.api('account', {action: 'status', quick: true}).then(ready, () => {});
+      return;
+    }
+    box.appendChild(HubServer.panel(io, {
+      server: cfg.gw_server,
+      email: cfg.gw_email,
+      onReady: ready,
+    }));
   }
 
   function vzhled(box) {
@@ -400,9 +466,10 @@
   }
 
   /* ── posun ──────────────────────────────────────────────────────────────── */
-  async function next() {
+  async function goNext() {
     const btn = root.querySelector('.onb-next');
     btn.disabled = true;
+    const at = step;
     try {
       if (steps()[step] === 'projekty') {
         await io.api('config', {project_dirs: chosen.dirs});
@@ -423,7 +490,9 @@
     } catch (err) {
       io.toast(err.message || String(err));
     } finally {
-      btn.disabled = false;
+      // Po posunu tlačítko nastavil už render() podle nového kroku — krok
+      // `server` ho drží vypnuté, dokud se nepřihlásí.
+      if (step === at && root) btn.disabled = false;
     }
   }
 

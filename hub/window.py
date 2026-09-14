@@ -95,6 +95,10 @@ def _open_chromium(browser, url):
         f"--user-data-dir={PROFILE_DIR}",   # a profile of our own, not the user's
         "--no-first-run",
         "--no-default-browser-check",
+        # Sestavení „Chrome for Testing" (např. to od Playwrightu) jinak nad
+        # appkou drží žlutý pruh, že se nemá používat na běžné prohlížení.
+        # Okno hubu je jediná stránka, kterou tenhle profil kdy otevře.
+        "--disable-infobars",
         "--window-size=1360,860",
     ]
     if not core.IS_WINDOWS and not core.IS_MAC:

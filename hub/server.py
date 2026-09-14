@@ -397,7 +397,13 @@ class Handler(BaseHTTPRequestHandler):
                            "newtab": core.CONFIG.get("newtab") or {},
                            "show_archived": bool(core.CONFIG.get("show_archived")),
                            "dev_mode": bool(core.CONFIG.get("dev_mode")),
-                           "server_url": core.CONFIG.get("server_url") or "",
+                           # Server, na kterém má appka účet, a jestli se má
+                           # otevírat rovnou tam. Token sem nepatří — stránka
+                           # ho nepotřebuje a /api/state se kreslí všude.
+                           "gw_server": core.CONFIG.get("gw_server") or "",
+                           "gw_email": (core.CONFIG.get("gw_user") or {}).get("email", ""),
+                           "gw_logged_in": bool(core.CONFIG.get("gw_token")),
+                           "server_mode": bool(core.CONFIG.get("server_mode")),
                            # Vyplněné jen na instanci běžící na bráně — podle
                            # toho nastavení pozná, že je na serveru.
                            "gateway_user": core.CONFIG.get("gateway_user") or None},
@@ -483,18 +489,32 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 return self._json({"error": f"Nepodařilo se uložit: {exc}"}, 500)
         if name == "account":
-            # Účet na bráně: přihlášení, stav a předání přihlášení prohlížeči.
-            action = (payload or {}).get("action", "status")
+            # Účet na bráně: ověření adresy, přihlášení, stav a přechod okna
+            # do prostoru na serveru.
+            payload = payload or {}
+            action = payload.get("action", "status")
+            if action == "probe":
+                return self._json(account.probe(payload.get("server", "")))
             if action == "login":
                 return self._json(account.login(
-                    (payload or {}).get("server", ""),
-                    (payload or {}).get("email", ""),
-                    (payload or {}).get("password", "")))
+                    payload.get("server", ""),
+                    payload.get("email", ""),
+                    payload.get("password", "")))
             if action == "logout":
                 return self._json(account.logout())
-            if action == "handoff":
-                return self._json(account.handoff())
-            return self._json(account.status())
+            if action in ("handoff", "connect"):
+                # `connect` = přejít na server a pamatovat si to: appka se
+                # příště otevře rovnou tam. Zapíše se, až když předání vyšlo —
+                # jinak by se příští start pokoušel o server, který nechce.
+                res = account.handoff(timeout=8)
+                if action == "connect" and res.get("url"):
+                    core.save_config({"server_mode": True})
+                return self._json(res)
+            if action == "local":
+                core.save_config({"server_mode": False})
+                return self._json({"ok": True})
+            return self._json(account.status(
+                timeout=5 if payload.get("quick") else account.TIMEOUT))
         if name == "remote":
             # Telefon: stav, párovací QR a zapnutí/vypnutí druhého listeneru.
             action = (payload or {}).get("action", "")
@@ -531,7 +551,7 @@ class Handler(BaseHTTPRequestHandler):
             allowed = ("project_dirs", "brain_dir", "onboarded", "vault_autosync",
                        "newtab", "extra_projects", "show_archived",
                        "agents", "default_agent", "project_agents",
-                       "remote_keep_running", "server_url", "dev_mode")
+                       "remote_keep_running", "dev_mode")
             updates = {k: v for k, v in payload.items() if k in allowed}
             if not updates:
                 return self._json({"error": "Nic k uložení."}, 400)

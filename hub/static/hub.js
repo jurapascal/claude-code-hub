@@ -406,6 +406,19 @@ function renderFooter() {
   foot.appendChild(ver);
 }
 
+/* Kde se pracuje. Okno vypadá na počítači i na serveru stejně, tak to říká
+   štítek v hlavičce — a klik na něj vede do Účtu, odkud se přepíná. */
+function renderPlace() {
+  const badge = document.querySelector('.topbar-badge');
+  if (!badge) return;
+  const u = STATE.config.gateway_user;
+  badge.textContent = u ? 'SERVER' : 'HUB';
+  badge.classList.toggle('on-server', !!u);
+  badge.title = u ? `Prostor na serveru · ${u.name || u.email}` : '';
+  badge.onclick = u
+    ? () => HubSettings.open({...hubIO(), state: STATE, tab: 'ucet'}) : null;
+}
+
 /* Uvítání. Není to jen ozdoba — je to jediná obrazovka, kterou člověk vidí,
    než něco otevře, takže nese i to, co je dobré vědět hned: kde se naposledy
    dělalo, co zůstalo rozdělané a jestli něco chybí. */
@@ -707,6 +720,7 @@ async function reload() {
   renderMemory();
   renderActions();
   renderFooter();
+  renderPlace();
   renderDoctor();
   renderWelcome();
   renderNewTabButtons();
@@ -1447,6 +1461,13 @@ window.addEventListener('unhandledrejection', (ev) => {
 });
 
 async function main() {
+  // Hub na serveru: appka sem přišla s `#local=`, cestou zpátky na počítač.
+  // Čte se hned, ať adresa s tokenem nezůstane viset v řádku ani v historii.
+  HubServer.captureLocal();
+  // Návrat ze serveru se zapíše dřív, než se načte zbytek hubu: kdo okno
+  // zavře hned po návratu, má příště naskočit tady, ne zase na serveru.
+  const returned = await applyReturn();
+
   const saved = localStorage.getItem('hub-theme');
   DARK = saved ? saved === 'dark'
                : !window.matchMedia('(prefers-color-scheme: light)').matches;
@@ -1502,11 +1523,15 @@ async function main() {
   // pagehide, který přijde až ve chvíli, kdy se opravdu odchází: kdyby se
   // ukládalo už v beforeunload, zapsal by se postup i po kliknutí na „Ne".
   window.addEventListener('beforeunload', (ev) => {
+    // Přechod mezi počítačem a serverem není zavírání: taby na počítači běží
+    // dál a stránka se k nim po návratu připojí.
+    if (window.HUB_LEAVING) return;
     if (!TABS.some(t => t.id && !t.exited)) return;
     ev.preventDefault();
     ev.returnValue = '';             // vyžadují starší prohlížeče
   });
   window.addEventListener('pagehide', () => {
+    if (window.HUB_LEAVING) return;
     const ids = TABS.filter(t => t.id && !t.exited).map(t => t.id);
     if (!ids.length) return;
     // Běžný fetch by se při zavírání stránky zrušil; beacon se doručí i potom.
@@ -1518,9 +1543,52 @@ async function main() {
   connect();
   checkForUpdate();
 
-  // Napoprvé se hub nastavuje tady, ne v instalačce — ta běží jednou a v
-  // terminálu, takže po ní nebylo kde nastavení změnit.
-  if (!STATE.onboarded) HubOnboarding.open({...hubIO(), state: STATE});
+  await startScreen(returned);
+}
+
+/* Okno se vrátilo ze serveru: `?mode=local` (pracovat tady) nebo
+ * `?mode=logout` (odhlásit appku). Parametr se z adresy hned odstraní, ať
+ * reload stránky akci nezopakuje. */
+async function applyReturn() {
+  if (!HubServer.isAppWindow()) return '';
+  const params = new URLSearchParams(location.search);
+  const mode = params.get('mode');
+  if (!mode) return '';
+  params.delete('mode');
+  history.replaceState(null, '', location.pathname + '?' + params.toString());
+  if (mode === 'local') await api('account', {action: 'local'}).catch(() => {});
+  else if (mode === 'logout') await api('account', {action: 'logout'}).catch(() => {});
+  else return '';
+  return mode;
+}
+
+/* Co ukázat po startu: prostor na serveru, přihlášení, nebo průvodce.
+ *
+ * Když je appka v serverovém režimu, launcher okno pošle na server rovnou.
+ * Sem se tedy dostane, jen když to nevyšlo (server neodpovídá, přihlášení
+ * vypršelo) — nebo když se okno ze serveru vrátilo. */
+async function startScreen(returned) {
+  const onLocal = () => {
+    // Napoprvé se hub nastavuje tady, ne v instalačce — ta běží jednou a v
+    // terminálu, takže po ní nebylo kde nastavení změnit.
+    if (!STATE.onboarded) HubOnboarding.open({...hubIO(), state: STATE});
+  };
+  if (STATE.config.gateway_user || !HubServer.isAppWindow()) return onLocal();
+
+  if (returned === 'local') {
+    toast('Pracuješ na tomhle počítači. Na server se vrátíš v Nastavení → Účet.');
+    return onLocal();
+  }
+  if (returned === 'logout') {
+    HubServer.gate(hubIO(), {loggedOut: true, onLocal,
+                             note: 'Odhlášeno. Přihlas se znovu, nebo pracuj na počítači.'});
+    return;
+  }
+  if (STATE.config.server_mode) {
+    HubServer.gate(hubIO(), {onLocal});
+    return;
+  }
+  onLocal();
 }
 
 /* ── Je venku nová verze? ────────────────────────────────────────────────────

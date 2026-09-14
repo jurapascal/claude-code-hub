@@ -74,6 +74,10 @@ dělá jednu aplikaci:
   se napojí kliknutím — buď globálně, nebo jen do jedné složky.
 - **Nastavení po sekcích** — vzhled, projekty, taby, paměť, napojení, aktualizace
   a logy se přepínají tlačítky vlevo; vybraná sekce se pamatuje.
+- **Prostor na serveru** — při startu si vybereš, jestli pracovat na počítači,
+  nebo se přihlásit ke svému prostoru na serveru s bránou. Adresa se ověří,
+  přihlásíš se e-mailem a heslem a appka se příště otevře rovnou tam — se
+  vším, co v prostoru máš. Podrobně níž.
 - **Telefon** — hub se dá přes Tailscale otevřít i z mobilu (Android i iPhone):
   QR kód v nastavení, ikona na ploše, šuplík místo panelu a řádek kláves,
   ze kterého jde poslat Esc, Tab i šipky. Podrobně níž.
@@ -315,6 +319,35 @@ assembleRelease`.
 Na iPhonu žádná .ipa nebude — bez placeného účtu Apple Developer se aplikace do
 telefonu nedostane a PWA na ploše umí přesně totéž.
 
+## Prostor na serveru
+
+Hub nemusí běžet jen na počítači. Na serveru s [bránou](gateway/README.md) má
+každý svůj **prostor** — vlastní projekty, paměť, napojení i session Claude
+Code — a appka se do něj umí přihlásit:
+
+1. Při prvním spuštění vyber **Na serveru** (nebo kdykoli později ⚙ → *Účet*).
+2. Napiš adresu serveru a klikni **Ověřit**. Appka se brány zeptá, jestli je
+   to opravdu server Code Hubu — heslo tak neodejde na překlepnutou adresu,
+   kde běží něco jiného.
+3. Přihlas se e-mailem a heslem od správce serveru → **Otevřít můj prostor**.
+
+Příště se appka otevře **rovnou ve tvém prostoru**. Když server neodpovídá nebo
+přihlášení vypršelo, řekne proč a nabídne *Zkusit znovu*, přihlášení, nebo
+*Pracovat na tomto počítači*. Na serveru svítí v hlavičce štítek **SERVER**;
+klik na něj otevře *Účet*, odkud se vrátíš na počítač nebo odhlásíš.
+
+Jak to drží pohromadě:
+
+- **Heslo se neukládá.** V `hub-config.json` je jen token zařízení (`gw_token`).
+- **Okno se přihlašuje jednorázovým kódem** s minutovou platností
+  (`/gw/handoff`), ne tokenem v adrese, která by skončila v historii. Okno
+  i appka drží tentýž token, takže *Odhlásit se* na serveru odhlásí i appku.
+- **Hub na počítači běží dál**, dokud je okno otevřené — taby na počítači
+  nezaniknou a cesta zpátky vede přes adresu, kterou appka předá ve fragmentu
+  `#local=`. Fragment prohlížeč serveru neposílá, takže se nedostane do logů.
+- Z příkazové řádky: `claude-hub.py --server=adresa` zapne otevírání na
+  serveru, `--local` ho vypne.
+
 ## Playwright MCP (volitelné)
 
 Prohlížeč pro Claude Code — otevře stránku, klikne, přečte konzoli, udělá screenshot.
@@ -507,6 +540,10 @@ curl -fsSL https://raw.githubusercontent.com/jurapascal/claude-code-hub/main/get
 | `remote_port` | port, na kterém poslouchá listener pro telefon | `8760` |
 | `remote_token` | dlouhodobý token spárovaného telefonu (vyrobí se sám) | `""` |
 | `remote_keep_running` | nechat hub běžet i po zavření okna, ať je telefon dostupný pořád | `false` |
+| `server_mode` | otevírat appku rovnou v prostoru na serveru (zapne se po přihlášení) | `false` |
+| `gw_server` | adresa serveru s bránou | `""` |
+| `gw_token` | token zařízení z přihlášení na server — heslo se neukládá | `""` |
+| `gw_user` | kdo je na serveru přihlášený (jméno, e-mail; předvyplní přihlášení) | `null` |
 
 Projekt se do panelu dostane, když ve složce je `.git`, `package.json`, `composer.json`,
 soubor `*.php` nebo Shopify struktura (`sections/`, `templates/`) — podle toho se pozná
@@ -534,6 +571,8 @@ hub/static/settings.js    nastavení po sekcích (vzhled, projekty, paměť, nap
 hub/static/composer.js    bublina místo vstupního řádku (text, model, slash příkazy, přílohy, režimy)
                           + karta s dotazem, když se Claude Code ptá
 hub/static/stats.js       statistiky používání
+hub/account.py            účet na serveru: ověření adresy, přihlášení, předání okna bráně
+hub/static/server.js      přihlášení na server, přechod okna do prostoru a zpět, obrazovka při startu
 hub/remote.py             přístup z telefonu: stav Tailscalu, `tailscale serve`, párovací adresa
 hub/qr.py                 QR kód jako SVG, jen ze standardní knihovny (bez závislostí)
 hub/static/mobile.js      chování na telefonu: šuplík, dlouhý stisk, klávesnice, service worker
@@ -548,7 +587,7 @@ tools/settings_merge.py   přidá hooky (a volitelně bypass) do settings.json, 
 tools/windows-check.ps1   kontrola na Windows: odkazy, ConPTY, schránka, složka paměti
 tools/make-icons.py       ze značky vyrobí .png, .ico i favicony (jediná cesta, jak vznikají)
 tools/uitest.mjs          zkouška UI na všech jádrech a velikostech (Chromium, Firefox, WebKit)
-gateway/                  víceuživatelská brána — účty, izolace session (rozestavěné)
+gateway/                  víceuživatelská brána — účty, izolace, prostor každého uživatele
 skills/<jméno>/SKILL.md   šablony slash příkazů ({{MEMORY_DIR}} apod. doplní instalátor)
 legacy/claude-hub-gtk.py  původní GTK 3 + VTE verze (Linux only, už se neinstaluje)
 hub-config.example.json   vzor konfigurace

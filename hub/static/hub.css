@@ -61,6 +61,7 @@ body { display: flex; flex-direction: column; }
   border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
   border-radius: 5px; padding: 1px 5px 2px; line-height: 1;
 }
+.topbar-badge.on-server { cursor: pointer; }
 .topbar-actions { display: flex; gap: 2px; }
 
 .iconbtn {
@@ -1309,28 +1310,29 @@ body { display: flex; flex-direction: column; }
   color: var(--amber);
 }
 
-/* Účet na bráně — kdo jsi a na kterém z obou hubů se zrovna díváš. */
-.acc-who{font-size:1.05rem;font-weight:600;margin:2px 0 1px}
-.acc-server{font-size:.85rem;opacity:.7;margin-top:2px;font-family:var(--mono,monospace);
-  word-break:break-all}
-.acc-label{min-width:9.5rem;flex:0 0 auto}
-.acc-where{display:flex;gap:6px;margin:14px 0 4px;flex-wrap:wrap}
-.acc-pill{font-size:.8rem;padding:3px 10px;border-radius:999px;
-  border:1px solid var(--line,#3a3524);opacity:.55}
-/* Zvýrazněná je ta strana, na které uživatel právě je — ne ta, kam může jít. */
-.acc-pill.on{opacity:1;border-color:var(--accent,#e0a458);color:var(--accent,#e0a458);
-  font-weight:600}
-/* Volba, čím se hub otevře po spuštění. Vybraná je vypnutá — klikat na to,
-   co už platí, nedává smysl a jen to bliká. */
-.acc-choice{flex:1 1 12rem;text-align:left;padding:10px 12px;border-radius:10px;
-  border:1px solid var(--line,#3a3524);background:transparent;color:inherit;
-  cursor:pointer;font:inherit}
-.acc-choice:hover:not(:disabled){border-color:var(--accent,#e0a458)}
-.acc-choice.on{border-color:var(--accent,#e0a458);
-  background:color-mix(in srgb,var(--accent,#e0a458) 10%,transparent);cursor:default}
-.acc-choice-t{font-weight:600;font-size:.9rem}
-.acc-choice-s{font-size:.78rem;opacity:.65;margin-top:2px;word-break:break-word}
-@media (max-width:600px){
-  .acc-label{min-width:0;flex:1 1 100%}
-  .acc-choice{flex:1 1 100%}
+/* Účet na serveru — kdo jsi a kde se zrovna pracuje. */
+.acc-who { font-size: 15px; font-weight: 600; color: var(--fg-bright); margin: 8px 0 1px; }
+
+/* Přihlášení na server: adresa → ověřit → e-mail a heslo. Stejný blok je
+   v uvítání, v obrazovce při startu i v nastavení, tak nesmí záviset na tom,
+   do čeho je vložený. */
+.srv { display: flex; flex-direction: column; max-width: 26rem; }
+.srv-label { font-size: 12px; color: var(--dim); margin: 12px 0 5px; }
+.srv-label:first-child { margin-top: 0; }
+.srv-row { display: flex; gap: 8px; align-items: center; }
+.srv-input {
+  flex: 1; min-width: 0; width: 100%; padding: 8px 10px; border-radius: 8px;
+  font-size: 13px; font-family: inherit;
+  background: var(--bg-card); border: 1px solid var(--border); color: var(--fg-bright);
 }
+.srv-input:focus { outline: none; border-color: var(--amber); }
+.srv-creds { display: flex; flex-direction: column; margin-top: 6px; }
+.srv-actions { margin-top: 16px; }
+.srv-status { font-size: 12.5px; line-height: 1.5; margin-top: 8px; }
+.srv-status.ok   { color: var(--green); font-weight: 600; }
+.srv-status.err  { color: var(--red); }
+.srv-status.warn { color: var(--amber); margin: 0 0 14px; }
+.srv-status.busy { color: var(--dim); }
+.srv-gate .onb-box { width: min(520px, 100%); }
+.srv-gate .onb-body { min-height: 9rem; }
+.onb-gap { height: 18px; }

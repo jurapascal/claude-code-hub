@@ -2,27 +2,51 @@
 
 Hub v `hub/` je jednouživatelský: běží na tvém stroji, poslouchá na loopbacku
 a telefon se k němu dostane přes Tailscale. **Brána je něco jiného**: server,
-na kterém má každý z týmu svůj účet, svůj Obsidian a svou session Claude Code,
-a mobilní aplikace je jen spojnice — napíšeš, pošle se to sem, odpověď se vrátí.
+na kterém má každý z týmu svůj účet, svůj Obsidian a svou session Claude Code.
+Appka Claude Code Hub i prohlížeč na telefonu jsou jen okno do toho prostoru.
 
 ```
-[iOS / Android]  ──HTTPS──>  [brána]
-   zadáš adresu                ├── účty a tokeny        accounts.py   ✔ hotovo
-   píšeš, čteš odpovědi        ├── izolace session      isolation.py  ✔ hotovo
-                               ├── pracovní prostor     workspace.py  … chybí
-                               └── HTTP + websocket     server.py     … chybí
+[appka / prohlížeč]  ──HTTPS──>  [nginx]  ──>  [brána]
+   adresa → ověřit                               ├── účty a tokeny     accounts.py
+   e-mail a heslo                                ├── izolace session   isolation.py
+   tvůj prostor                                  ├── prostor uživatele workspace.py
+                                                 ├── přihlášení + proxy server.py
+                                                 └── správa účtů (CLI) admin.py
 ```
 
 ## Stav
 
 | díl | co dělá | stav |
 |---|---|---|
-| `accounts.py` | účty, hesla (scrypt), tokeny pro zařízení | hotovo, otestováno |
-| `isolation.py` | čím se session pouští, aby neviděla na cizí | hotovo, otestováno |
-| `workspace.py` | domov uživatele, jeho vault, session Claude Code | chybí |
-| `server.py` | přihlášení, websocket, směrování do session | chybí |
-| `admin.py` | správa účtů z příkazové řádky | chybí |
-| klienti | nativní iOS a Android | chybí |
+| `accounts.py` | účty, role, hesla (scrypt), tokeny pro zařízení | hotovo |
+| `isolation.py` | čím se session pouští, aby neviděla na cizí | hotovo |
+| `workspace.py` | domov uživatele, jeho vault, konfigurace jeho hubu | hotovo |
+| `server.py` | přihlášení, HTTP + websocket proxy do instance hubu | hotovo |
+| `admin.py` | správa účtů z příkazové řádky | hotovo |
+| appka | výběr počítač / server, ověření adresy, přihlášení | hotovo (2.2.0) |
+
+Účty se zakládají jen z příkazové řádky na serveru — webová správa schválně není:
+
+    python3 -m gateway.admin add jmeno@firma.cz --name "Jméno" --role user
+
+## Rozhraní pro appku
+
+Appka se s bránou baví přes pár adres. Všechno ostatní brána po přihlášení
+proxuje do instance hubu toho uživatele.
+
+| adresa | k čemu | ověření |
+|---|---|---|
+| `GET /gw/info` | appka pozná, že je na adrese opravdu brána Code Hubu | žádné |
+| `POST /login` (JSON) | e-mail a heslo → token zařízení | heslo |
+| `GET /gw/me` | komu token patří, jestli ještě platí | `Authorization: Bearer` |
+| `POST /gw/handoff` | token → jednorázový kód do adresy okna (60 s) | `Authorization: Bearer` |
+| `GET /login?handoff=kód` | okno dostane cookie s **tímtéž** tokenem | kód |
+| `GET /logout` | zneplatní token z cookie | cookie |
+
+Předání při každém spuštění nevyrábí nový token: cookie okna nese token appky.
+Databáze tak nenarůstá s každým startem a *Odhlásit se* v okně odhlásí i appku —
+příště se opravdu zeptá. Brána z doby před `/gw/info` se pozná podle toho, jak
+`/gw/me` odmítne cizí token, takže novější appka se přihlásí i k ní.
 
 ## Izolace není volitelná
 

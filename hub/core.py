@@ -36,6 +36,9 @@ DEFAULTS = {
     "ftp_deploy_script": "~/.claude/ftp-deploy.sh",
     "bash": "",     # Windows: path to Git for Windows bash.exe; empty = autodetect
     "browser": "",  # empty = autodetect an app-window capable browser
+    # Čím okno otevřít: "chromium", "webkit", "browser". Prázdné = pořadí
+    # z window.open_window. Totéž co `--window=`, jen se to pamatuje.
+    "window": "",
     # Telefon přes Tailscale — dokud si to uživatel nezapne, žádný druhý
     # listener nevzniká a chování hubu je přesně jako dřív.
     "remote_enabled": False,
@@ -50,17 +53,33 @@ DEFAULTS = {
     "gw_server": "",
     "gw_token": "",
     "gw_user": None,
+    # Že se má appka otevírat rovnou v prostoru na serveru (`gw_server`).
+    # Zapíná se, až když přihlášení i předání okna vyšlo — sama adresa nic
+    # nepřepíná, kdo si ji jen zkusil, o hub na počítači nepřijde.
+    "server_mode": False,
 }
 
 
 def load_config():
     cfg = dict(DEFAULTS)
+    raw = {}
     try:
         # utf-8-sig: PowerShell 5.1 rád píše BOM a json.load by na něm spadl
         with open(CONFIG_PATH, encoding="utf-8-sig") as fh:
-            cfg.update({k: v for k, v in json.load(fh).items() if v})
+            raw = json.load(fh)
+        cfg.update({k: v for k, v in raw.items() if v})
     except Exception:
         pass  # no config yet → defaults; the app must never fail to start on this
+    # Vývojářský režim přibyl ve 2.1.0 a výchozí vypnuto platí jen pro nové
+    # instalace, kterých se na něj zeptá průvodce. Kdo hub nastavený už má a
+    # klíč v souboru nemá, ten Deploy, Push, Projekty, Taby, Paměť i Logy
+    # celou dobu používal — aktualizace mu je schovat nesmí.
+    if "dev_mode" not in raw and raw.get("onboarded"):
+        cfg["dev_mode"] = True
+    # 2.1.0 si adresu serveru z uvítání psala do `server_url`. Přihlášení teď
+    # bydlí v `gw_*`, tak ať ji člověk nemusí psát znovu.
+    if raw.get("server_url") and not raw.get("gw_server"):
+        cfg["gw_server"] = raw["server_url"]
     return cfg
 
 

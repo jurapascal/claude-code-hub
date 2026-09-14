@@ -18,6 +18,8 @@ pywinpty on Windows). One code path, all three platforms.
     python3 claude-hub.py --no-browser    start the server and print the URL
     python3 claude-hub.py --window=webkit force a window host
                                           (chromium | webkit | browser)
+    python3 claude-hub.py --server=adresa otevírat prostor na serveru
+    python3 claude-hub.py --local         otevírat hub na tomhle počítači
 """
 import os
 import sys
@@ -37,7 +39,7 @@ if sys.platform == "win32":
         except (AttributeError, ValueError, OSError):
             pass
 
-from hub import core, pty_backend, server, window  # noqa: E402
+from hub import account, core, pty_backend, server, window  # noqa: E402
 
 
 MCP_MARKS = {"ok": "+", "auth": "!", "fail": "-", "local": ".",
@@ -142,6 +144,11 @@ def _mcp_summary(mcp):
     return ", ".join(parts)
 
 
+def _window_open(proc):
+    """Běží ještě proces okna? U prohlížeče, který okno předal jinam, už ne."""
+    return proc is not None and proc.poll() is None
+
+
 def wait_for_page(proc=None, grace=10, startup=60):
     """Stay alive while the page is open. The page — not the browser process — is
     the signal.
@@ -150,24 +157,34 @@ def wait_for_page(proc=None, grace=10, startup=60):
     within milliseconds. Waiting on that process meant shutting the server down
     while the window was still on screen, and the user got ERR_CONNECTION_REFUSED
     on a window that had never even loaded.
+
+    Výjimka je prostor na serveru: okno pak ukazuje bránu, ne tuhle stránku, a
+    websocket se sem nepřipojí vůbec. Server tu ale musí zůstat — taby, které
+    na počítači běží dál, a cesta zpátky („Pracovat na tomto počítači") vedou
+    právě sem. Dokud je appka v serverovém režimu, drží se proto procesu okna.
     """
     hub = server.HUB
-    deadline = time.time() + startup
-    while hub.clients == 0 and hub.last_empty_at is None:
-        if time.time() > deadline:
-            core.log("okno se do %d s nepřipojilo — končím" % startup)
-            if proc is not None:
-                try:
-                    proc.terminate()
-                except Exception:
-                    pass
-            return
-        time.sleep(0.3)
+    started = time.time()
     while True:
-        time.sleep(0.5)
+        time.sleep(0.4)
         if hub.clients > 0:
             continue
-        if hub.last_empty_at and time.time() - hub.last_empty_at > grace:
+        if core.CONFIG.get("server_mode") and _window_open(proc):
+            continue
+        if hub.last_empty_at is None:
+            # Stránka se ještě nepřipojila. V serverovém režimu to nevadí —
+            # okno šlo rovnou na bránu —, jinak je to okno, které nenaběhlo.
+            if time.time() - started > startup:
+                if not core.CONFIG.get("server_mode"):
+                    core.log("okno se do %d s nepřipojilo — končím" % startup)
+                    if proc is not None:
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            pass
+                return
+            continue
+        if time.time() - hub.last_empty_at > grace:
             # S "nechat běžet pro telefon" je zavřené okno jen zavřené okno —
             # server musí zůstat, jinak se z mobilu není kam připojit.
             if core.CONFIG.get("remote_enabled") and \
@@ -177,36 +194,25 @@ def wait_for_page(proc=None, grace=10, startup=60):
             return
 
 
-def _normalize_url(url):
-    """Z holé adresy udělá https:// URL. `test.alba-rosa.cz` → `https://test.alba-rosa.cz`."""
-    url = (url or "").strip()
-    if not url:
-        return ""
-    if "://" not in url:
-        url = "https://" + url
-    return url.rstrip("/")
+def server_start_url(local_url):
+    """Kam otevřít okno v serverovém režimu. None = zůstat na počítači.
 
+    Předání se chystá tady, ještě před oknem: kdyby se to nechalo na stránce,
+    bliklo by nejdřív celé UI hubu na počítači a teprve pak by se přeskočilo.
+    Když to nevyjde (server nejede, přihlášení vypršelo), otevře se hub na
+    počítači a ten člověku řekne proč a co s tím — viz HubServer.gate.
 
-def run_server_client(url, prefer=""):
-    """Tenký klient: okno appky míří rovnou na bránu, žádný lokální server.
-
-    Přihlášení i celý hub servíruje server; okno má vlastní profil, který si
-    drží přihlašovací cookie, takže po prvním přihlášení naskočí hub rovnou.
+    Adresa počítače jde do fragmentu (`#local=`): ten prohlížeč serveru nikdy
+    nepošle, takže token téhle instance neskončí v logu nginx. Hub na serveru
+    si ho z adresy přečte a vede přes něj cestu zpátky.
     """
-    core.log(f"server režim: okno na {url}")
-    host, proc, blocking = window.open_window(url, prefer)
-    core.log(f"okno: {host}")
-    try:
-        if blocking:
-            blocking()            # WebKitGTK: smyčka drží okno
-        elif proc is not None:
-            proc.wait()           # vlastní profil → proces je to okno
-        else:
-            while True:           # holá záložka v prohlížeči — není na co čekat
-                time.sleep(3600)
-    except KeyboardInterrupt:
-        pass
-    return 0
+    import urllib.parse
+    res = account.handoff(timeout=8)
+    if not res.get("url"):
+        core.log(f"server: {res.get('error')} — otevírám hub na počítači", "warn")
+        return None
+    core.log(f"server: otevírám prostor na {account.normalize(core.CONFIG.get('gw_server'))}")
+    return res["url"] + "#local=" + urllib.parse.quote(local_url, safe="")
 
 
 def main():
@@ -214,31 +220,23 @@ def main():
     if "--doctor" in args:
         return doctor()
 
-    prefer = ""
+    prefer = core.CONFIG.get("window", "")
     for arg in args:
         if arg.startswith("--window="):
             prefer = arg.split("=", 1)[1]
 
-    # Server (týmový) režim: appka je jen okno na bránu. Volba se pamatuje
-    # v hub-config.json (server_url); `--server=URL` ji nastaví, `--local` zruší.
-    server_url = ""
+    # Prostor na serveru: `--server[=adresa]` ho zapne, `--local` vypne.
+    # Samo přepnutí nic neověřuje — bez přihlášení se otevře hub na počítači
+    # a ukáže přihlášení. `--no-browser` je vždycky hub na počítači: tak ho
+    # pouští i brána pro každého uživatele a ta se na server ptát nesmí.
     for arg in args:
-        if arg.startswith("--server="):
-            server_url = _normalize_url(arg.split("=", 1)[1])
-    if server_url:
-        core.save_config({"server_url": server_url})
-    if "--local" in args:
-        core.save_config({"server_url": ""})
-        server_url = ""
-    else:
-        server_url = server_url or _normalize_url(core.CONFIG.get("server_url", ""))
-    if server_url:
-        # --no-browser znamená „neotvírej okno" i tady. Bez téhle kontroly ho
-        # serverový režim otevřel i tak a příznak platil jen pro lokální hub.
-        if "--no-browser" in args:
-            core.log(f"server režim: {server_url} (okno neotevírám, --no-browser)")
-            return 0
-        return run_server_client(server_url, prefer)
+        if arg == "--server" or arg.startswith("--server="):
+            updates = {"server_mode": True}
+            if "=" in arg:
+                updates["gw_server"] = account.normalize(arg.split("=", 1)[1])
+            core.save_config(updates)
+        elif arg == "--local":
+            core.save_config({"server_mode": False})
 
     httpd, url = server.start()
     core.log(f"start: port {httpd.server_address[1]}, platforma {core.doctor()['platform']}")
@@ -250,7 +248,10 @@ def main():
             print(url, flush=True)
             while True:
                 time.sleep(3600)
-        host, proc, blocking = window.open_window(url, prefer)
+        target = url
+        if core.CONFIG.get("server_mode"):
+            target = server_start_url(url) or url
+        host, proc, blocking = window.open_window(target, prefer)
         core.log(f"okno: {host}")
         if blocking:
             blocking()          # in-process loop owns the window's lifetime

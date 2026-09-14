@@ -29,6 +29,8 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from hub import __version__
+
 from . import config, isolation, workspace
 from .accounts import Accounts
 
@@ -43,32 +45,37 @@ HUB_URL_RE = "http://127.0.0.1:"
 # drží token — ale prohlížeč potřebuje cookie na doméně brány. Posílat token
 # v adrese by ho zapsalo do historie, proto se za něj vymění jednorázový kód
 # s minutovou platností, který se při prvním použití zahodí.
+#
+# Cookie dostane **tentýž token**, který drží appka — ne nový. Appka se předává
+# při každém spuštění, takže nový token by každým startem přibyl v databázi.
+# A hlavně: odhlášení v okně pak zneplatní i přihlášení appky, takže se po
+# „Odhlásit se" příště opravdu zeptá, místo aby tiše naskočila zpátky.
 HANDOFF_TTL = 60
-_handoffs = {}                       # kód -> (user_id, do kdy)
+_handoffs = {}                       # kód -> (token zařízení, do kdy)
 _handoff_lock = threading.Lock()
 
 
-def _handoff_new(user_id):
+def _handoff_new(token):
     code = secrets.token_urlsafe(24)
     now = time.time()
     with _handoff_lock:
-        for old, (_uid, exp) in list(_handoffs.items()):
+        for old, (_tok, exp) in list(_handoffs.items()):
             if exp < now:
                 _handoffs.pop(old, None)
-        _handoffs[code] = (user_id, now + HANDOFF_TTL)
+        _handoffs[code] = (token, now + HANDOFF_TTL)
     return code
 
 
 def _handoff_take(code):
-    """Vrátí user_id a kód zahodí. Druhé použití už nic nedostane."""
+    """Vrátí token zařízení a kód zahodí. Druhé použití už nic nedostane."""
     if not code:
-        return None
+        return ""
     with _handoff_lock:
         found = _handoffs.pop(code, None)
     if not found:
-        return None
-    user_id, expiry = found
-    return user_id if expiry >= time.time() else None
+        return ""
+    token, expiry = found
+    return token if expiry >= time.time() else ""
 
 
 def _errlog(where, exc):
@@ -370,6 +377,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._logout()
             # Rozhraní pro hub běžící na počítači: ověřuje se tokenem
             # v hlavičce, ne cookie, a nikdy se neproxuje do instance.
+            if route == "/gw/info":
+                return self._gw_info()
             if route == "/gw/me":
                 return self._gw_me()
             if route == "/gw/handoff":
@@ -407,14 +416,13 @@ class Handler(BaseHTTPRequestHandler):
             code = urllib.parse.parse_qs(
                 urllib.parse.urlparse(self.path).query).get("handoff", [""])[0]
             if code:
-                user_id = _handoff_take(code)
-                user = self.accounts.by_id(user_id) if user_id else None
-                if not user:
+                token = _handoff_take(code)
+                # Token se ověřuje až teď, ne při vydání kódu: mezi tím mohl
+                # být účet zablokovaný nebo zařízení odhlášené.
+                if not token or not self.accounts.user_for_token(token):
                     return self._send(200, login_page(
                         "Odkaz na přihlášení už platnost ztratil. "
-                        "Zkus to z hubu znovu."), "text/html; charset=utf-8")
-                token = self.accounts.issue_token(
-                    user, self.headers.get("User-Agent", "")[:60])
+                        "Zkus to z appky znovu."), "text/html; charset=utf-8")
                 return self._redirect(
                     "/", extra={"Set-Cookie": self._set_cookie(token)})
             return self._send(200, login_page(),
@@ -436,10 +444,23 @@ class Handler(BaseHTTPRequestHandler):
         return self._redirect("/", extra={"Set-Cookie": self._set_cookie(token)})
 
     # ---- rozhraní pro hub na počítači ----
-    def _bearer(self):
+    def _bearer_token(self):
         head = self.headers.get("Authorization", "")
-        token = head[7:].strip() if head[:7].lower() == "bearer " else ""
+        return head[7:].strip() if head[:7].lower() == "bearer " else ""
+
+    def _bearer(self):
+        token = self._bearer_token()
         return self.accounts.user_for_token(token) if token else None
+
+    def _gw_info(self):
+        """Bez přihlášení: appka tím ověří, že na adrese je opravdu brána.
+
+        Bez toho by šlo zjistit jen „něco odpovídá" — a na špatně napsané
+        adrese by pak člověk psal heslo do cizího webu.
+        """
+        return self._json({"app": "claude-code-hub", "kind": "gateway",
+                           "version": __version__,
+                           "host": self._public_host()})
 
     def _gw_me(self):
         """Komu patří token — hub se tím ptá, jestli je pořád přihlášený."""
@@ -455,7 +476,7 @@ class Handler(BaseHTTPRequestHandler):
         user = self._bearer()
         if not user:
             return self._json({"error": "Neplatný token."}, 401)
-        code = _handoff_new(user["id"])
+        code = _handoff_new(self._bearer_token())
         scheme = "https" if self._https() else "http"
         host = self._public_host()
         return self._json({"code": code, "ttl": HANDOFF_TTL,

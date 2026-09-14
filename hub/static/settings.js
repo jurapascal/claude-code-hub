@@ -460,28 +460,30 @@
     return box;
   }
 
-  /* Účet na bráně.
+  /* Účet na serveru.
    *
-   * Hub běží na dvou místech: na počítači u projektů, na serveru pořád a
-   * odkudkoli. Tahle sekce je to, co je spojuje — a vypadá jinak podle toho,
-   * na kterém z nich se zrovna kreslí. Na serveru nemá smysl nabízet
-   * přihlášení (tam už jsi), na počítači zase nejde odhlásit cizí session.
+   * Hub běží na dvou místech: na počítači u projektů, na serveru v prostoru,
+   * který je jen tvůj. Tahle sekce je to, co je spojuje — a vypadá jinak podle
+   * toho, kde se zrovna kreslí:
    *
-   * Server se otevírá do nové záložky schválně: přepínání mezi počítačem a
-   * serverem je pak přepnutí záložky, ne cesta tam a zpátky přes nastavení.
+   *  - na počítači: přihlásit se (adresa → ověřit → heslo), přejít do prostoru
+   *    na serveru, odhlásit;
+   *  - na serveru: kdo jsi, zpátky na počítač, odhlásit.
+   *
+   * Přechod mezi nimi je přechod celého okna, ne nová záložka: appka si
+   * pamatuje, kde jsi byl naposledy, a příště se otevře tam.
    */
   function ucet() {
-    // Na serverovou instanci píše bránu údaje o uživateli do konfigurace,
+    // Na serverovou instanci píše brána údaje o uživateli do konfigurace,
     // takže se pozná podle nich — ne podle adresy, ta může být za proxy jaká chce.
     const naServeru = !!(state.config && state.config.gateway_user);
 
     const box = section('Účet',
       naServeru
-        ? 'Tenhle hub běží na serveru. Projekty i paměť jsou tvoje a nikdo ' +
-          'jiný na ně nevidí.'
-        : 'Serverový hub běží pořád a dostaneš se na něj odkudkoli — z ' +
-          'počítače i z telefonu. Přihlášením se sem propojí s tímhle hubem, ' +
-          'ať se nemusíš hlásit dvakrát.');
+        ? 'Pracuješ ve svém prostoru na serveru. Projekty, paměť i napojení ' +
+          'jsou tvoje a nikdo jiný na ně nevidí.'
+        : 'Na serveru máš vlastní prostor, který běží pořád a dostaneš se na ' +
+          'něj odkudkoli — z téhle appky i z telefonu.');
 
     const body = el('div');
     box.appendChild(body);
@@ -491,107 +493,69 @@
       body.appendChild(el('div', 'set-note', text));
     }
 
-    // ---- kde zrovna jsi ----
-    function kde(aktivni) {
-      const row = el('div', 'acc-where');
-      for (const [id, popis] of [['pc', 'Tento počítač'], ['server', 'Server']]) {
-        const pill = el('span', 'acc-pill' + (id === aktivni ? ' on' : ''), popis);
-        row.appendChild(pill);
-      }
-      return row;
-    }
-
-    // ---- serverová instance ----
-    function drawServer() {
-      const u = state.config.gateway_user || {};
-      body.textContent = '';
-      const head = el('div', 'set-row');
-      head.appendChild(el('span', 'set-ok', '✓ Jsi na serverovém hubu'));
-      body.appendChild(head);
+    function who(u, extra) {
       body.appendChild(el('div', 'acc-who', u.name || u.email || ''));
       body.appendChild(el('div', 'set-note',
-        [u.email, u.role === 'admin' ? 'správce' : 'uživatel']
-          .filter(Boolean).join(' · ')));
-      body.appendChild(kde('server'));
+        [u.name ? u.email : '',
+         u.role === 'admin' ? 'správce' : 'uživatel',
+         u.vault ? 'paměť „' + u.vault + '"' : '',
+         extra || ''].filter(Boolean).join(' · ')));
+    }
+
+    // ---- hub na serveru ----
+    function drawServer() {
+      const u = state.config.gateway_user || {};
+      const zpet = HubServer.localBack();
+      body.textContent = '';
+      body.appendChild(el('div', 'set-ok', '✓ Jsi ve svém prostoru na serveru'));
+      who(u, location.host);
 
       const row = el('div', 'set-row');
+      if (zpet) {
+        const local = el('button', 'btn primary', 'Pracovat na tomto počítači');
+        local.title = 'Okno se vrátí na hub v tvém počítači. Prostor na ' +
+          'serveru běží dál a přihlášení zůstává.';
+        local.onclick = () => HubServer.backTo('local');
+        row.appendChild(local);
+        row.appendChild(el('span', 'spacer'));
+      }
       const out = el('button', 'btn ghost', 'Odhlásit se');
-      out.title = 'Odhlásí tenhle prohlížeč. Hub na počítači tím nezmizí.';
-      out.onclick = () => { location.href = '/logout'; };
+      out.title = zpet
+        ? 'Odhlásí appku z tohoto serveru. Příště se zeptá znovu.'
+        : 'Odhlásí tenhle prohlížeč. Ostatní zařízení zůstanou přihlášená.';
+      out.onclick = async () => {
+        out.disabled = true;
+        if (!zpet) { location.href = '/logout'; return; }
+        // Cookie okna i token appky jsou tentýž token — brána ho zneplatní
+        // jednou. Appka na počítači si ho pak ještě zahodí sama.
+        try { await fetch('/logout', {credentials: 'same-origin'}); } catch (_) {}
+        HubServer.backTo('logout');
+      };
       row.appendChild(out);
       body.appendChild(row);
 
-      // Tohle okno je na serveru a do konfigurace počítače nedosáhne —
-      // přepnout zpátky jde jedině tam. Radši to říct, než nechat hledat.
-      body.appendChild(el('div', 'set-note',
-        'Zpátky na hub ve svém počítači se přepneš v jeho nastavení, nebo ' +
-        'spuštěním: claude-hub.py --local'));
+      if (!zpet) {
+        body.appendChild(el('div', 'set-note',
+          'Otevřeno v prohlížeči. Na počítači se mezi ním a serverem ' +
+          'přepíná v appce Claude Code Hub.'));
+      }
     }
 
-    // ---- hub na počítači, odhlášený ----
+    // ---- hub na počítači, nepřihlášený ----
     function drawLogin(data) {
       body.textContent = '';
       if (data.note) body.appendChild(el('div', 'set-warn', '! ' + data.note));
-
-      const fields = {};
-      for (const [key, popis, typ, hint] of [
-        ['server', 'Adresa serveru', 'text', 'test.alba-rosa.cz'],
-        ['email', 'E-mail', 'email', ''],
-        ['password', 'Heslo', 'password', ''],
-      ]) {
-        const row = el('div', 'set-row');
-        row.appendChild(el('span', 'acc-label', popis));
-        const input = el('input', 'set-input');
-        input.type = typ;
-        if (hint) input.placeholder = hint;
-        if (key === 'server') input.value = data.server || '';
-        input.autocomplete = key === 'password' ? 'current-password'
-          : (key === 'email' ? 'username' : 'url');
-        fields[key] = input;
-        row.appendChild(input);
-        body.appendChild(row);
-      }
-
-      const err = el('div', 'set-warn');
-      err.style.display = 'none';
-      body.appendChild(err);
-
-      const row = el('div', 'set-row');
-      const go = el('button', 'btn primary', 'Přihlásit se');
-      go.onclick = async () => {
-        err.style.display = 'none';
-        go.disabled = true;
-        go.textContent = 'přihlašuji…';
-        try {
-          const res = await io.api('account', {
-            action: 'login',
-            server: fields.server.value,
-            email: fields.email.value,
-            password: fields.password.value,
-          });
-          if (res.error) {
-            err.textContent = '! ' + res.error;
-            err.style.display = '';
-            go.disabled = false;
-            go.textContent = 'Přihlásit se';
-            return;
-          }
+      body.appendChild(HubServer.panel(io, {
+        server: data.server || state.config.gw_server,
+        email: (data.user && data.user.email) || state.config.gw_email,
+        autoProbe: false,
+        onReady: (res) => {
+          state.config.gw_server = res.server;
+          state.config.gw_logged_in = true;
           io.toast('Přihlášeno.');
           draw(res);
-        } catch (e) {
-          err.textContent = '! ' + e.message;
-          err.style.display = '';
-          go.disabled = false;
-          go.textContent = 'Přihlásit se';
-        }
-      };
-      // Enter v kterémkoli poli = přihlásit; jinak to svádí hledat tlačítko.
-      for (const input of Object.values(fields)) {
-        input.onkeydown = (ev) => { if (ev.key === 'Enter') go.click(); };
-      }
-      row.appendChild(go);
-      body.appendChild(row);
-      body.appendChild(kde('pc'));
+        },
+      }));
     }
 
     // ---- hub na počítači, přihlášený ----
@@ -599,54 +563,46 @@
       const u = data.user || {};
       body.textContent = '';
 
-      const head = el('div', 'set-row');
-      head.appendChild(el('span', data.offline ? 'set-warn' : 'set-ok',
-        data.offline ? '! Server je nedostupný' : '✓ Přihlášen'));
-      body.appendChild(head);
-
-      body.appendChild(el('div', 'acc-who', u.name || u.email || ''));
-      body.appendChild(el('div', 'set-note',
-        [u.email,
-         u.role === 'admin' ? 'správce' : 'uživatel',
-         u.vault ? 'paměť „' + u.vault + '"' : ''].filter(Boolean).join(' · ')));
-      body.appendChild(el('div', 'acc-server', data.server || ''));
+      body.appendChild(el('div', data.offline ? 'set-warn' : 'set-ok',
+        data.offline ? '! Server teď neodpovídá' : '✓ Přihlášeno'));
+      who(u, data.host);
       if (data.offline && data.note) {
         body.appendChild(el('div', 'set-note', data.note +
           ' Zůstáváš přihlášený, jen se teď k serveru nedá.'));
       }
-      body.appendChild(kde('pc'));
+
+      const err = el('div', 'set-warn');
+      err.hidden = true;
 
       const row = el('div', 'set-row');
-      const open = el('button', 'btn primary', 'Otevřít hub na serveru');
-      open.title = 'Otevře se v nové záložce, ať se dá mezi počítačem a ' +
-        'serverem přepínat.';
+      const open = el('button', 'btn primary', 'Otevřít můj prostor');
+      open.title = 'Okno přejde na server. Taby na počítači běží dál a ' +
+        'appka se příště otevře rovnou v prostoru.';
+      open.disabled = !!data.offline;
       open.onclick = async () => {
         open.disabled = true;
-        open.textContent = 'připravuji…';
-        try {
-          const res = await io.api('account', {action: 'handoff'});
-          if (res.error) {
-            io.toast(res.error);
-          } else {
-            // Otevřít hned v reakci na klik, jinak to blokátor oken zahodí.
-            window.open(res.url, '_blank', 'noopener');
-          }
-        } catch (e) {
-          io.toast('Nepovedlo se: ' + e.message);
-        }
+        open.textContent = 'otevírám…';
+        const res = await HubServer.go(io).catch((e) => ({error: e.message}));
+        if (res.ok) return;
+        err.textContent = '! ' + (res.error || 'Nepovedlo se.');
+        err.hidden = false;
         open.disabled = false;
-        open.textContent = 'Otevřít hub na serveru';
+        open.textContent = 'Otevřít můj prostor';
+        if (res.kind === 'auth') load();
       };
       row.appendChild(open);
 
       row.appendChild(el('span', 'spacer'));
       const out = el('button', 'btn ghost', 'Odhlásit se');
-      out.title = 'Zahodí token tohohle počítače. Ostatní zařízení zůstanou ' +
-        'přihlášená.';
+      out.title = 'Zahodí přihlášení tohohle počítače. Ostatní zařízení ' +
+        'zůstanou přihlášená.';
       out.onclick = async () => {
         out.disabled = true;
         try {
-          draw(await io.api('account', {action: 'logout'}));
+          const res = await io.api('account', {action: 'logout'});
+          state.config.gw_logged_in = false;
+          state.config.server_mode = false;
+          draw(res);
           io.toast('Odhlášeno.');
         } catch (e) {
           io.toast('Nepovedlo se: ' + e.message);
@@ -655,66 +611,25 @@
       };
       row.appendChild(out);
       body.appendChild(row);
+      body.appendChild(err);
 
-      drawStart(data);
-    }
-
-    /* Čím se appka otevře po spuštění.
-     *
-     * Není to totéž co tlačítko nahoře: to otevře server do nové záložky a
-     * nic nemění. Tohle rozhoduje, co uvidíš, až hub příště spustíš — a
-     * v serverovém režimu se lokální hub vůbec nespouští, takže se to nedá
-     * přepnout odjinud než odsud.
-     */
-    function drawStart(data) {
-      const naServer = !!(state.config && state.config.server_url);
-      body.appendChild(el('div', 'set-title', 'Po spuštění otevřít'));
-
-      const row = el('div', 'acc-where');
-      const volby = [
-        ['pc', 'Tento počítač', '', 'Hub běží tady a vidí na tvoje projekty.'],
-        ['server', 'Server', data.server || '',
-         'Appka je jen okno na server — projekty i paměť jsou tam.'],
-      ];
-      for (const [id, popis, adresa, hint] of volby) {
-        const on = (id === 'server') === naServer;
-        const b = el('button', 'acc-choice' + (on ? ' on' : ''));
-        b.appendChild(el('div', 'acc-choice-t', popis + (on ? '  ✓' : '')));
-        b.appendChild(el('div', 'acc-choice-s', adresa || hint));
-        b.disabled = on;
-        b.onclick = async () => {
-          b.disabled = true;
-          try {
-            await io.api('config',
-              {server_url: id === 'server' ? (data.server || '') : ''});
-            state.config.server_url = id === 'server' ? (data.server || '') : '';
-            io.toast('Uloženo — projeví se po příštím spuštění hubu.');
-            draw(data);
-          } catch (e) {
-            io.toast('Nepovedlo se: ' + e.message);
-            b.disabled = false;
-          }
-        };
-        row.appendChild(b);
-      }
-      body.appendChild(row);
       body.appendChild(el('div', 'set-note',
-        'Změna se projeví, až hub zavřeš a spustíš znovu.'));
+        'Appka si pamatuje, kde jsi pracoval naposledy. Ze serveru se sem ' +
+        'vrátíš v jeho nastavení: Účet → Pracovat na tomto počítači.'));
     }
 
     function draw(data) {
-      if (naServeru) return drawServer();
       if (data && data.logged_in) return drawIn(data);
       drawLogin(data || {});
     }
 
-    if (naServeru) {
-      drawServer();
-    } else {
+    function load() {
       busy('zjišťuji stav…');
       io.api('account', {action: 'status'}).then(draw,
         (err) => drawLogin({note: err.message}));
     }
+
+    if (naServeru) drawServer(); else load();
     return box;
   }
 
