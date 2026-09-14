@@ -93,7 +93,18 @@ def _errlog(where, exc):
 
 # ── instance hubu jednoho uživatele ──────────────────────────────────────────
 class HubProc:
-    """Jedna běžící instance `claude-hub.py --no-browser` pro jednoho uživatele."""
+    """Jedna běžící instance `claude-hub.py --no-browser` pro jednoho uživatele.
+
+    Na serveru běží v systemd scope pojmenované podle účtu (`unit`). Podle ní
+    se pozná, jestli ještě žije, a zastavuje se celá — proces, který brána
+    spustila, to říct neumí: `systemd-run` se v kontextu služby od sandboxu
+    odpojí a sandbox má vlastní init, který SIGTERM ignoruje. Podrobně
+    v isolation.py u stop_scope.
+    """
+
+    # Jak často se smí živost číst znovu. Ptá se každý proxovaný požadavek a
+    # stránka jich při načtení pošle desítky.
+    CHECK_EVERY = 2.0
 
     def __init__(self, user, mode):
         self.user = user
@@ -103,13 +114,22 @@ class HubProc:
         self.port = None
         self.token = None
         self.home = None
+        self.unit = ""
+        self.cgroup = ""
         self.started = 0
         self.last_active = time.time()
+        self._checked = 0.0
+        self._alive = False
         self._lock = threading.Lock()
 
     def start(self):
-        argv, home = workspace.session_spec(self.user, isolation, self.mode)
+        argv, home, unit = workspace.session_spec(self.user, isolation, self.mode)
         self.home = home
+        self.unit = unit
+        if unit:
+            # Scope stejného jména může zbýt z minula (spadlá brána, instance,
+            # o které se nevědělo). systemd-run by na ní skončil chybou.
+            isolation.stop_scope(unit)
         env = dict(os.environ, HOME=home)
         # XDG_RUNTIME_DIR musí session dostat, jinak si systemd --user scope
         # nemá kam sáhnout (limity by tiše vypadly).
@@ -127,8 +147,11 @@ class HubProc:
         parsed = urllib.parse.urlparse(url)
         self.port = parsed.port
         self.token = urllib.parse.parse_qs(parsed.query).get("t", [""])[0]
+        if unit:
+            self.cgroup = isolation.scope_cgroup(unit)
         self.started = time.time()
         self.last_active = time.time()
+        self._checked = 0.0
         # Zbytek výpisu jen odsáváme, ať se roura nezaplní a proces nezasekne.
         threading.Thread(target=self._drain, daemon=True).start()
 
@@ -151,22 +174,27 @@ class HubProc:
             pass
 
     def alive(self):
-        return self.proc is not None and self.proc.poll() is None
+        if self.proc is None:
+            return False
+        if not self.unit:
+            # Bez scope (docker, stroj bez systemd) je proces to jediné, co máme.
+            return self.proc.poll() is None
+        now = time.time()
+        if now - self._checked >= self.CHECK_EVERY:
+            self._alive = (isolation.cgroup_alive(self.cgroup) if self.cgroup
+                           else isolation.scope_active(self.unit))
+            self._checked = now
+        return self._alive
 
     def touch(self):
         self.last_active = time.time()
 
     def stop(self):
-        # Session běží pod `systemd-run --scope` → `bwrap` → python. systemd-run
-        # (jediné, na co máme Popen) v kontextu služby mezitím skončí, takže na
-        # jeho PID/pgid spoléhat nejde. Sandbox proto zabíjíme podle domova
-        # uživatele v cmdline — mezera na konci odliší u1 od u10.
-        if self.home:
-            try:
-                subprocess.run(["pkill", "-f", self.home + " "], timeout=5)
-            except Exception:
-                pass
+        """Zastaví prostor i se vším, co v něm běží (hub, shelly, Claude Code)."""
         p, self.proc = self.proc, None
+        self._alive = False
+        if self.unit:
+            isolation.stop_scope(self.unit)
         if p:
             try:
                 os.killpg(os.getpgid(p.pid), 15)
@@ -199,8 +227,11 @@ class HubManager:
             if proc and proc.alive():
                 proc.touch()
                 return proc
-            if proc:                      # spadlá — ať se založí znovu
+            if proc:
+                # Spadlá nebo zastavená zvenku (`gateway.admin stop`). Zbytky
+                # uklidit, ať nová instance nevedle staré neběží dvě.
                 self.procs.pop(uid, None)
+                proc.stop()
             self._make_room()
             proc = HubProc(user, self.mode)
             proc.start()
@@ -213,26 +244,33 @@ class HubManager:
         if len(live) < self.max_sessions:
             return
         idlest = min(live, key=lambda p: p.last_active)
-        idlest.stop()
         self.procs.pop(idlest.uid, None)
+        idlest.stop()
 
     def _reaper(self):
+        # Kontroluje se častěji, než je doba uspání — jinak by se s krátkým
+        # IDLE_SLEEP (test) čekalo celou minutu navíc.
+        every = max(1.0, min(60.0, self.idle / 2))
         while True:
-            time.sleep(60)
+            time.sleep(every)
             now = time.time()
+            to_stop = []
             with self._lock:
                 for uid, proc in list(self.procs.items()):
-                    if not proc.alive():
+                    if not proc.alive() or now - proc.last_active > self.idle:
                         self.procs.pop(uid, None)
-                    elif now - proc.last_active > self.idle:
-                        proc.stop()
-                        self.procs.pop(uid, None)
+                        to_stop.append(proc)
+            # Zastavení může trvat pár vteřin (hub dostane čas skončit) —
+            # mimo zámek, ať mezitím nečekají požadavky ostatních.
+            for proc in to_stop:
+                proc.stop()
 
     def stop_all(self):
         with self._lock:
-            for proc in self.procs.values():
-                proc.stop()
+            procs = list(self.procs.values())
             self.procs.clear()
+        for proc in procs:
+            proc.stop()
 
 
 # ── stránky, které patří bráně (ne hubu) ─────────────────────────────────────
@@ -611,7 +649,9 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True
 
         client = self.connection
-        _pump_both(client, up)
+        # Psaní do terminálu jde jen tudy, žádným HTTP požadavkem. Bez tohohle
+        # by se prostor uspal po IDLE_SLEEP i člověku, který celou dobu píše.
+        _pump_both(client, up, on_client=hub.touch)
 
     # BaseHTTPRequestHandler používá tyhle pro neznámé metody; ať projdou.
     def do_PATCH(self):
@@ -633,8 +673,13 @@ def _read_until(sock, marker):
     return buf
 
 
-def _pump_both(a, b):
-    """Přelévej bajty oběma směry, dokud jedna strana nezavře."""
+def _pump_both(a, b, on_client=None):
+    """Přelévej bajty oběma směry, dokud jedna strana nezavře.
+
+    `on_client` se zavolá s každým kusem dat od prohlížeče (`a`) — tak brána
+    pozná, že je prostor používaný. Výstup terminálu (`b` → `a`) se nepočítá:
+    běžící příkaz, který něco vypisuje, ještě neznamená, že tam někdo je.
+    """
     done = threading.Event()
 
     def pump(src, dst):
@@ -643,6 +688,8 @@ def _pump_both(a, b):
                 data = src.recv(65536)
                 if not data:
                     break
+                if on_client and src is a:
+                    on_client()
                 dst.sendall(data)
         except OSError:
             pass
@@ -679,16 +726,24 @@ class Gateway(ThreadingHTTPServer):
         self.assume_https = assume_https
 
 
+def stop_orphans():
+    """Zastaví prostory, o kterých brána neví. Vrací jejich počet."""
+    names = [name for name, _desc in isolation.running_scopes()]
+    for name in names:
+        isolation.stop_scope(name)
+    if names:
+        print(f"zastaveno osiřelých prostorů: {len(names)}", flush=True)
+    return len(names)
+
+
 def serve():
     problem = isolation.check(config.ISOLATION, config.HOST)
     if problem:
         raise SystemExit("Izolace: " + problem)
-    # Úklid osiřelých instancí z minulého běhu: bez `--die-with-parent` může
-    # po pádu/restartu brány zůstat běžet hub, který už nikdo nespravuje.
-    try:
-        subprocess.run(["pkill", "-f", "claude-hub.py --no-browser"], timeout=5)
-    except Exception:
-        pass
+    # Úklid osiřelých instancí z minulého běhu: bez `--die-with-parent` po
+    # restartu brány zůstanou běžet huby, které už nikdo nespravuje — a každý
+    # s Claude Code drží stovky MB.
+    stop_orphans()
     accounts = Accounts(config.DB_PATH)
     hubs = HubManager(config.ISOLATION, config.MAX_SESSIONS, config.IDLE_SLEEP)
     # assume_https zapneme, když je za bránou nginx s TLS (řekne to env).

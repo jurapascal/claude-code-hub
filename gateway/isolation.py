@@ -22,8 +22,14 @@ nikdy nevidí.
 """
 import os
 import shutil
+import subprocess
+import time
 
 MODES = ("none", "bwrap", "docker")
+
+# Každý prostor běží ve vlastní systemd scope se jménem podle účtu. Podle jména
+# se pak pozná, jestli ještě běží, a zastaví se celý najednou — viz stop_scope.
+SCOPE_PREFIX = "claude-hub-"
 DOCKER_IMAGE = "claude-hub-workspace"
 
 # Kolik si smí jedna session vzít. Naměřeno: session Claude Code drží kolem
@@ -58,7 +64,7 @@ def check(mode, host):
     return ""
 
 
-def wrap(mode, argv, home, extra_ro=(), extra_rw=(), limits=None):
+def wrap(mode, argv, home, extra_ro=(), extra_rw=(), limits=None, unit=""):
     """argv, kterým se session doopravdy spustí.
 
     `home` je domov uživatele na bráně — jediné místo, kam smí zapisovat.
@@ -70,19 +76,21 @@ def wrap(mode, argv, home, extra_ro=(), extra_rw=(), limits=None):
     všechny naráz). Drž `extra_rw` co nejmenší; každá cesta v něm je díra
     v izolaci.
     `limits` je strop na paměť, procesy a podíl na procesoru; None = LIMITS.
+    `unit` je jméno systemd scope (bez `.scope`), přes které se prostor pozná
+    a zastaví; prázdné = náhodné, jako dřív.
     """
     limits = LIMITS if limits is None else limits
     if mode == "none":
-        return _limited(list(argv), limits)
+        return _limited(list(argv), limits, unit)
     if mode == "bwrap":
-        return _limited(_bwrap(argv, home, extra_ro, extra_rw), limits)
+        return _limited(_bwrap(argv, home, extra_ro, extra_rw), limits, unit)
     if mode == "docker":
         # Docker si limity řeší sám, přes systemd by se počítaly dvakrát.
         return _docker(argv, home, extra_ro, limits, extra_rw)
     raise ValueError(f"Neznámý režim izolace: {mode}")
 
 
-def _limited(argv, limits):
+def _limited(argv, limits, unit=""):
     """Obalí příkaz cgroupou, aby jedna session neshodila zbytek serveru.
 
     bwrap odděluje, co session *vidí*, ale ne kolik si vezme — paměť ani
@@ -97,6 +105,8 @@ def _limited(argv, limits):
     if not limits or not shutil.which("systemd-run"):
         return argv
     scope = ["systemd-run", "--user", "--scope", "--quiet", "--collect"]
+    if unit:
+        scope += [f"--unit={unit}"]
     if limits.get("memory"):
         scope += ["-p", f"MemoryMax={limits['memory']}", "-p", "MemorySwapMax=0"]
     if limits.get("tasks"):
@@ -127,8 +137,7 @@ def _bwrap(argv, home, extra_ro, extra_rw=()):
            # službu) pouští `systemd-run --user --scope`, systemd-run v tom
            # kontextu po založení scope skončí — a die-with-parent by pak
            # sandbox okamžitě zabil (session by umřela pár vteřin po startu).
-           # Úklid proto řeší brána sama (HubProc.stop pkillem podle domova
-           # + úklid osiřelých při startu).
+           # Úklid proto řeší brána sama: zastaví celou scope, viz stop_scope.
            "--new-session"]
     # /bin a /lib jsou na dnešních distribucích symlinky do /usr. Přeskočit je
     # nejde: v sandboxu by pak nebyl ani shell („execvp /bin/sh: No such file“).
@@ -153,6 +162,116 @@ def _bwrap(argv, home, extra_ro, extra_rw=()):
         if os.path.exists(path):
             cmd += ["--bind", path, path]
     return cmd + ["--"] + list(argv)
+
+
+# ── běžící prostory ──────────────────────────────────────────────────────────
+# Proč ne `pkill` podle domova, jak to bylo dřív (naměřeno na Ubuntu 24.04):
+#
+#  * bwrap s `--unshare-pid` má uvnitř vlastní init — druhý proces bwrap, který
+#    je v novém PID namespace číslo 1. Jádro takovému procesu doručí jen signály,
+#    na které má obsluhu, a SIGTERM mezi ně nepatří. `pkill` zabil vnější bwrap,
+#    vnitřní i s hubem a Claude Code běžel dál, jen už o něm nikdo nevěděl.
+#  * Hub ani Claude Code uvnitř domov v příkazové řádce nemají, takže je vzor
+#    nenašel vůbec.
+#  * Proces, který brána spustí (`systemd-run`), se v kontextu služby od
+#    sandboxu odpojí. Brána pak prostor považovala za mrtvý a spustila další.
+#
+# Scope se všechny tři problémy řeší naráz: je to cgroup, ve které jsou všechny
+# procesy prostoru, ať je kdo spustil a jak se jmenují.
+
+def _systemctl(*args, timeout=15):
+    # `sudo -u hub python3 -m gateway.admin …` nemá proměnné uživatelské
+    # session a `systemctl --user` by se neměl kam připojit.
+    env = dict(os.environ)
+    env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    env.setdefault("DBUS_SESSION_BUS_ADDRESS",
+                   f"unix:path={env['XDG_RUNTIME_DIR']}/bus")
+    try:
+        return subprocess.run(["systemctl", "--user", *args], timeout=timeout,
+                              capture_output=True, text=True, env=env)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def scope_cgroup(unit):
+    """Cesta ke cgroupě běžící scope, nebo ''. Čte se z ní, jestli prostor žije
+    — bez spouštění `systemctl` při každém požadavku."""
+    if not unit or not shutil.which("systemctl"):
+        return ""
+    res = _systemctl("show", "-p", "ControlGroup", "--value", unit + ".scope")
+    path = (res.stdout.strip() if res and res.returncode == 0 else "")
+    return ("/sys/fs/cgroup" + path) if path else ""
+
+
+def cgroup_alive(cgroup):
+    """Běží v cgroupě ještě nějaký proces? Scope s `--collect` po posledním
+    procesu zmizí i se složkou."""
+    try:
+        with open(os.path.join(cgroup, "cgroup.procs")) as fh:
+            return bool(fh.read().strip())
+    except OSError:
+        return False
+
+
+def scope_active(unit):
+    res = _systemctl("is-active", "--quiet", unit + ".scope", timeout=5)
+    return bool(res) and res.returncode == 0
+
+
+def stop_scope(unit, grace=8):
+    """Zastaví celý prostor: napřed slušně, pak natvrdo.
+
+    SIGTERM dostanou všechny procesy scope — hub uloží, co má, a skončí, a
+    s ním i init sandboxu. Co do `grace` sekund nedoběhne, dostane SIGKILL;
+    ten jádro initu namespace doručí vždycky a zbytek namespace padne s ním.
+    Vrací True, když scope už neběží.
+    """
+    if not unit or not shutil.which("systemctl"):
+        return False
+    name = unit + ".scope"
+    if not scope_active(unit):
+        return True
+    _systemctl("kill", "--signal=SIGTERM", name)
+    deadline = time.time() + grace
+    while time.time() < deadline:
+        if not scope_active(unit):
+            return True
+        time.sleep(0.3)
+    _systemctl("kill", "--signal=SIGKILL", name)
+    for _ in range(20):
+        if not scope_active(unit):
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def running_scopes(marker="claude-hub.py --no-browser"):
+    """Běžící prostory: [(jméno bez .scope, popis)].
+
+    Kromě pojmenovaných (`claude-hub-u<id>`) i ty z doby před pojmenováním,
+    které mají náhodné `run-r….scope` — poznají se podle příkazu v popisu.
+    """
+    res = _systemctl("list-units", "--type=scope", "--state=active",
+                     "--plain", "--no-legend", "--no-pager")
+    out = []
+    for line in (res.stdout.splitlines() if res and res.returncode == 0 else []):
+        parts = line.split(None, 4)
+        if not parts or not parts[0].endswith(".scope"):
+            continue
+        name = parts[0][:-len(".scope")]
+        desc = parts[4] if len(parts) > 4 else ""
+        if name.startswith(SCOPE_PREFIX) or marker in desc:
+            out.append((name, desc))
+    return out
+
+
+def scope_memory(unit):
+    """Kolik paměti prostor zrovna drží, v bajtech (0 = nevíme)."""
+    try:
+        with open(os.path.join(scope_cgroup(unit), "memory.current")) as fh:
+            return int(fh.read().strip() or 0)
+    except (OSError, ValueError):
+        return 0
 
 
 def _docker(argv, home, extra_ro, limits=None, extra_rw=()):

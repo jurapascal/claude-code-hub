@@ -14,13 +14,16 @@ přes `--password` (hodí se do skriptu, ale zůstane v historii shellu).
     python3 -m gateway.admin disable jmeno@firma.cz
     python3 -m gateway.admin enable jmeno@firma.cz
     python3 -m gateway.admin remove jmeno@firma.cz
+    python3 -m gateway.admin sessions            # které prostory běží
+    python3 -m gateway.admin stop jmeno@firma.cz # zastavit prostor
+    python3 -m gateway.admin stop --orphans      # zastavit osiřelé
 """
 import argparse
 import getpass
 import sys
 import time
 
-from . import config, workspace
+from . import config, isolation, workspace
 from .accounts import Accounts
 
 
@@ -94,8 +97,47 @@ def cmd_enable(a, args):
 
 
 def cmd_remove(a, args):
+    user = a.get(args.email)
     a.remove(args.email)
-    print(f"{args.email} smazán z databáze. (Jeho složka na disku zůstává.)")
+    if not user:
+        return
+    # Prostor smazaného účtu nemá komu běžet — a nikdo by ho už nezastavil.
+    isolation.stop_scope(workspace.unit_name(user))
+    moved = workspace.retire(user)
+    print(f"{args.email} smazán z databáze." +
+          (f" Jeho složka je odložená v {moved}." if moved else ""))
+
+
+def cmd_sessions(a, args):
+    """Běžící prostory a kolik drží paměti. Starší bez jména jsou osiřelé."""
+    scopes = isolation.running_scopes()
+    if not scopes:
+        print("Neběží žádný prostor.")
+        return
+    by_unit = {workspace.unit_name(u): u for u in a.list()}
+    for name, _desc in scopes:
+        user = by_unit.get(name)
+        who = user["email"] if user else "(osiřelý — brána o něm neví)"
+        mb = isolation.scope_memory(name) / 1024 / 1024
+        print(f"{name:<40} {mb:>7.0f} MB  {who}")
+
+
+def cmd_stop(a, args):
+    if args.orphans:
+        known = {workspace.unit_name(u) for u in a.list()}
+        names = [n for n, _d in isolation.running_scopes() if n not in known]
+    elif not args.email:
+        raise ValueError("Zadej e-mail účtu, nebo --orphans.")
+    else:
+        user = a.get(args.email)
+        if not user:
+            raise ValueError(f"{args.email} tu žádný účet nemá.")
+        names = [workspace.unit_name(user)]
+    if not names:
+        print("Není co zastavit.")
+    for name in names:
+        ok = isolation.stop_scope(name)
+        print(f"{name}: {'zastaveno' if ok else 'NEPODAŘILO SE zastavit'}")
 
 
 def build_parser():
@@ -144,6 +186,15 @@ def build_parser():
     rm = sub.add_parser("remove", help="smazat účet")
     rm.add_argument("email")
     rm.set_defaults(func=cmd_remove)
+
+    sub.add_parser("sessions", help="které prostory běží a kolik berou paměti"
+                   ).set_defaults(func=cmd_sessions)
+
+    st = sub.add_parser("stop", help="zastavit prostor (i s Claude Code v něm)")
+    st.add_argument("email", nargs="?", default="", help="e-mail účtu")
+    st.add_argument("--orphans", action="store_true",
+                    help="zastavit prostory, ke kterým žádný účet nepatří")
+    st.set_defaults(func=cmd_stop)
     return p
 
 

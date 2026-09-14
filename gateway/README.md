@@ -28,6 +28,34 @@ Appka Claude Code Hub i prohlížeč na telefonu jsou jen okno do toho prostoru.
 Účty se zakládají jen z příkazové řádky na serveru — webová správa schválně není:
 
     python3 -m gateway.admin add jmeno@firma.cz --name "Jméno" --role user
+    python3 -m gateway.admin sessions            # které prostory běží a kolik berou
+    python3 -m gateway.admin stop jmeno@firma.cz # zastavit prostor i s Claude Code
+    python3 -m gateway.admin remove jmeno@firma.cz
+
+Smazaný účet má složku odloženou jako `users/_smazany-u<id>-<datum>`. Nechat ji
+na místě nejde: SQLite po smazání dá dalšímu účtu stejné číslo a ten by zdědil
+cizí paměť, projekty i přihlášení.
+
+## Běžící prostory
+
+Každý prostor běží ve vlastní systemd scope `claude-hub-u<id>.scope`. Podle ní
+brána pozná, jestli prostor žije (čte `cgroup.procs`, nespouští nic), a přes ni
+ho zastavuje — celý, i s Claude Code a vším, co v něm běží. Nečinný se uspí po
+`HUB_GW_IDLE_SLEEP`; psaní do terminálu (websocket) se počítá jako aktivita.
+
+Proč ne `pkill` podle domova, jak to bylo do 2.2.0 — naměřeno na Ubuntu 24.04:
+
+- **bwrap s `--unshare-pid` má vlastní init** (druhý bwrap, v namespace PID 1).
+  Jádro mu SIGTERM nedoručí, protože na něj nemá obsluhu. `pkill` zabil vnější
+  bwrap a zbytek i s Claude Code jel dál, jen o něm nikdo nevěděl.
+- **Hub ani Claude Code uvnitř nemají domov v příkazové řádce**, takže je vzor
+  nenašel vůbec.
+- **`systemd-run` se v kontextu služby od sandboxu odpojí.** Brána pak prostor
+  považovala za mrtvý a na další požadavek spustila druhý.
+
+Výsledek na testovacím serveru: dva zapomenuté prostory jednoho účtu, 900 MB.
+Zastavení teď jde přes cgroup: SIGTERM všem procesům, po 8 s SIGKILL (ten init
+namespace dostane vždycky). Při startu brána zastaví i prostory, o kterých neví.
 
 ## Rozhraní pro appku
 

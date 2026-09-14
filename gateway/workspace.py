@@ -19,6 +19,9 @@ Cesty jdou přebít proměnnými prostředí, aby šel modul otestovat i mimo se
 import json
 import os
 import re
+import time
+
+from .isolation import SCOPE_PREFIX
 
 HUB_HOME = os.environ.get("HUB_GW_HOME", "/home/hub")
 USERS_ROOT = os.environ.get("HUB_GW_USERS", os.path.join(HUB_HOME, "users"))
@@ -52,8 +55,30 @@ def slug(user):
     return "u%d" % int(user["id"])
 
 
+def unit_name(user):
+    """Jméno systemd scope, ve které prostor běží (`claude-hub-u7`)."""
+    return SCOPE_PREFIX + slug(user)
+
+
 def home_for(user):
     return os.path.join(USERS_ROOT, slug(user))
+
+
+def retire(user):
+    """Odloží domov smazaného účtu stranou. Vrací novou cestu, nebo ''.
+
+    Nestačí ho nechat ležet: SQLite po smazání posledního účtu dá dalšímu
+    stejné id, tedy i stejnou složku `u<id>` — a nový člověk by zdědil paměť,
+    projekty i přihlášení Claude Code toho předchozího. Data se nemažou,
+    jen přestanou být na cestě, kterou může dostat někdo jiný.
+    """
+    home = home_for(user)
+    if not os.path.isdir(home):
+        return ""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    target = os.path.join(USERS_ROOT, f"_smazany-{slug(user)}-{stamp}")
+    os.rename(home, target)
+    return target
 
 
 def vault_name(user):
@@ -153,8 +178,10 @@ def ensure(user):
 def session_spec(user, isolation, mode):
     """Co předat pty backendu, aby se spustila izolovaná instance hubu.
 
-    Vrací (argv, home). `argv` je už obalené izolací a limity; `home` je
-    pracovní složka i jediné zapisovatelné místo session.
+    Vrací (argv, home, unit). `argv` je už obalené izolací a limity; `home`
+    je pracovní složka i jediné zapisovatelné místo session; `unit` je jméno
+    systemd scope, podle kterého se prostor pozná a zastaví (prázdné, když
+    na stroji systemd-run není a limity se nepoužijí).
     """
     paths = ensure(user)
     home = paths["home"]
@@ -166,6 +193,9 @@ def session_spec(user, isolation, mode):
     extra_rw = []
     if claude_auth(user) == "central" and os.path.exists(SHARED_CRED):
         extra_rw = [SHARED_CRED]
+    unit = unit_name(user)
     argv = isolation.wrap(mode, inner, home, extra_ro=extra_ro,
-                          extra_rw=extra_rw)
-    return argv, home
+                          extra_rw=extra_rw, unit=unit)
+    if argv[:1] != ["systemd-run"]:
+        unit = ""                 # bez scope (docker, stroj bez systemd)
+    return argv, home, unit
