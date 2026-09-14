@@ -13,6 +13,8 @@
  *     python3 claude-hub.py --no-browser        # v jiném okně, vypíše URL
  *     node tools/uitest.mjs <url> [profil…]
  */
+import os from 'os';
+import path from 'path';
 import { chromium, firefox, webkit, devices }
   from '/home/pascaljura/.npm/_npx/9833c18b2d85bc59/node_modules/playwright/index.mjs';
 
@@ -95,7 +97,10 @@ for (const jmeno of profily) {
           'spodek: ' + (rows ? rows.innerText.replace(/\s+/g, ' ').trim().slice(-70) : '?'),
         ].filter(Boolean).join(' | ');
       });
-      await page.screenshot({ path: `uitest-${jmeno}.png` });
+      // Do dočasné složky, ne do repa — odkud se test pouští, tam by zůstaly.
+      const snimek = path.join(os.tmpdir(), `uitest-${jmeno}.png`);
+      await page.screenshot({ path: snimek });
+      proc += ' | snímek: ' + snimek;
     }
     t('pole na psaní se načte', nacetla, proc);
 
@@ -166,9 +171,13 @@ for (const jmeno of profily) {
     await page.click('#btn-settings');
     await page.waitForTimeout(800);
     t('nastavení se otevře', await page.locator('.set-modal').isVisible());
-    await page.locator('.set-tab', { hasText: 'Telefon' }).click();
-    await page.waitForTimeout(1200);
-    t('sekce Telefon se vykreslí', await page.locator('.set-panel .set-title').first().isVisible());
+    /* Sekce Účet: je na hubu na počítači i na serveru (telefon se od 2.1.0
+       připojuje přes server, samostatná sekce Telefon zanikla) a kreslí se
+       podle toho, kde běží — rozbije se tedy jako první, když se to splete. */
+    await page.locator('.set-tab', { hasText: 'Účet' }).click();
+    await page.waitForTimeout(1500);
+    t('sekce Účet se vykreslí',
+      await page.locator('.set-panel .set-title', { hasText: 'Účet' }).first().isVisible());
     await page.locator('.set-close').click();
 
     t('žádné chyby v konzoli', chyby.length === 0, chyby.slice(0, 2).join(' | '));
