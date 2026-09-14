@@ -27,7 +27,7 @@
     ['projekty',   'Projekty',  'i-folder',   () => projekty(), 'dev'],
     ['taby',       'Taby',      'i-terminal', () => taby(), 'dev'],
     ['agenti',     'AI agenti', 'i-hub',      () => agenti()],
-    ['pamet',      'Paměť',     'i-book',     () => pamet(), 'dev'],
+    ['pamet',      'Paměť',     'i-book',     () => pamet()],
     ['ucet',       'Účet',      'i-user',     () => ucet()],
     ['napojeni',   'Napojení',  'i-hub',      () => napojeni()],   // MCP — Claude Code
     ['aktualizace','Aktualizace', 'i-up',     () => aktualizace()],
@@ -160,7 +160,7 @@
     cb.onchange = () => save({dev_mode: cb.checked});
     row.appendChild(cb);
     row.appendChild(el('span', null,
-      'Zapnout tlačítka Deploy a Push na GitHub a sekce Projekty, Paměť, ' +
+      'Zapnout tlačítka Deploy a Push na GitHub a sekce Projekty, ' +
       'Taby a Logy'));
     box.appendChild(row);
     return box;
@@ -227,6 +227,7 @@
       'Složka s poznámkami, které si Claude nese mezi sezeními.');
     box.appendChild(Object.assign(el('div', 'onb-path'),
       {textContent: state.config.brain_dir || '(vypnutá)'}));
+    if (state.config.brain_dir) box.appendChild(autosave());
 
     // Záloha paměti do privátního repa je práce s GitHubem: chce `gh`, umí si
     // říct o instalaci a o přihlášení. V základním režimu se o ní mlčí — i to
@@ -325,6 +326,51 @@
     };
     box.appendChild(move);
     return box;
+  }
+
+  /* Automatické ukládání: když session ztichne (20 min) nebo se tab zavře,
+     Claude na pozadí sám doplní poznámku k projektu a případný poznatek.
+     Stojí to trochu z předplatného, tak to jde vypnout — a je vidět, co zapsal. */
+  function autosave() {
+    const wrap = el('div');
+    const row = el('label', 'onb-row');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = state.memory_autosave !== false;
+    cb.onchange = () => save({memory_autosave: cb.checked});
+    row.appendChild(cb);
+    // div, ne span: `.onb-body label > span` by z popisu udělal tučný nadpis.
+    const col = el('div', 'onb-col');
+    col.appendChild(el('span', null, 'Ukládat do paměti samo'));
+    col.appendChild(el('small', null,
+      'Po skončení práce (zavřený tab, konec session nebo 20 minut ticha) si ' +
+      'Claude na pozadí doplní poznámku k projektu a to, co stojí za zapamatování. ' +
+      'Nemusíš klikat na Uložit ani psát /save. Jedno uložení bere zhruba tolik ' +
+      'jako jedna delší odpověď.'));
+    row.appendChild(col);
+    wrap.appendChild(row);
+
+    const recent = state.autosave_recent || [];
+    if (recent.length) {
+      wrap.appendChild(el('div', 'set-note', 'Naposledy uloženo:'));
+      const list = el('div', 'onb-list');
+      for (const e of recent) {
+        const line = el('div', 'onb-row');
+        const c = el('span', 'onb-col');
+        const when = new Date(e.at).toLocaleString('cs-CZ',
+          {day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit'});
+        const what = e.status === 'saved'
+          ? (e.files || []).filter((f) => f !== 'MEMORY.md').join(', ')
+          : 'nepovedlo se: ' + (e.detail || 'neznámá chyba');
+        c.appendChild(el('span', e.status === 'saved' ? null : 'set-warn', what));
+        c.appendChild(el('small', null,
+          [when, (e.projects || []).join(', ')].filter(Boolean).join(' · ')));
+        line.appendChild(c);
+        list.appendChild(line);
+      }
+      wrap.appendChild(list);
+    }
+    return wrap;
   }
 
   /* Napojení (MCP) — na co Claude Code na tomhle stroji dosáhne.

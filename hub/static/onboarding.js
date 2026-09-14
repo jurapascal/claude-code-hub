@@ -322,8 +322,8 @@
   function pamet(box) {
     head('Paměť', 'Poznámky, které si Claude nese mezi sezeními.');
     box.appendChild(el('p', 'onb-lead',
-      'Paměť je obyčejná složka s markdownem — dá se otevřít v Obsidianu. ' +
-      'Teprve s ní fungují příkazy /save, /learn a /project.'));
+      'Paměť je obyčejná složka s markdownem, dá se otevřít v Obsidianu. ' +
+      'Claude si do ní sám ukládá, na čem se pracovalo — klikat se na nic nemusí.'));
 
     // Napojit existující vault je nejčastější případ: kdo Obsidian používá,
     // už poznámky někde má a nechce začínat znovu.

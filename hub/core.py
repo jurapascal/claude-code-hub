@@ -2339,78 +2339,76 @@ def doctor():
     }
 
 
-# ── Postup ze zavíraných shellů ──────────────────────────────────────────────
-POSTUP_PATH = os.path.join(MEMORY_DIR, "hub-postup.md")
-ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[()][A-Z0-9]|\x1b[=>]|\r")
+# ── Paměť se ukládá sama ─────────────────────────────────────────────────────
+# Dřív se při zavírání tabu ptalo „uložit postup?" a do Brainu se sypal syrový
+# konec výpisu terminálu (hub-postup.md narostl za týden na 2,9 MB). Teď to dělá
+# hooks/memory-autosave.py: z přepisu konverzace si Claude na pozadí sám doplní
+# poznámku k projektu a případný poznatek. Hub mu jen řekne, že se tab zavřel —
+# session v tabu se pozná podle HUB_TAB, které Stop hook zapíše k session.
+AUTOSAVE_DIR = os.path.join(CLAUDE_DIR, "hub-autosave")
+AUTOSAVE_LOG = os.path.join(AUTOSAVE_DIR, "log.jsonl")
+AUTOSAVE_SCRIPT = os.path.join(CLAUDE_DIR, "hooks", "memory-autosave.py")
+# Id téhle instance hubu: čísla tabů začínají po každém startu od jedničky,
+# takže samotné číslo by spojilo tab se session z minulého spuštění.
+INSTANCE = os.urandom(4).hex()
 
 
-def _tail_text(buffer, lines=40):
-    """Konec výpisu terminálu jako čitelný text — bez ANSI a bez prázdna."""
-    text = ANSI_RE.sub("", bytes(buffer).decode("utf-8", "replace"))
-    kept = [ln.rstrip() for ln in text.splitlines()]
-    while kept and not kept[-1]:
-        kept.pop()
-    return "\n".join(kept[-lines:])
+def autosave_enabled():
+    return HAS_BRAIN and CONFIG.get("memory_autosave", True) is not False
 
 
-def save_shell_progress(sessions):
-    """Zapíše do Brainu, na čem se v zavíraných shellech pracovalo.
+def _autosave_script():
+    if os.path.isfile(AUTOSAVE_SCRIPT):
+        return AUTOSAVE_SCRIPT
+    here = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "hooks", "memory-autosave.py")
+    return here if os.path.isfile(here) else ""
 
-    Děje se to na serveru a bez modelu: zapisuje se to, co je jisté — složka,
-    git stav a konec výpisu. Smysl je, aby se při zavření okna neztratilo, kde
-    člověk skončil; hlubší poznatky si do paměti ukládá Claude sám přes /save.
-    """
-    if not HAS_BRAIN or not sessions:
-        return 0
-    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    blocks = []
-    for session in sessions:
-        path = session.path or HOME
-        head = f"## {stamp} — {session.title or session.kind} ({shorten_path(path)})"
-        lines = [head]
-        status = git_short_status(path)
-        if status:
-            lines.append(f"- Git: {status}")
-        tail = _tail_text(session.buffer)
-        if tail:
-            lines.append("- Kde to skončilo:")
-            lines.append("")
-            lines.append("```")
-            lines.append(tail)
-            lines.append("```")
-        blocks.append("\n".join(lines))
-    if not blocks:
-        return 0
-    new = not os.path.isfile(POSTUP_PATH)
+
+def tab_tag(sid):
+    return f"{INSTANCE}:{sid}"
+
+
+def autosave_tabs_closed(sids):
+    """Zavřené taby → uložit jejich session. Nečeká se: běží to minuty."""
+    script = _autosave_script()
+    if not sids or not script or not autosave_enabled():
+        return
+    python = sys.executable or "python3"
+    kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
+              "stderr": subprocess.DEVNULL, "close_fds": True, "cwd": HOME}
+    if IS_WINDOWS:
+        quiet = os.path.join(os.path.dirname(python), "pythonw.exe")
+        python = quiet if os.path.isfile(quiet) else python
+        kwargs["creationflags"] = (subprocess.DETACHED_PROCESS |
+                                   subprocess.CREATE_NEW_PROCESS_GROUP)
+    else:
+        # Vlastní session: hub může skončit hned po zavření okna a ukládání
+        # nesmí skončit s ním.
+        kwargs["start_new_session"] = True
     try:
-        with open(POSTUP_PATH, "a", encoding="utf-8") as fh:
-            if new:
-                fh.write("# Postup ze zavřených shellů\n\n"
-                         "Zapisuje Hub při zavírání shellu nebo okna, aby se "
-                         "neztratilo, kde jsi skončil.\n\n")
-            fh.write("\n\n".join(blocks) + "\n\n")
+        subprocess.Popen([python, script, "--tab", *[tab_tag(s) for s in sids]],
+                         **kwargs)
     except OSError as exc:
-        log_error("Postup se nepodařilo zapsat", exc)
-        return 0
-    return len(blocks)
+        log_error("Automatické ukládání paměti se nespustilo", exc)
 
 
-def shorten_path(path):
-    return path.replace(HOME, "~", 1) if path.startswith(HOME) else path
-
-
-def git_short_status(path):
-    """Krátké shrnutí git stavu složky, nebo '' když to není repozitář."""
-    if not os.path.isdir(os.path.join(path, ".git")):
-        return ""
+def autosave_recent(limit=6):
+    """Poslední uložení do paměti, nejnovější první (jen ta, co něco zapsala
+    nebo selhala — „nebylo co ukládat" nikoho nezajímá)."""
     try:
-        out = subprocess.run(["git", "-C", path, "status", "--porcelain"],
-                             capture_output=True, text=True, timeout=5).stdout
-    except Exception:
-        return ""
-    changed = [ln for ln in out.splitlines() if ln.strip()]
-    if not changed:
-        return "čisto"
-    names = ", ".join(ln[3:] for ln in changed[:5])
-    more = f" (+{len(changed) - 5} dalších)" if len(changed) > 5 else ""
-    return f"{len(changed)} nezacommitovaných — {names}{more}"
+        with open(AUTOSAVE_LOG, encoding="utf-8") as fh:
+            lines = fh.readlines()[-200:]
+    except OSError:
+        return []
+    out = []
+    for line in reversed(lines):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if entry.get("status") in ("saved", "error"):
+            out.append(entry)
+        if len(out) >= limit:
+            break
+    return out

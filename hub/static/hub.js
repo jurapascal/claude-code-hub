@@ -333,6 +333,18 @@ function imageUrl(path) {
   return `/api/image?t=${encodeURIComponent(TOKEN)}&path=${encodeURIComponent(path)}`;
 }
 
+/* „ukládá se sama · naposledy 14:05" — ať je vidět, že se na nic klikat nemusí. */
+function autosaveLine() {
+  if (!STATE.memory_autosave) return 'automatické ukládání vypnuté';
+  const last = (STATE.autosave_recent || []).find((e) => e.status === 'saved');
+  if (!last) return 'ukládá se sama';
+  const d = new Date(last.at);
+  const today = d.toDateString() === new Date().toDateString();
+  const when = today ? d.toLocaleTimeString('cs-CZ', {hour: '2-digit', minute: '2-digit'})
+                     : d.toLocaleDateString('cs-CZ', {day: 'numeric', month: 'numeric'});
+  return `ukládá se sama · naposledy ${when}`;
+}
+
 function renderMemory() {
   const mem = STATE.memory;
   $('memory-section').hidden = !mem.enabled;
@@ -341,7 +353,9 @@ function renderMemory() {
   $('memory-summary').innerHTML =
     `<span class="learnings">${icon('i-bulb')} ${c.learnings || 0}</span>
      <span class="errors">${icon('i-error')} ${c.errors || 0}</span>
-     <span class="wins">${icon('i-star')} ${c.wins || 0}</span>`;
+     <span class="wins">${icon('i-star')} ${c.wins || 0}</span>
+     <span class="mem-auto"></span>`;
+  $('memory-summary').querySelector('.mem-auto').textContent = autosaveLine();
   const box = $('memory');
   box.textContent = '';
   if (!mem.recent.length) {
@@ -362,9 +376,9 @@ function renderMemory() {
 
 // `dev: true` = nasazení a GitHub. Ukáže se až ve vývojářském režimu; komu
 // hub slouží na psaní s agentem, tomu deploy ani push nemá co nabízet.
+// Uložit do paměti a poznámka k projektu tu nejsou schválně: dělá je hook
+// memory-autosave.py sám, když session ztichne nebo se tab zavře.
 const ACTIONS = [
-  {skill: 'save', label: 'Uložit do paměti', icon: 'i-save', cmd: '/save\r'},
-  {skill: 'project', label: 'Poznámka projektu', icon: 'i-note', cmd: '/project\r'},
   {skill: 'deploy', label: 'Deploy', icon: 'i-deploy', cmd: '/deploy\r', dev: true},
   {skill: 'push', label: 'Push na GitHub', icon: 'i-push', cmd: '/push\r', dev: true},
   {skill: 'status', label: 'Přehled projektů', icon: 'i-status', cmd: '/status\r'},
@@ -373,6 +387,14 @@ const ACTIONS = [
 
 function devMode() {
   return !!(STATE.config && STATE.config.dev_mode);
+}
+
+/* Rychlé akce jsou slash příkazy — dávají smysl jen v tabu s agentem, který
+   naše skilly čte. V holém shellu by /status skončil v bashi. */
+function showsActions(tab) {
+  if (!tab || !(tab.kind === 'project' || tab.kind.startsWith('slash:'))) return false;
+  const a = agentById(tab.agent || STATE.default_agent);
+  return !!(a && a.skills) && $('actions').childElementCount > 0;
 }
 
 function renderActions() {
@@ -388,6 +410,7 @@ function renderActions() {
     el.onclick = () => runSlash(a.cmd);
     box.appendChild(el);
   }
+  $('actionbar').hidden = !showsActions(ACTIVE);
 }
 
 function renderFooter() {
@@ -546,6 +569,7 @@ function renderWelcome() {
     const total = (mem.counts.learnings || 0) + (mem.counts.errors || 0) +
                   (mem.counts.wins || 0);
     facts.push(total ? total + ' poznámek v paměti' : 'paměť připravená');
+    if (STATE.memory_autosave) facts.push('ukládá se sama');
   }
   facts.push('verze ' + STATE.version.version);
   $('welcome-facts').textContent = facts.join('  ·  ');
@@ -822,7 +846,10 @@ function createTab({kind, path, title, id, agent, model}) {
                // Agent musí být na tabu hned: bublina se podle něj rozhoduje,
                // co umí, a instaluje se o pár řádků níž.
                agent: agent || '', model: model || '', exited: false};
-  const toPty = (d) => { if (tab.id) send({t: 'in', id: tab.id, d}); };
+  const toPty = (d) => {
+    tab.lastInput = Date.now();          // ozvěna psaní není „agent pracuje"
+    if (tab.id) send({t: 'in', id: tab.id, d});
+  };
   term.onData(toPty);
   // Diacritics arrive from the GTK input method as composition events, which
   // xterm.js mishandles badly enough to corrupt the line — see ime.js.
@@ -939,7 +966,7 @@ function activate(tab) {
     t.pane.classList.toggle('active', t === tab);
   }
   $('welcome').hidden = TABS.length > 0;
-  $('actionbar').hidden = !tab;
+  $('actionbar').hidden = !showsActions(tab);
   if (tab) {
     refit(tab);
     tab.term.focus();
@@ -965,7 +992,7 @@ function refit(tab) {
 /* Potvrzení „Ano / Ne" jako slib. Vrací true, když člověk klikl na Ano.
  * Otevřený dialog nikdy nezdvojujeme — druhé volání počká na to první. */
 let confirmPending = null;
-function askConfirm({title, html, yes = 'Ano, uložit postup a zavřít', no = 'Ne'}) {
+function askConfirm({title, html, yes = 'Ano', no = 'Ne'}) {
   if (confirmPending) return confirmPending;
   const box = $('confirm');
   $('confirm-title').textContent = title;
@@ -992,31 +1019,27 @@ function askConfirm({title, html, yes = 'Ano, uložit postup a zavřít', no = '
   return confirmPending;
 }
 
-/* Uloží postup ze shellu do Brainu. Server si vezme, co o session ví (složka,
- * git stav, konec výpisu) — nečeká se na Clauda, aby zavírání nedrhlo. */
-async function saveProgress(ids) {
-  if (!ids.length) return;
-  try {
-    const res = await api('save-progress', {ids});
-    if (res && res.saved) toast(`Postup uložen do Brainu (${res.saved}×).`);
-  } catch (err) {
-    toast('Postup se nepodařilo uložit: ' + err.message);
-  }
+/* Pracuje v tabu zrovna něco? Claude Code při práci točí ukazatel a posílá
+ * výpis několikrát za sekundu; v klidu mlčí. Jeden dva kusy výpisu (třeba
+ * překreslení po ztrátě fokusu kliknutím na křížek) za práci nepovažujeme. */
+function isBusy(tab) {
+  const now = Date.now();
+  return !!tab.outTimes && tab.outTimes.filter((t) => now - t < 2000).length >= 6;
 }
 
-/* Zavření vyvolané člověkem se ptá; zavření kvůli chybě nebo úklidu po
- * reconnectu ne — tam už není co potvrzovat ani co ukládat. */
+/* Zavření tabu se neptá: do paměti se session uloží sama (memory-autosave.py)
+ * a přerušená konverzace jde vrátit přes `claude --resume`. Ptá se jen, když
+ * by se zavřením utnula rozdělaná práce. */
 async function requestCloseTab(tab) {
-  if (tab.exited || !tab.id) { closeTab(tab); return; }
+  if (tab.exited || !tab.id || !isBusy(tab)) { closeTab(tab); return; }
   const ok = await askConfirm({
-    title: 'Zavřít tenhle shell?',
-    html: `Zavíráš <b>${escapeHtml(tab.title)}</b>.` +
-          `<span class="hint">Ano = uložím postup do Brainu a shell zavřu.</span>`,
-    no: 'Ne, nechat otevřený',
+    title: 'Agent ještě pracuje',
+    html: `V <b>${escapeHtml(tab.title)}</b> se pořád něco děje.` +
+          `<span class="hint">Zavřením to přerušíš. Co je hotové, se do paměti uloží samo.</span>`,
+    yes: 'Přerušit a zavřít',
+    no: 'Nechat běžet',
   });
-  if (!ok) return;
-  await saveProgress([tab.id]);
-  closeTab(tab);
+  if (ok) closeTab(tab);
 }
 
 function escapeHtml(text) {
@@ -1215,10 +1238,6 @@ function projectMenu(ev, p) {
         run: () => openExternal('https://github.com/' + p.repo)});
     }
   }
-  if (STATE.skills.includes('project')) {
-    items.push({icon: 'i-note', label: 'Poznámka do paměti (/project)',
-      run: () => openTab({kind: 'slash:project', path: p.path, title: 'note: ' + p.name})});
-  }
   items.push(
     {icon: 'i-terminal', label: 'Shell tady',
      run: () => openTab({kind: 'shell', path: p.path, title: p.name})},
@@ -1353,7 +1372,14 @@ function connect() {
 function handle(msg) {
   if (msg.t === 'out') {
     const tab = TABS.find(t => t.id === msg.id);
-    if (tab) tab.term.write(msg.d);
+    if (tab) {
+      tab.term.write(msg.d);
+      const now = Date.now();
+      if (now - (tab.lastInput || 0) > 400) {
+        (tab.outTimes = tab.outTimes || []).push(now);
+        if (tab.outTimes.length > 12) tab.outTimes.shift();
+      }
+    }
   } else if (msg.t === 'opened') {
     const tab = TABS.find(t => t.ref === msg.ref);
     if (tab) {
@@ -1372,6 +1398,8 @@ function handle(msg) {
     if (tab) { tab.exited = true; tab.el.classList.add('exited'); }
   } else if (msg.t === 'sessions') {
     restore(msg.list);
+  } else if (msg.t === 'memory-saved') {
+    memorySaved(msg);
   } else if (msg.t === 'error') {
     const tab = TABS.find(t => t.ref === msg.ref);
     if (tab) closeTab(tab);
@@ -1400,6 +1428,19 @@ function restore(list) {
 }
 
 let toastTimer = null;
+/* Hook memory-autosave.py doplnil paměť. Stačí o tom vědět — nic se nepotvrzuje. */
+async function memorySaved({files, projects}) {
+  const notes = (files || []).filter((f) => f !== 'MEMORY.md');
+  if (!notes.length) return;
+  const where = (projects || []).length ? ` (${projects.join(', ')})` : '';
+  toast(`Paměť doplněna${where}: ${notes.join(', ')}`);
+  try {
+    STATE = await api('state');
+    renderMemory();
+    renderWelcome();
+  } catch (_) { /* hláška stačí, seznam se obnoví příště */ }
+}
+
 function toast(text) {
   const el = $('toast');
   el.textContent = text;
@@ -1519,25 +1560,15 @@ async function main() {
   window.addEventListener('resize', () => refit(ACTIVE));
 
   // Zavření celého okna. Vlastní dialog sem nedosáhne — křížek okna řídí
-  // prohlížeč, takže se ptá on (Ano/Ne). Uložení postupu proto visí na
-  // pagehide, který přijde až ve chvíli, kdy se opravdu odchází: kdyby se
-  // ukládalo už v beforeunload, zapsal by se postup i po kliknutí na „Ne".
+  // prohlížeč, takže se ptá on. A jen když by se utnula rozdělaná práce:
+  // do paměti se session uloží samy, jakmile hub taby zavře.
   window.addEventListener('beforeunload', (ev) => {
     // Přechod mezi počítačem a serverem není zavírání: taby na počítači běží
     // dál a stránka se k nim po návratu připojí.
     if (window.HUB_LEAVING) return;
-    if (!TABS.some(t => t.id && !t.exited)) return;
+    if (!TABS.some(t => t.id && !t.exited && isBusy(t))) return;
     ev.preventDefault();
     ev.returnValue = '';             // vyžadují starší prohlížeče
-  });
-  window.addEventListener('pagehide', () => {
-    if (window.HUB_LEAVING) return;
-    const ids = TABS.filter(t => t.id && !t.exited).map(t => t.id);
-    if (!ids.length) return;
-    // Běžný fetch by se při zavírání stránky zrušil; beacon se doručí i potom.
-    navigator.sendBeacon(
-      `/api/save-progress?t=${encodeURIComponent(TOKEN)}`,
-      new Blob([JSON.stringify({ids})], {type: 'application/json'}));
   });
 
   connect();

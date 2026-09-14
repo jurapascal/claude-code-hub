@@ -12,6 +12,28 @@
             "statusMessage": "Auto-saving session state..."
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/memory-autosave.py",
+            "timeout": 10,
+            "statusMessage": "Hlídám paměť…"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/memory-autosave.py",
+            "timeout": 10,
+            "statusMessage": "Hlídám paměť…"
+          }
+        ]
       }
     ]
   }

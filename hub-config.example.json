@@ -4,6 +4,8 @@
   "project_dirs": ["~/Desktop", "~/Projects", "/opt/lampp/htdocs"],
 
   "brain_dir": "~/Obsidian/Claude-Brain",
+  "memory_autosave": true,
+  "memory_autosave_idle": 20,
 
   "icon": "~/.local/share/icons/claude-code.png",
 

@@ -23,7 +23,7 @@ dělá jednu aplikaci:
 
 - **Postranní panel** — seznam projektů z nastavených složek (typ, branch, počet
   nezacommitovaných souborů), hledání, tlačítko na libovolnou jinou složku.
-  Pravý klik na projekt = Deploy, shell, poznámka do paměti, otevřít složku.
+  Pravý klik na projekt = Deploy, shell, otevřít složku.
 - **Taby** — klik na projekt otevře **skutečný terminál** (pty + xterm.js), takže TUI
   Claude Code vypadá přesně jako v terminálu. Když session skončí, tab zůstane jako
   obyčejný shell. Taby jdou přejmenovat dvojklikem a přetáhnout myší.
@@ -38,9 +38,16 @@ dělá jednu aplikaci:
   nadpis, text, příkaz nebo diff v rámečku a volby jako tlačítka. Odpovídá se myší
   i klávesnicí — terminál pod tím poslouchá dál. Tlačítkem **Terminál** jde karta
   odsunout a podívat se, jak dotaz nakreslil Claude Code.
-- **Akční panel vpravo** — tlačítka posílají do chatu rovnou slash příkazy
-  (`/save`, `/project`, `/deploy`, `/push`, `/status`, `/screenshot`). Tlačítko se
-  zobrazí, jen když je odpovídající příkaz nainstalovaný.
+- **Paměť se ukládá sama** — na nic se neklikne a `/save` ani `/project` psát
+  nemusíš. Když se tab zavře, session skončí nebo je 20 minut ticho, Claude na
+  pozadí projde, co se v konverzaci dělo, doplní poznámku k projektu (historie,
+  TODO) a jen když to stojí za to, i jeden poznatek, chybu nebo úspěch. Hub pak
+  ukáže hlášku „Paměť doplněna". Víc v [Paměť se ukládá sama](#paměť-se-ukládá-sama).
+- **Zavření tabu se neptá** — do paměti se session uloží sama, takže křížek prostě
+  zavře. Zeptá se jen tehdy, když agent zrovna pracuje a zavřením by se to utnulo.
+- **Akční panel vpravo** — u tabu s Claude Code tlačítka posílají do chatu slash
+  příkazy (`/status`, `/screenshot`, ve vývojářském režimu `/deploy` a `/push`).
+  U holého terminálu se neukazuje, tam by příkaz skončil v bashi.
 - **Reload nezabíjí session** — terminály běží v serveru, ne ve stránce. Když se okno
   načte znovu, hub se připojí zpátky k běžícím Claude session a dohraje jejich výpis.
 - **Obrázky** — screenshot ze schránky (Ctrl+V) nebo soubor přetažený do tabu se uloží
@@ -254,9 +261,46 @@ se z tvého konfigu při instalaci.
 | `/screenshot <url>` | screenshot webu (desktop + mobil) | — |
 | `/audit <url>` | vizuální a technický audit webu | — |
 
-Bez vaultu se čtyři paměťové příkazy vůbec neinstalují — a tlačítka na ně v Hubu
-se nezobrazí. Vlastní příkazy si přidáš jako další složku do `~/.claude/skills/`;
+`/save` a `/project` zůstávají pro ruční použití, ale potřeba nejsou: paměť se
+ukládá sama (viz níž). Bez vaultu se čtyři paměťové příkazy vůbec neinstalují. Vlastní příkazy si přidáš jako další složku do `~/.claude/skills/`;
 instalátor je nemaže.
+
+## Paměť se ukládá sama
+
+Dokud to bylo tlačítko, uložilo se jen to, na co si člověk vzpomněl. Teď to dělá
+hook `hooks/memory-autosave.py`, který instalačka zapojí do `settings.json`
+(vedle tvých vlastních hooků, nic nepřepíše):
+
+| Kdy | Co se stane |
+|---|---|
+| Claude dopíše odpověď (`Stop`) | zapíše si, že session žije, a hlídá, až ztichne |
+| 20 minut ticha | uloží, co od minula přibylo |
+| `/exit`, `/clear`, Ctrl+D (`SessionEnd`) | uloží hned |
+| zavřený tab nebo celé okno hubu | uloží session z toho tabu |
+
+Uložení samo: z přepisu konverzace se poskládá výtah (zadání, co Claude
+odpověděl, příkazy, commity, upravené soubory; strop 60 kB, i z přepisu o 5 MB
+vyjde kolem 20 kB). Pak se na pozadí pustí `claude -p` bez okna, který podle
+výtahu **doplní poznámku k projektu** (založí ji, když chybí) a jen když
+se objevilo něco, co stojí za zapamatování, zapíše **jeden poznatek, chybu nebo
+úspěch**. Nic nezdvojuje: napřed hledá existující poznámku a každý kus
+konverzace zpracuje jednou.
+
+Aby to nebyla otrava ani díra do rozpočtu:
+
+- **Drobnost se neukládá.** Otázka s odpovědí nebo samotné `/save` se přeskočí,
+  aniž by se model vůbec volal.
+- **Podřízený Claude je zavřený v paměti.** Běží bez hooků (`disableAllHooks`,
+  jinak by jeho konec spustil ukládání znovu a třeba i zápis do Clockify), bez
+  MCP, bez uložené session, jen s nástroji Read/Write/Edit/Glob/Grep. Zapisovat
+  smí jen do složky paměti.
+- **Cena:** jedno uložení změřené na skutečné session (model `sonnet`, zhruba
+  100 s) vyšlo na $0,31–0,38. Strop je $3 (`--max-budget-usd`).
+- **Vypnout** jde v ⚙ → Paměť. Tam je vidět i posledních pár uložení a co se zapsalo.
+
+Stav leží v `~/.claude/hub-autosave/`: kam až se u které session došlo, a
+v `log.jsonl` výsledky, ze kterých hub bere hlášku. Session v tabu se pozná podle
+proměnné `HUB_TAB`, kterou hub dá každému tabu a Stop hook si ji zapíše.
 
 ## Telefon (Android i iPhone)
 
@@ -544,6 +588,9 @@ curl -fsSL https://raw.githubusercontent.com/jurapascal/claude-code-hub/main/get
 | `gw_server` | adresa serveru s bránou | `""` |
 | `gw_token` | token zařízení z přihlášení na server — heslo se neukládá | `""` |
 | `gw_user` | kdo je na serveru přihlášený (jméno, e-mail; předvyplní přihlášení) | `null` |
+| `memory_autosave` | paměť se ukládá sama (přepíná se v ⚙ → Paměť) | `true` |
+| `memory_autosave_idle` | po kolika minutách ticha se session uloží | `20` |
+| `memory_autosave_model` | model pro ukládání na pozadí | `sonnet` |
 
 Projekt se do panelu dostane, když ve složce je `.git`, `package.json`, `composer.json`,
 soubor `*.php` nebo Shopify struktura (`sections/`, `templates/`) — podle toho se pozná
@@ -583,6 +630,7 @@ mobile/android/           obal pro Android (.apk): WebView + čtečka QR
 hub/stats.py              počítání statistik z ~/.claude (přírůstkově, s mezipamětí)
 hooks/save-session.py     Stop hook — uloží stav projektů do session-state.md
 hooks/session-start.py    SessionStart hook — kategorie skillů z vaultu + stav minulé session
+hooks/memory-autosave.py  Stop + SessionEnd hook — paměť a poznámka k projektu se ukládají samy
 tools/settings_merge.py   přidá hooky (a volitelně bypass) do settings.json, se zálohou
 tools/windows-check.ps1   kontrola na Windows: odkazy, ConPTY, schránka, složka paměti
 tools/make-icons.py       ze značky vyrobí .png, .ico i favicony (jediná cesta, jak vznikají)

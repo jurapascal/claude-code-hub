@@ -184,6 +184,7 @@ class Hub:
     def __init__(self):
         self.sessions = {}
         self.clients = 0
+        self.conns = set()               # otevřená okna — komu poslat hlášku
         self.last_empty_at = None
         self._next_id = 1
         self._lock = threading.Lock()
@@ -200,6 +201,9 @@ class Hub:
         # ať se to dozví i tab, jinak by chip v bublině hlásil „výchozí".
         model = env.get("HUB_AGENT_MODEL") or model
         sid = self.new_id()
+        # Podle téhle značky Stop hook pozná, ve kterém tabu session běží,
+        # a zavření tabu pak uloží do paměti právě ji.
+        env = {**env, "HUB_TAB": core.tab_tag(sid)}
         session = Session(sid, title, kind, path, core.bash_argv(script), cwd,
                           cols, rows, agent=agent, model=model, env=env)
         self.sessions[sid] = session
@@ -228,14 +232,25 @@ class Hub:
         script, env = core.cmd_agent(path, agent, model=model)
         return script, path, env
 
-    def close(self, sid):
+    def close(self, sid, autosave=True):
         session = self.sessions.pop(sid, None)
         if session:
             session.close()
+            if autosave:
+                core.autosave_tabs_closed([sid])
 
     def shutdown(self):
-        for sid in list(self.sessions):
-            self.close(sid)
+        sids = list(self.sessions)
+        for sid in sids:
+            self.close(sid, autosave=False)
+        core.autosave_tabs_closed(sids)      # jeden proces na všechny taby
+
+    def broadcast(self, message):
+        for conn in list(self.conns):
+            try:
+                conn.send_json(message)
+            except Exception:
+                pass
 
 
 HUB = Hub()
@@ -415,13 +430,9 @@ class Handler(BaseHTTPRequestHandler):
                 "version": core.version_info(),
                 "vault_git": dict(zip(("is_repo", "remote"), core.vault_git_state())),
                 "vault_autosync": bool(core.CONFIG.get("vault_autosync")),
+                "memory_autosave": core.autosave_enabled(),
+                "autosave_recent": core.autosave_recent(),
             })
-        if name == "save-progress":
-            # Zavírá se shell nebo celé okno: uložíme, kde to skončilo, dokud
-            # ještě session žije a její výpis je po ruce.
-            ids = payload.get("ids") or []
-            live = [HUB.sessions[sid] for sid in ids if sid in HUB.sessions]
-            return self._json({"saved": core.save_shell_progress(live)})
         if name == "open-path":
             target = payload.get("path", "")
             if payload.get("kind") == "brain":
@@ -551,7 +562,7 @@ class Handler(BaseHTTPRequestHandler):
             allowed = ("project_dirs", "brain_dir", "onboarded", "vault_autosync",
                        "newtab", "extra_projects", "show_archived",
                        "agents", "default_agent", "project_agents",
-                       "remote_keep_running", "dev_mode")
+                       "remote_keep_running", "dev_mode", "memory_autosave")
             updates = {k: v for k, v in payload.items() if k in allowed}
             if not updates:
                 return self._json({"error": "Nic k uložení."}, 400)
@@ -765,11 +776,13 @@ class Handler(BaseHTTPRequestHandler):
 
         conn = WSConn(self.connection)
         HUB.clients += 1
+        HUB.conns.add(conn)
         HUB.last_empty_at = None
         try:
             self._ws_loop(conn)
         finally:
             HUB.clients -= 1
+            HUB.conns.discard(conn)
             if HUB.clients <= 0:
                 HUB.last_empty_at = time.time()
             for session in HUB.sessions.values():
@@ -894,8 +907,48 @@ def start():
     httpd.origins = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
     threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.2},
                      daemon=True).start()
+    threading.Thread(target=watch_autosave, daemon=True).start()
     return httpd, f"http://127.0.0.1:{port}/?t={urllib.parse.quote(token)}"
 
+
+
+def watch_autosave():
+    """Hlídá log automatického ukládání a každé uložení ohlásí oknům.
+
+    Ukládá se v odpojeném procesu (tab už je zavřený, hub možná taky), takže
+    jiná cesta zpátky než přes soubor není. Stačí se dívat na jeho velikost.
+    """
+    try:
+        seen = os.path.getsize(core.AUTOSAVE_LOG)
+    except OSError:
+        seen = 0
+    while True:
+        time.sleep(4)
+        try:
+            size = os.path.getsize(core.AUTOSAVE_LOG)
+        except OSError:
+            continue
+        if size < seen:                  # log se zkrátil (rotace)
+            seen = 0
+        if size == seen:
+            continue
+        try:
+            with open(core.AUTOSAVE_LOG, "rb") as fh:
+                fh.seek(seen)
+                chunk = fh.read(size - seen)
+        except OSError:
+            continue
+        seen = size
+        for line in chunk.decode("utf-8", "replace").splitlines():
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if entry.get("status") == "saved":
+                HUB.broadcast({"t": "memory-saved", "files": entry.get("files") or [],
+                               "projects": entry.get("projects") or []})
+            elif entry.get("status") == "error":
+                core.log(f"paměť se neuložila: {entry.get('detail')}", "warn")
 
 
 # ── the phone listener ───────────────────────────────────────────────────────

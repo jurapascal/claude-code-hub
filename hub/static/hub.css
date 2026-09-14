@@ -162,6 +162,7 @@ body { display: flex; flex-direction: column; }
 .mem-summary .learnings { color: var(--amber); }
 .mem-summary .errors { color: var(--red); }
 .mem-summary .wins { color: var(--green); }
+.mem-summary .mem-auto { flex-basis: 100%; color: var(--section); font-size: 10px; }
 
 .mem-card {
   display: flex; align-items: center; gap: 7px;

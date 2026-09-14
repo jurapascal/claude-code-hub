@@ -72,7 +72,9 @@ def has_hook(settings, event, needle):
     return False
 
 
-def ensure_hook(settings, event, needle, command, message, notes):
+def ensure_hook(settings, event, needle, command, message, notes, alongside=False):
+    """`alongside` = hook, který nic cizího nenahrazuje, jen přidává — smí se
+    zapojit i vedle vlastních hooků uživatele na stejnou událost."""
     existing = settings.get("hooks", {}).get(event) or []
     if has_hook(settings, event, needle):
         # Dřívější verze psaly cestu k Pythonu bez uvozovek, takže na Windows
@@ -91,7 +93,7 @@ def ensure_hook(settings, event, needle, command, message, notes):
             return True
         notes.append(f"{event}: už je zapojený, nechávám být")
         return False
-    if existing:
+    if existing and not alongside:
         # Their own hook for this event is already doing a job we know nothing
         # about. Adding ours next to it would run both; that is their call.
         notes.append(f"{event}: máš tam vlastní hook — náš nepřidávám "
@@ -131,6 +133,13 @@ def main():
             target = os.path.join(claude_dir, "hooks", script)
             ensure_hook(settings, event, script,
                         hook_command(args.python, target), msg, notes)
+        # Paměť se ukládá sama: Stop hlídá ticho, SessionEnd ukládá hned.
+        # Nic nenahrazuje, tak se zapojí i vedle cizích hooků (Clockify…).
+        target = os.path.join(claude_dir, "hooks", "memory-autosave.py")
+        for event in ("Stop", "SessionEnd"):
+            ensure_hook(settings, event, "memory-autosave.py",
+                        hook_command(args.python, target), "Hlídám paměť…",
+                        notes, alongside=True)
 
     if args.bypass:
         perms = settings.setdefault("permissions", {})

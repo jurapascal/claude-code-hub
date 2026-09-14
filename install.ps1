@@ -420,6 +420,7 @@ Copy-Tracked (Join-Path $Src 'claude-wrapper.sh')     (Join-Path $ClaudeDir 'cla
 Copy-Tracked (Join-Path $Src 'agent-wrapper.sh')      (Join-Path $ClaudeDir 'agent-wrapper.sh')
 Copy-Tracked (Join-Path $Src 'hooks\save-session.py')  (Join-Path $ClaudeDir 'hooks\save-session.py')
 Copy-Tracked (Join-Path $Src 'hooks\session-start.py') (Join-Path $ClaudeDir 'hooks\session-start.py')
+Copy-Tracked (Join-Path $Src 'hooks\memory-autosave.py') (Join-Path $ClaudeDir 'hooks\memory-autosave.py')
 # tools\ potřebuje sekce 10 (merge settings.json) i pozdější spuštění ručně
 $toolsDest = Join-Path $ClaudeDir 'tools'
 if (Test-Path $toolsDest) { Remove-Item $toolsDest -Recurse -Force }
