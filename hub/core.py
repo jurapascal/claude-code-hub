@@ -1677,6 +1677,115 @@ def current_model():
     return str(model) if isinstance(model, str) else ""
 
 
+_MODEL_ID = re.compile(r"^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(?:\[[^\]]*\])?$")
+
+
+def model_label(model_id):
+    """Jméno modelu pro člověka: `claude-opus-5` → `Opus 5`,
+    `claude-haiku-4-5-20251001` → `Haiku 4.5`. Neznámý tvar vrátí, jak je."""
+    text = str(model_id or "").strip()
+    m = _MODEL_ID.match(text.lower())
+    if not m:
+        return text
+    family, major, minor = m.groups()
+    return f"{family.capitalize()} {major}" + (f".{minor}" if minor else "")
+
+
+# tag tabu → (přepis konverzace, kdy se hledal). Přepis se hledá znovu po půl
+# minutě: /clear nebo /resume v tabu začne novou session s novým souborem.
+_TAB_TRANSCRIPTS = {}
+TRANSCRIPT_RECHECK = 30.0
+
+
+def _tab_transcript(sid, cwd, started):
+    """Přepis konverzace, která běží v tabu, nebo ''.
+
+    Přesně to ví Stop hook (memory-autosave.py): k session zapíše HUB_TAB. Bez
+    něj (automatické ukládání vypnuté) se vezme nejnovější přepis ze složky
+    projektu, který vznikl až po startu tabu — u dvou tabů v jednom projektu
+    to může být ten druhý, ale lepší odhad než nic.
+    """
+    tag = tab_tag(sid)
+    cached = _TAB_TRANSCRIPTS.get(tag)
+    if cached and time.time() - cached[1] < TRANSCRIPT_RECHECK \
+            and os.path.isfile(cached[0]):
+        return cached[0]
+    found, last = "", -1.0
+    try:
+        names = os.listdir(AUTOSAVE_DIR)
+    except OSError:
+        names = []
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(AUTOSAVE_DIR, name), encoding="utf-8") as fh:
+                info = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(info, dict) or info.get("tab") != tag:
+            continue
+        path = info.get("transcript") or ""
+        when = info.get("last") if isinstance(info.get("last"), (int, float)) else 0
+        if os.path.isfile(path) and when >= last:
+            found, last = path, when
+    if not found and cwd:
+        folder = os.path.join(CLAUDE_DIR, "projects",
+                              re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd)))
+        newest = 0.0
+        try:
+            with os.scandir(folder) as entries:
+                for entry in entries:
+                    if not entry.name.endswith(".jsonl"):
+                        continue
+                    mtime = entry.stat().st_mtime
+                    if mtime >= started - 2 and mtime > newest:
+                        found, newest = entry.path, mtime
+        except OSError:
+            pass
+    if found:
+        _TAB_TRANSCRIPTS[tag] = (found, time.time())
+    return found
+
+
+def _last_model(transcript):
+    """(id modelu, čas) poslední odpovědi v přepisu. Čte se jen konec souboru —
+    přepis dlouhé session má desítky MB."""
+    try:
+        with open(transcript, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - 512 * 1024))
+            chunk = fh.read()
+    except OSError:
+        return "", ""
+    for raw in reversed(chunk.splitlines()):
+        if b'"assistant"' not in raw or b'"model"' not in raw:
+            continue
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            continue              # první řádek useknutý uprostřed
+        msg = entry.get("message") if isinstance(entry, dict) else None
+        model = msg.get("model") if isinstance(msg, dict) else ""
+        # `<synthetic>` píše Claude Code u hlášek, které nepsal model.
+        if entry.get("type") == "assistant" and isinstance(model, str) \
+                and model.startswith("claude-"):
+            return model, str(entry.get("timestamp") or "")
+    return "", ""
+
+
+def tab_model(sid, cwd, started):
+    """Model, kterým Claude v tabu doopravdy odpověděl naposledy.
+
+    V settings.json je jen volba (a u výchozí nic) — co skutečně běží, ví až
+    přepis konverzace. `at` je čas té odpovědi, podle něj bublina pozná, že
+    po přepnutí modelu přišla nová.
+    """
+    transcript = _tab_transcript(sid, cwd, started)
+    model, at = _last_model(transcript) if transcript else ("", "")
+    return {"model": model, "label": model_label(model), "at": at}
+
+
 def installed_skills():
     """Slash commands actually installed in ~/.claude/skills/."""
     try:

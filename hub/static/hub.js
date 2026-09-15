@@ -932,6 +932,8 @@ function createTab({kind, path, title, id, agent, model, background}) {
       upload: uploadFiles,
       quote: shellQuote,
       skills: () => STATE.skills || [],
+      // Čím Claude v tabu doopravdy odpověděl (z přepisu konverzace na serveru).
+      tabModel: (id) => api('tab-model?id=' + encodeURIComponent(id)),
       /* Model ze settings.json — s ním Claude Code v tomhle tabu nastartoval.
          Přepnutí si Claude Code do settings.json uloží taky, ale my ho víme
          hned, tak si ho tu rovnou přepíšeme: další tab pak ukáže to samé. */

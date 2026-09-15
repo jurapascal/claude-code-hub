@@ -195,8 +195,15 @@ def _approve_api_key(home, key):
     resp = resp if isinstance(resp, dict) else {}
     approved = [k for k in (resp.get("approved") or []) if isinstance(k, str)]
     rejected = [k for k in (resp.get("rejected") or []) if isinstance(k, str)]
-    if tail in approved and tail not in rejected:
+    # Zbytek dřívějšího přihlášení vlastním účtem: token je pryč, ale údaje
+    # o účtu zůstaly. Claude Code by podle nich ukazoval cizí e-mail a modelu
+    # ho podával jako uživatelův (Claude s ním pak zkoušel i Google).
+    stale = "oauthAccount" in data and not os.path.exists(
+        os.path.join(home, ".claude", ".credentials.json"))
+    if tail in approved and tail not in rejected and not stale:
         return
+    if stale:
+        data.pop("oauthAccount", None)
     data["customApiKeyResponses"] = {
         **resp,
         "approved": approved if tail in approved else approved + [tail],

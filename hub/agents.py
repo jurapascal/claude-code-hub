@@ -49,6 +49,9 @@ CATALOG = {
                    ["Haiku 4.5", "haiku"], ["Fable 5", "fable"]],
         "model_arg": "--model {model}",
         "model_cmd": "/model {model}",
+        # Bypass mezi režimy (Shift+Tab), ale nestartuje se v něm — zapne ho
+        # člověk sám v bublině. Bez toho ho Claude Code do cyklu nepustí.
+        "bypass_arg": "--allow-dangerously-skip-permissions",
         "slash": ["/clear", "/compact", "/context", "/model", "/status",
                   "/resume", "/cost", "/help"],
         "skills": True,      # umí naše ~/.claude/skills
@@ -339,6 +342,7 @@ def detect(extra=None, with_version=True):
             "skills": bool(spec.get("skills")),
             "composer": spec.get("composer") or "basic",
             "model_cmd": spec.get("model_cmd") or "",
+            "bypass": bool(bypass_arg(spec)),
         })
     return out
 
@@ -439,9 +443,47 @@ def resolved_model(spec, model=""):
     return ""
 
 
+# (cesta k binárce, mtime, přepínač) → zná ho? `--help` se pouští jednou na
+# verzi: po aktualizaci agenta se mtime změní a zeptá se znovu.
+_KNOWS_FLAG = {}
+
+
+def _knows_flag(spec, flag):
+    path = which(spec)
+    try:
+        key = (path, os.path.getmtime(path), flag)
+    except OSError:
+        return False
+    if key not in _KNOWS_FLAG:
+        try:
+            r = subprocess.run([path, "--help"], capture_output=True, text=True,
+                               timeout=10, stdin=subprocess.DEVNULL,
+                               creationflags=_NO_WINDOW)
+            _KNOWS_FLAG[key] = flag in (r.stdout or "") + (r.stderr or "")
+        except Exception:
+            _KNOWS_FLAG[key] = False
+    return _KNOWS_FLAG[key]
+
+
+def bypass_arg(spec):
+    """Přepínač, se kterým agent nabídne bypass mezi režimy, nebo ''.
+
+    Jen když ho nainstalovaná verze zná: neznámý přepínač by agenta vůbec
+    nespustil a tab by zůstal prázdný. Ze stejného důvodu ne pod rootem —
+    Claude Code tam bypass odmítá (IS_SANDBOX je výjimka, kterou zná sám).
+    """
+    arg = spec.get("bypass_arg") or ""
+    if not arg:
+        return ""
+    if hasattr(os, "geteuid") and os.geteuid() == 0 \
+            and not os.environ.get("IS_SANDBOX"):
+        return ""
+    return arg if _knows_flag(spec, arg) else ""
+
+
 def launch_args(spec, model="", prompt=""):
-    """Argumenty za jméno binárky: volba modelu a případný úvodní prompt."""
-    args = []
+    """Argumenty za jméno binárky: bypass v nabídce, model a úvodní prompt."""
+    args = [bypass_arg(spec)] if bypass_arg(spec) else []
     model = resolved_model(spec, model)
     if model:
         # `ollama run <model>` je celý příkaz, ne přepínač

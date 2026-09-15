@@ -127,6 +127,7 @@ class Session:
         # ze serveru, takže bez toho by tab po F5 zapomněl, kdo v něm běží.
         self.agent = agent
         self.model = model
+        self.started = time.time()
         child = core.child_env()
         child.update(env or {})
         self.pty = pty_backend.spawn(argv, cwd=cwd, env=child,
@@ -456,6 +457,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def _api_inner(self, name, query, payload=None):
         payload = payload or {}
+        if name == "tab-model":
+            try:
+                session = HUB.sessions.get(int((query.get("id") or ["0"])[0]))
+            except ValueError:
+                session = None
+            if not session:
+                return self._json({"model": "", "label": "", "at": ""})
+            return self._json(core.tab_model(session.id, session.path or core.HOME,
+                                             session.started))
         if name == "state":
             counts, recent = core.get_memory()
             return self._json({

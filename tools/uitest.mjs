@@ -187,6 +187,16 @@ for (const jmeno of profily) {
       await page.keyboard.press('Escape');
       await page.waitForTimeout(300);
 
+      // Režimy: Claude se pouští s možností bypassu, takže v nabídce je vždy.
+      await page.locator('.pane.active [data-act=mode]').click();
+      await page.waitForTimeout(700);
+      const rezimy = await page.locator('.ctxmenu button, #ctxmenu button').allInnerTexts();
+      t('nabídka režimů má Auto i Bypass',
+        rezimy.some((x) => /^\s*\S*\s*Bypass/.test(x)) && rezimy.some((x) => /(^|\s)Auto\s*$/.test(x)),
+        rezimy.map((x) => x.trim()).join(', '));
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(300);
+
       t('jde psát do pole', await (async () => {
         await bublina.fill('zkouška psaní');
         return (await bublina.inputValue()) === 'zkouška psaní';

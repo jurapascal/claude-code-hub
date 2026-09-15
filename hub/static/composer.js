@@ -100,18 +100,21 @@
      Shift+Tab, které cykluje dokola — proto se sem tiskne i pořadí: kliknutí
      na režim znamená „mačkej Shift+Tab, dokud dole nesvítí tenhle".
 
-     Bypass je v cyklu jen tehdy, když se s ním session spustila; do nabídky
-     se proto dostane, až když ho terminál sám ukáže. */
+     Bypass je v cyklu, jen když session nastartovala s možností bypassu
+     (hub Claude pouští s --allow-dangerously-skip-permissions, viz agents.py
+     bypass_arg) nebo rovnou v něm. Naměřené pořadí v Claude Code 2.1.272:
+     normální → auto-accept → plán → bypass → auto → normální. */
   const MODES = [
     ['normal', 'Normální', /manual mode on/i],
     ['accept', 'Auto-accept', /(auto-)?accept edits on/i],
     ['plan', 'Plán', /plan mode on/i],
+    ['auto', 'Auto', /auto mode on/i],
     ['bypass', 'Bypass', /bypass permissions on/i],
   ];
 
-  // Kolikrát se zkusí Shift+Tab, než to vzdáme. Cyklus má nejvýš čtyři kroky,
-  // pátý je pojistka proti tomu, že klávesu nikdo nečte.
-  const MODE_TRIES = 5;
+  // Kolikrát se zkusí Shift+Tab, než to vzdáme. Cyklus má nejvýš pět kroků,
+  // šestý je pojistka proti tomu, že klávesu nikdo nečte.
+  const MODE_TRIES = 6;
   const MODE_STEP = 220;   // ms — než Claude Code překreslí nápovědu
 
   function modeOf(lines) {
@@ -295,6 +298,7 @@
       slash: (agent && agent.slash) || (full ? BUILTIN : []),
       skills: agent ? !!agent.skills : true,
       modelCmd: (agent && agent.model_cmd) || '',
+      bypass: !!(agent && agent.bypass),
     };
   }
 
@@ -448,7 +452,7 @@
                   title="Dřívější zadání. Co je napsané v poli, tím se seznam rovnou filtruje.">${icon('i-refresh')} Historie</button>
           <button class="composer-chip" data-act="file">${icon('i-image')} Příloha</button>
           <button class="composer-chip" data-act="mode"
-                  title="Režim oprávnění (Shift+Tab) — plán / auto-accept / normální">Režim: <span class="val"></span> ▾</button>
+                  title="Režim oprávnění (Shift+Tab) — normální / auto-accept / plán / auto / bypass">Režim: <span class="val"></span> ▾</button>
           <span class="spacer"></span>
           <button class="composer-chip ghost" data-act="esc" title="Přeruší, co Claude právě dělá (Esc)">Esc</button>
           <button class="composer-send" title="Odeslat (Enter)">${icon('i-up')}</button>
@@ -532,6 +536,12 @@
     let mode = 'normal';     // co dole hlásí Claude Code
     let seenBypass = false;  // bypass je v cyklu jen u takhle spuštěné session
     let switching = false;   // běží přepínání režimu, nemačkat další
+    // Model, kterým Claude v tabu naposledy doopravdy odpověděl (z přepisu na
+    // serveru). Má přednost před volbou — „výchozí" neřekne, co běží.
+    let actual = '';
+    let actualAt = '';       // čas té odpovědi; po přepnutí se starší nebere
+    let modelAsked = 0;
+    let modelTimer = null;
 
     /* ── odesílání ────────────────────────────────────────────────────────── */
 
@@ -624,8 +634,25 @@
     }
 
     function syncModel() {
-      modelChip.textContent = AG.models.length ? modelName(model)
+      modelChip.textContent = AG.models.length ? (actual || modelName(model))
         : (AG.modelCmd || '').replace('{model}', '').trim();
+    }
+
+    /* Co doopravdy odpovídá, ví jen přepis konverzace. Ptá se na něj, když se
+       bublina ukáže (Claude dopsal), nejvýš jednou za pět sekund. Odpověď
+       starší než ta známá se nebere — po přepnutí modelu by chip vrátila. */
+    function refreshModel() {
+      if (!AG.full || !AG.models.length || !io.tabModel || !tab.id || modelTimer) return;
+      const wait = Math.max(800, modelAsked + 5000 - Date.now());
+      modelTimer = setTimeout(() => {
+        modelTimer = null;
+        modelAsked = Date.now();
+        io.tabModel(tab.id).then((r) => {
+          if (!r || !r.label || !r.at || r.at <= actualAt) return;
+          actualAt = r.at;
+          if (r.label !== actual) { actual = r.label; syncModel(); }
+        }).catch(() => { /* bez odpovědi zůstane, co je */ });
+      }, wait);
     }
 
     /* Přepnutí modelu má u každého agenta jinou cenu:
@@ -645,11 +672,12 @@
       io.menu(x, y, AG.models.map(([label, key]) => ({
         icon: 'i-star',
         label: AG.full ? label : label + '  (nový tab)',
-        on: modelName(model) === label,
+        on: (actual || modelName(model)) === label,
         run: () => {
           if (AG.full) {
             submit('/model ' + key);
             model = key;
+            actual = '';           // do další odpovědi platí volba
             if (io.model) io.model(key);
             syncModel();
           } else if (io.openWith) {
@@ -705,7 +733,7 @@
         }
         if (readMode() !== target) {
           io.notice(target === 'bypass'
-            ? 'Bypass jde jen u session spuštěné s --dangerously-skip-permissions.'
+            ? 'Tahle session bypass nemá (spustila se před aktualizací) — otevři nový tab.'
             : 'Režim se přepnout nepodařilo — zkus Shift+Tab v terminálu.');
         }
       } finally {
@@ -718,7 +746,7 @@
       const [x, y] = anchor(ev);
       readMode();
       const items = MODES
-        .filter(([key]) => key !== 'bypass' || seenBypass)
+        .filter(([key]) => key !== 'bypass' || AG.bypass || seenBypass)
         .map(([key, label]) => ({
           icon: key === 'plan' ? 'i-note' : 'i-dot',
           label,
@@ -1282,7 +1310,7 @@
       }
       // Měřit jde až s nasazenou třídou: složená bublina je jenom proužek
       // a vyšla by z ní čtvrtinová výška.
-      if (shown) fitOver();
+      if (shown) { fitOver(); refreshModel(); }
       renderAnswer();
     }
 
