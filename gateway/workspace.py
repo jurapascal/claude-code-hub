@@ -56,9 +56,42 @@ def slug(user):
     return "u%d" % int(user["id"])
 
 
-def unit_name(user):
-    """Jméno systemd scope, ve které prostor běží (`claude-hub-u7`)."""
+# Znaky, které jdou do jména systemd jednotky tak, jak jsou. Ostatní se píšou
+# jako `\xNN` (stejně jako systemd-escape).
+_UNIT_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789.-")
+
+
+def _unit_escape(text):
+    out = []
+    for ch in text:
+        if ch in _UNIT_CHARS:
+            out.append(ch)
+        else:
+            out.extend("\\x%02x" % b for b in ch.encode("utf-8"))
+    return "".join(out)
+
+
+def legacy_unit_name(user):
+    """Jméno scope do 2.5.1 (`claude-hub-u7`). Prostor s ním může běžet, dokud
+    se brána po aktualizaci nerestartuje, takže ho správa musí dál poznat."""
     return SCOPE_PREFIX + slug(user)
+
+
+def unit_name(user):
+    """Jméno systemd scope, ve které prostor běží — podle e-mailu, ať je ze
+    `sessions` hned vidět, čí je (`claude-hub-boucnik.jiri_gmail.com`).
+
+    Zavináč systemd ve jménu nepřijme, proto `_`. Všechno mimo [a-z0-9.-]
+    (i `_` z e-mailu) jde jako `\\xNN`, takže dva různé e-maily nikdy nedostanou
+    stejné jméno. E-mail je v databázi unikátní a malými písmeny.
+    """
+    email = (user.get("email") or "").strip().lower()
+    local, at, domain = email.rpartition("@")
+    name = SCOPE_PREFIX + _unit_escape(local) + "_" + _unit_escape(domain)
+    # Bez e-mailu, nebo tak dlouhý, že by přetekl limit systemd (255 i s .scope).
+    if not at or not local or not domain or len(name) > 200:
+        return legacy_unit_name(user)
+    return name
 
 
 def home_for(user):

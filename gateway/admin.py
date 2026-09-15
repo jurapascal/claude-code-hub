@@ -206,10 +206,21 @@ def cmd_remove(a, args):
     if not user:
         return
     # Prostor smazaného účtu nemá komu běžet — a nikdo by ho už nezastavil.
-    isolation.stop_scope(workspace.unit_name(user))
+    for name in _units(user):
+        isolation.stop_scope(name)
     moved = workspace.retire(user)
     print(f"{args.email} smazán z databáze." +
           (f" Jeho složka je odložená v {moved}." if moved else ""))
+
+
+def _units(user):
+    """Jména scope, pod kterými může prostor účtu běžet: podle e-mailu a to
+    staré `claude-hub-u<id>` z doby před restartem brány po aktualizaci."""
+    return [workspace.unit_name(user), workspace.legacy_unit_name(user)]
+
+
+def _by_unit(a):
+    return {name: u for u in a.list() for name in _units(u)}
 
 
 def cmd_sessions(a, args):
@@ -218,17 +229,17 @@ def cmd_sessions(a, args):
     if not scopes:
         print("Neběží žádný prostor.")
         return
-    by_unit = {workspace.unit_name(u): u for u in a.list()}
+    by_unit = _by_unit(a)
     for name, _desc in scopes:
         user = by_unit.get(name)
         who = user["email"] if user else "(osiřelý — brána o něm neví)"
         mb = isolation.scope_memory(name) / 1024 / 1024
-        print(f"{name:<40} {mb:>7.0f} MB  {who}")
+        print(f"{name:<45} {mb:>7.0f} MB  {who}")
 
 
 def cmd_stop(a, args):
     if args.orphans:
-        known = {workspace.unit_name(u) for u in a.list()}
+        known = _by_unit(a)
         names = [n for n, _d in isolation.running_scopes() if n not in known]
     elif not args.email:
         raise ValueError("Zadej e-mail účtu, nebo --orphans.")
@@ -236,7 +247,8 @@ def cmd_stop(a, args):
         user = a.get(args.email)
         if not user:
             raise ValueError(f"{args.email} tu žádný účet nemá.")
-        names = [workspace.unit_name(user)]
+        running = {n for n, _d in isolation.running_scopes()}
+        names = [n for n in _units(user) if n in running] or _units(user)[:1]
     if not names:
         print("Není co zastavit.")
     for name in names:

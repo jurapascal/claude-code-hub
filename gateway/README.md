@@ -79,7 +79,11 @@ který doinstaluje `install.sh`.
 
 ## Běžící prostory
 
-Každý prostor běží ve vlastní systemd scope `claude-hub-u<id>.scope`. Podle ní
+Každý prostor běží ve vlastní systemd scope pojmenované podle e-mailu —
+`boucnik.jiri@gmail.com` → `claude-hub-boucnik.jiri_gmail.com.scope` (zavináč
+systemd nepřijme; znaky mimo `a-z0-9.-` jdou jako `\xNN`). Do 2.5.1 se
+jmenovala `claude-hub-u<id>`; `claude-hub-admin` pozná obě. Složka domova
+zůstává `u<id>`, na ní visí přihlášení, projekty i napojení. Podle scope
 brána pozná, jestli prostor žije (čte `cgroup.procs`, nespouští nic), a přes ni
 ho zastavuje — celý, i s Claude Code a vším, co v něm běží. Nečinný se uspí po
 `HUB_GW_IDLE_SLEEP`; psaní do terminálu (websocket) se počítá jako aktivita.
