@@ -51,8 +51,12 @@ def cmd_add(a, args):
     pw = _ask_password(args.password)
     uid = a.add(args.email, pw, name=args.name or "", role=args.role,
                 vault=args.vault or "")
-    # Domov a vault připravíme rovnou, ať první přihlášení nic nezdržuje.
-    workspace.ensure(a.get(args.email))
+    # Domov a vault připravíme rovnou, ať první přihlášení nic nezdržuje —
+    # rovnou pod jménem podle e-mailu (prostor ještě nikdy neběžel), jinak by
+    # ensure založil starý u<id> a přejmenovával se až při přihlášení.
+    user = a.get(args.email)
+    workspace.migrate_home(user)
+    workspace.ensure(user)
     print(f"Založen účet #{uid}: {args.email} ({args.role})")
 
 

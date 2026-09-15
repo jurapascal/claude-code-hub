@@ -118,6 +118,9 @@ class HubProc:
         self.cgroup = ""
         self.started = 0
         self.last_active = time.time()
+        # Kolik prohlížečů je k prostoru právě připojených (websocket). Prostor
+        # s připojením se kvůli místu neuspává — shodil by rozdělanou práci.
+        self.conns = 0
         self._checked = 0.0
         self._alive = False
         self._lock = threading.Lock()
@@ -250,12 +253,30 @@ class HubManager:
             self.procs[uid] = proc
             return proc
 
+    # Jak dlouho musí být prostor bez práce, než ho smí uspat někdo jiný.
+    EVICT_IDLE = 5 * 60
+
     def _make_room(self):
-        """Uvolní místo, když je dosažen strop: uspí nejdéle nečinnou."""
+        """Uvolní místo, když je dosažen strop: uspí nejdéle nečinný prostor,
+        ke kterému není nikdo připojený. Když takový není, radši odmítne
+        nového, než aby shodil někomu rozdělanou práci.
+
+        Dřív se bral nejdéle nečinný bez ohledu na připojení. Když bylo lidí
+        s otevřeným hubem víc než míst, prostory se v kolečku shazovaly:
+        uspaný se za vteřinu znovu připojil a uspal dalšího (2.5.4 po
+        restartu brány: 24 startů jednoho prostoru za 15 minut).
+        """
         live = [p for p in self.procs.values() if p.alive()]
         if len(live) < self.max_sessions:
             return
-        idlest = min(live, key=lambda p: p.last_active)
+        now = time.time()
+        spare = [p for p in live
+                 if not p.conns and now - p.last_active >= self.EVICT_IDLE]
+        if not spare:
+            raise RuntimeError(
+                f"Server je právě plný (obsazeno {len(live)} z {self.max_sessions} "
+                "míst). Zkus to za pár minut znovu.")
+        idlest = min(spare, key=lambda p: p.last_active)
         self.procs.pop(idlest.uid, None)
         idlest.stop()
 
@@ -663,7 +684,13 @@ class Handler(BaseHTTPRequestHandler):
         client = self.connection
         # Psaní do terminálu jde jen tudy, žádným HTTP požadavkem. Bez tohohle
         # by se prostor uspal po IDLE_SLEEP i člověku, který celou dobu píše.
-        _pump_both(client, up, on_client=hub.touch)
+        # Připojení se počítá po dobu tunelu (_pump_both čeká na konec):
+        # prostor s otevřeným prohlížečem se kvůli místu neuspává.
+        hub.conns += 1
+        try:
+            _pump_both(client, up, on_client=hub.touch)
+        finally:
+            hub.conns -= 1
 
     # BaseHTTPRequestHandler používá tyhle pro neznámé metody; ať projdou.
     def do_PATCH(self):

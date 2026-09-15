@@ -23,7 +23,22 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 30      # měsíc; jinak by se pořád přihla�
 
 # Kolik instancí hubu smí běžet naráz a kdy uspat nečinnou. Změřeno v README
 # brány: na 8GB stroj s weby a mailem se vejdou realisticky čtyři.
-MAX_SESSIONS = int(os.environ.get("HUB_GW_MAX_SESSIONS", "4"))
+def _default_max_sessions():
+    """Kolik prostorů smí běžet naráz, když to není nastavené: podle paměti
+    stroje, nejmíň 4. Nečinný prostor bere kolem 20 MB, s Claude Code stovky;
+    600 MB na prostor nechává rezervu pro weby a databáze vedle. Pevné 4
+    nestačily — s víc lidmi s otevřeným hubem se prostory navzájem uspávaly."""
+    try:
+        with open("/proc/meminfo", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("MemTotal:"):
+                    return max(4, int(line.split()[1]) // 1024 // 600)
+    except (OSError, ValueError, IndexError):
+        pass
+    return 4
+
+
+MAX_SESSIONS = int(os.environ.get("HUB_GW_MAX_SESSIONS") or _default_max_sessions())
 IDLE_SLEEP = int(os.environ.get("HUB_GW_IDLE_SLEEP", str(30 * 60)))
 
 # Klíč API Anthropicu pro prostory na `central` (claude-hub-admin apikey set).

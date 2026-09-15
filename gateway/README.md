@@ -96,6 +96,13 @@ brána pozná, jestli prostor žije (čte `cgroup.procs`, nespouští nic), a p�
 ho zastavuje — celý, i s Claude Code a vším, co v něm běží. Nečinný se uspí po
 `HUB_GW_IDLE_SLEEP`; psaní do terminálu (websocket) se počítá jako aktivita.
 
+Naráz smí běžet `HUB_GW_MAX_SESSIONS` prostorů — když není nastavené, podle
+paměti stroje (600 MB na prostor, nejmíň 4). Při plném stropu brána uspí
+jen prostor, ke kterému není připojený žádný prohlížeč a kde se aspoň
+5 minut nic neděje; když takový není, nový člověk dostane „Server je právě
+plný". Do 2.5.4 se uspával nejdéle nečinný bez ohledu na připojení, a s víc
+lidmi než místy se prostory v kolečku navzájem shazovaly.
+
 Proč ne `pkill` podle domova, jak to bylo do 2.2.0 — naměřeno na Ubuntu 24.04:
 
 - **bwrap s `--unshare-pid` má vlastní init** (druhý bwrap, v namespace PID 1).
