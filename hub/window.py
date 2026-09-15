@@ -125,6 +125,20 @@ def _open_webkit(url, versions):
     view = WebKit.WebView()
     view.load_uri(url)
 
+    # Požadavek na nové okno (tlačítko u odkazu z terminálu, když okno ukazuje
+    # prostor na serveru) by WebKitGTK bez obsluhy tiše zahodil. Odkaz patří do
+    # prohlížeče na tomhle počítači, ne do dalšího okna appky.
+    def new_window(_view, action):
+        uri = action.get_request().get_uri()
+        if uri:
+            core.open_path(uri)
+        return None
+
+    try:
+        view.connect("create", new_window)
+    except TypeError:
+        pass  # jiná verze WebKitu — okno pojede i bez toho, jen bez odkazů ven
+
     if gtk_ver == "4.0":
         Gtk.init()
         window = Gtk.Window()

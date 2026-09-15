@@ -35,6 +35,28 @@ function openExternal(path, kind, file) {
   api('open-path', {path, kind, file}).catch(() => toast('Nepodařilo se otevřít: ' + path));
 }
 
+/* Odkaz z terminálu. Na serveru (brána) by open-path pustil xdg-open na
+ * serveru, kde se nic neukáže — odkaz se proto otevře tam, kde člověk sedí.
+ * Na počítači jde do výchozího prohlížeče jako dřív. */
+function openLink(url) {
+  if (!/^https?:\/\//i.test(url)) return;
+  if (!STATE.config.gateway_user) { openExternal(url); return; }
+  // Okno appky (WebKitGTK) nové okno předá prohlížeči a vrátí null — podle
+  // návratové hodnoty se tedy neúspěch poznat nedá, hláška by lhala.
+  const win = window.open(url, '_blank');
+  if (win) win.opener = null;
+}
+
+/* Do schránky toho, kdo se dívá. Na serveru by /api/clipboard psal do schránky
+ * serveru; na počítači je naopak spolehlivější server, protože WebKitGTK
+ * stránku ke schránce nepustí (viz clipboard.js). */
+function copyText(text) {
+  if (STATE.config.gateway_user && navigator.clipboard) {
+    return navigator.clipboard.writeText(text);
+  }
+  return api('clipboard', {text, which: 'clipboard'});
+}
+
 /* ── theme ────────────────────────────────────────────────────────────────── */
 const CSS_VARS = {
   AMBER: '--amber', BG: '--bg', BG_SIDEBAR: '--bg-sidebar', BG_CARD: '--bg-card',
@@ -839,7 +861,7 @@ function createTab({kind, path, title, id, agent, model, background}) {
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   // Links open in the real browser, not inside the app window.
-  term.loadAddon(new WebLinksAddon.WebLinksAddon((_ev, uri) => openExternal(uri)));
+  term.loadAddon(new WebLinksAddon.WebLinksAddon((_ev, uri) => openLink(uri)));
   term.open(termbox);
 
   const tab = {ref, id: id || null, title, kind, path, term, fit, pane, termbox,
@@ -862,6 +884,10 @@ function createTab({kind, path, title, id, agent, model, background}) {
     notice: toast,
   });
   wireFiles(tab);
+  // Odkazy z výpisu jako tlačítka — rozlámanou adresu nejde kliknout (links.js).
+  // Bez links.js (stará stránka z cache, napůl nahraný server) tab jede dál.
+  tab.links = window.HubLinks
+    ? HubLinks.install(tab, {open: openLink, copy: copyText, notice: toast}) : null;
   // Bublina jen tam, kde běží agent. V holém shellu, při deployi ani během
   // instalace není co překrývat — a odeslaný text by skončil v bashi.
   if (kind === 'project' || kind.startsWith('slash:')) {
@@ -970,6 +996,7 @@ function activate(tab) {
   if (tab) {
     refit(tab);
     claimSize(tab);
+    if (tab.links) tab.links.update();      // skrytý tab odkazy nečetl
     tab.term.focus();
     // Když je vidět bublina, píše se do ní — fokus patří jí.
     if (tab.composer) tab.composer.focus();
@@ -1063,6 +1090,7 @@ function closeTab(tab, {remote = false} = {}) {
   if (tab.releaseClipboard) tab.releaseClipboard();
   if (tab.composer) tab.composer.release();
   if (tab.keys) tab.keys.release();
+  if (tab.links) tab.links.release();
   tab.term.dispose();
   tab.el.remove();
   tab.pane.remove();

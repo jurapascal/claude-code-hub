@@ -592,6 +592,46 @@ body { display: flex; flex-direction: column; }
 .composer-answer-btn.sel { border-color: var(--amber); color: var(--amber); }
 .composer-answer-btn.ghost { color: var(--dim); }
 
+/* ── odkazy z terminálu jako tlačítka (links.js) ─────────────────────────── */
+/* Každou adresu překryje tlačítko přesně tam, kde stojí — dlouhý rozlámaný
+   odkaz se nečte ani nedá kliknout. Vrstva leží nad terminálem, ale pod
+   dotazem jako kartou (z-index 6) i pod bublinou (7). */
+.links {
+  position: absolute; inset: 0; z-index: 5;
+  overflow: hidden; pointer-events: none;
+}
+/* Výplň barvou terminálu — to ona adresu schová. */
+.link {
+  position: absolute;
+  background: var(--bg); pointer-events: auto; cursor: pointer;
+}
+/* Tlačítko je pro všechny odkazy stejně velké (links.js); u adresy ve větě má
+   na výšku jen řádek. Výplň pod ním schová text, přes který přesáhne. */
+.link-btn {
+  position: absolute; box-sizing: border-box;
+  display: flex; align-items: stretch; gap: 2px;
+  background: var(--bg); pointer-events: auto;
+}
+.link-open {
+  flex: 1; min-width: 0;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 0 8px; border-radius: 6px; cursor: pointer;
+  background: var(--bg-card); border: 1px solid var(--border);
+  color: var(--fg-bright); font: inherit; font-size: 12px; line-height: 1;
+}
+.link-open:hover { background: var(--card-hover); border-color: var(--amber); }
+.link-open.primary { background: var(--amber); border-color: var(--amber); color: var(--bg); }
+.link-open.primary:hover { background: var(--amber); filter: brightness(1.08); }
+.link-label { flex: none; font-weight: 600; white-space: nowrap; }
+.link-copy {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; flex: none;
+  padding: 0; border-radius: 6px; cursor: pointer;
+  background: none; border: 1px solid transparent; color: var(--dim);
+}
+.link-copy:hover { background: var(--card-hover); border-color: var(--border); color: var(--fg-bright); }
+.link .ico { width: 14px; height: 14px; flex: none; }
+
 /* ── dotaz jako karta ────────────────────────────────────────────────────── */
 /* Když se Claude Code ptá, nemá být na co koukat do terminálu: otázka i volby
    patří do okna. Karta proto leží přes terminál celou plochou — dotaz z čar
