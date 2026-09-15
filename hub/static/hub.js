@@ -401,6 +401,26 @@ function autosaveLine() {
   return `ukládá se sama · naposledy ${when}`;
 }
 
+/* Trezor Obsidian: na serveru a bez aplikace Obsidian ho hub ukáže sám
+   (vault.js) — open-path by tam spustil něco na serveru, kde se nic neukáže.
+   Na počítači s Obsidianem se otevírá aplikace jako dřív. */
+function vaultPreview() {
+  return !!window.HubVault && (onServer() || !STATE.obsidian);
+}
+
+function openVault(path) {
+  HubVault.open({
+    api,
+    path: path || '',
+    fileUrl: (p) => `/api/vault-file?path=${encodeURIComponent(p)}&t=${encodeURIComponent(TOKEN)}`,
+    openLink,
+    toast,
+    obsidian: !onServer() && !!STATE.obsidian,
+    openInObsidian: (p) => api('open-path', {kind: 'vault-note', file: p})
+      .catch(() => toast('Obsidian se nepodařilo otevřít.')),
+  });
+}
+
 function renderMemory() {
   const mem = STATE.memory;
   $('memory-section').hidden = !mem.enabled;
@@ -425,7 +445,8 @@ function renderMemory() {
     el.innerHTML = icon(symbol[note.kind] || 'i-bulb') + '<span></span>';
     el.querySelector('span').textContent = note.title;
     el.title = note.file;
-    el.onclick = () => openExternal('', 'note', note.file);
+    el.onclick = () => (vaultPreview() ? openVault('memory/' + note.file)
+                                       : openExternal('', 'note', note.file));
     box.appendChild(el);
   }
 }
@@ -1673,7 +1694,7 @@ async function main() {
     openTab({kind: 'project', path: STATE.home, title: a.label, agent: a.id});
   };
   $('btn-new-agent').oncontextmenu = (ev) => { ev.preventDefault(); newAgentMenu(ev); };
-  $('btn-brain').onclick = () => openExternal('', 'brain');
+  $('btn-brain').onclick = () => (vaultPreview() ? openVault() : openExternal('', 'brain'));
   $('modal-close').onclick = closePicker;
   $('modal-cancel').onclick = closePicker;
   $('modal-open').onclick = () => {

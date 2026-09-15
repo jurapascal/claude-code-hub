@@ -522,6 +522,27 @@ class Handler(BaseHTTPRequestHandler):
                 "memory_autosave": core.autosave_enabled(),
                 "autosave_recent": core.autosave_recent(),
             })
+        # Náhled trezoru Obsidian (vault.js) — jen ke čtení, jen uvnitř trezoru.
+        if name == "vault-tree":
+            return self._json(core.vault_tree())
+        if name == "vault-note":
+            note = core.vault_note(query.get("path", [""])[0])
+            if not note:
+                return self._json({"error": "Poznámka v trezoru není."}, 404)
+            return self._json(note)
+        if name == "vault-search":
+            return self._json({"results": core.vault_search(query.get("q", [""])[0])})
+        if name == "vault-file":
+            full = core.vault_path(query.get("path", [""])[0], core.VAULT_IMAGES)
+            if not full:
+                return self._send(404, b"404")
+            ctype = mimetypes.guess_type(full)[0] or "application/octet-stream"
+            with open(full, "rb") as fh:
+                # SVG umí skripty: otevřený přímo jako stránka by běžel pod
+                # adresou hubu. Sandbox v CSP mu je vezme, <img> to nevadí.
+                return self._send(200, fh.read(), ctype, {
+                    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+                    "X-Content-Type-Options": "nosniff"})
         if name == "open-path":
             target = payload.get("path", "")
             if payload.get("kind") == "brain":
@@ -537,6 +558,15 @@ class Handler(BaseHTTPRequestHandler):
                               f"&file={urllib.parse.quote(note)}")
                 else:
                     target = os.path.join(core.MEMORY_DIR, fname)
+            elif payload.get("kind") == "vault-note":
+                # Z náhledu trezoru: tatáž poznámka v aplikaci Obsidian.
+                rel = str(payload.get("file", "")).replace("\\", "/")
+                full = core.vault_path(rel)
+                target = full
+                if full and core.has_obsidian():
+                    target = (f"obsidian://open?vault="
+                              f"{urllib.parse.quote(os.path.basename(core._vault_root()))}"
+                              f"&file={urllib.parse.quote(rel[:-3] if rel.endswith('.md') else rel)}")
             return self._json({"ok": core.open_path(target)})
         if name == "image":
             raw = os.path.abspath(os.path.expanduser(

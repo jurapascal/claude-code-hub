@@ -562,6 +562,146 @@ def get_memory():
     return counts, recent
 
 
+# ── náhled trezoru (vault.js) ────────────────────────────────────────────────
+# Na serveru ani bez aplikace Obsidian se trezor nemá čím otevřít, tak ho hub
+# ukáže sám. Jen ke čtení a jen uvnitř trezoru: cesta z prohlížeče se skládá
+# po částech, `..`, absolutní cesty a skryté složky (.obsidian, .git) neprojdou.
+VAULT_SKIP = {".obsidian", ".git", ".trash", ".smart-env", "node_modules"}
+VAULT_IMAGES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif")
+VAULT_MAX_NOTE = 4 * 1024 * 1024
+VAULT_MAX_FILES = 20000
+_VAULT_LINK = re.compile(r"\[\[([^\]|#\n]+)|\]\(<?([^)\s>]+?\.md)(?:#[^)\s]*)?>?\)")
+_VAULT_LINKS = {}      # plná cesta → (mtime, {jména, na která poznámka odkazuje})
+
+
+def _vault_root():
+    return os.path.abspath(os.path.expanduser(BRAIN))
+
+
+def vault_path(rel, exts=(".md",)):
+    """Plná cesta k souboru trezoru s danou příponou, nebo ''."""
+    rel = str(rel or "").replace("\\", "/").strip()
+    if not rel or rel.startswith("/") or re.match(r"^[A-Za-z]:", rel):
+        return ""
+    parts = [p for p in rel.split("/") if p not in ("", ".")]
+    if not parts or any(p == ".." or p.startswith(".") or p in VAULT_SKIP for p in parts):
+        return ""
+    full = os.path.join(_vault_root(), *parts)
+    if not full.lower().endswith(tuple(exts)) or not os.path.isfile(full):
+        return ""
+    return full
+
+
+def _walk_vault():
+    """(relativní cesta, plná cesta, mtime) souborů trezoru, bez skrytých složek."""
+    root = _vault_root()
+    seen = 0
+    for base, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in VAULT_SKIP)
+        for name in sorted(files):
+            if name.startswith("."):
+                continue
+            full = os.path.join(base, name)
+            try:
+                mtime = os.path.getmtime(full)
+            except OSError:
+                continue
+            yield os.path.relpath(full, root).replace(os.sep, "/"), full, mtime
+            seen += 1
+            if seen >= VAULT_MAX_FILES:
+                return
+
+
+def vault_tree():
+    """Poznámky a obrázky trezoru pro náhled."""
+    notes, images = [], []
+    for rel, _full, mtime in _walk_vault():
+        low = rel.lower()
+        if low.endswith(".md"):
+            notes.append({"path": rel, "mtime": int(mtime)})
+        elif low.endswith(VAULT_IMAGES):
+            images.append(rel)
+    root = _vault_root()
+    return {"name": os.path.basename(root.rstrip(os.sep)), "exists": os.path.isdir(root),
+            "notes": notes, "images": images}
+
+
+def _note_links(full, mtime):
+    """Jména poznámek, na která poznámka odkazuje ([[…]] i [..](….md)). Podle
+    mtime z mezipaměti — „Odkazuje sem" prochází celý trezor."""
+    cached = _VAULT_LINKS.get(full)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    from urllib.parse import unquote
+    try:
+        with open(full, encoding="utf-8", errors="replace") as fh:
+            text = fh.read(VAULT_MAX_NOTE)
+    except OSError:
+        text = ""
+    names = set()
+    for wiki, md in _VAULT_LINK.findall(text):
+        target = (wiki or unquote(md)).strip().replace("\\", "/")
+        target = re.sub(r"\.md$", "", target, flags=re.I)
+        names.add(target.rsplit("/", 1)[-1].lower())
+    _VAULT_LINKS[full] = (mtime, names)
+    return names
+
+
+def vault_note(rel):
+    """Poznámka pro náhled: text, kdy se měnila a které poznámky na ni odkazují."""
+    full = vault_path(rel)
+    if not full:
+        return None
+    try:
+        size = os.path.getsize(full)
+        mtime = os.path.getmtime(full)
+        with open(full, encoding="utf-8", errors="replace") as fh:
+            text = fh.read(VAULT_MAX_NOTE)
+    except OSError:
+        return None
+    path = os.path.relpath(full, _vault_root()).replace(os.sep, "/")
+    name = os.path.splitext(os.path.basename(path))[0].lower()
+    backlinks = [r for r, f, m in _walk_vault()
+                 if r.lower().endswith(".md") and f != full and name in _note_links(f, m)]
+    return {"path": path, "text": text, "mtime": int(mtime),
+            "truncated": size > VAULT_MAX_NOTE, "backlinks": backlinks[:300]}
+
+
+def _fold(text):
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", str(text))
+                   if not unicodedata.combining(c)).lower()
+
+
+def vault_search(query, limit=60):
+    """Poznámky, které obsahují všechna slova (bez ohledu na diakritiku), s úryvkem."""
+    words = _fold(query).split()
+    if not words:
+        return []
+    out = []
+    for rel, full, _mtime in _walk_vault():
+        if not rel.lower().endswith(".md"):
+            continue
+        try:
+            with open(full, encoding="utf-8", errors="replace") as fh:
+                text = fh.read(VAULT_MAX_NOTE)
+        except OSError:
+            continue
+        folded = _fold(text)
+        if not all(w in folded or w in _fold(rel) for w in words):
+            continue
+        at = folded.find(words[0])
+        flat = " ".join(text.split())
+        if at >= 0 and len(folded) == len(text):
+            snippet = " ".join(text[max(0, at - 50):at + 90].split())
+        else:
+            snippet = flat[:140]
+        out.append({"path": rel, "snippet": snippet})
+        if len(out) >= limit:
+            break
+    return out
+
+
 _SAFE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".avif",
              ".pdf", ".txt", ".md", ".csv", ".json", ".log"}
 
