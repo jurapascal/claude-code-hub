@@ -50,3 +50,11 @@ API_KEY_FILE = os.environ.get("HUB_GW_API_KEY_FILE",
 # jednou pro všechny; do prostorů přijde jako GOOGLE_OAUTH_CLIENT_ID/SECRET.
 GOOGLE_CLIENT_FILE = os.environ.get("HUB_GW_GOOGLE_CLIENT_FILE",
                                     os.path.join(GATEWAY_DIR, "google-oauth-client.json"))
+# Firemní Obsidian: jeden společný trezor pro všechny účty. V prostorech je jen
+# ke čtení; zapisuje do něj brána, a to jen po potvrzení v hubu
+# (workspace.publish_company). Záznam o nahráních leží vedle, mimo trezor.
+COMPANY_DIR = os.environ.get("HUB_GW_COMPANY_DIR",
+                             os.path.join(os.path.dirname(GATEWAY_DIR), "firma"))
+COMPANY_VAULT = os.environ.get("HUB_GW_COMPANY_VAULT",
+                               os.path.join(COMPANY_DIR, "Firemní Brain"))
+COMPANY_LOG = os.path.join(COMPANY_DIR, "nahrano.jsonl")

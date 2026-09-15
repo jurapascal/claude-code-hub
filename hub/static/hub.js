@@ -408,17 +408,144 @@ function vaultPreview() {
   return !!window.HubVault && (onServer() || !STATE.obsidian);
 }
 
-function openVault(path) {
+function openVault(path, vault) {
+  const firma = vault === 'firma';
   HubVault.open({
     api,
     path: path || '',
-    fileUrl: (p) => `/api/vault-file?path=${encodeURIComponent(p)}&t=${encodeURIComponent(TOKEN)}`,
+    vault: firma ? 'firma' : '',
+    title: firma ? 'Firemní Obsidian' : '',
+    fileUrl: (p) => `/api/vault-file?path=${encodeURIComponent(p)}` +
+      `${firma ? '&vault=firma' : ''}&t=${encodeURIComponent(TOKEN)}`,
     openLink,
     toast,
-    obsidian: !onServer() && !!STATE.obsidian,
+    obsidian: !firma && !onServer() && !!STATE.obsidian,
     openInObsidian: (p) => api('open-path', {kind: 'vault-note', file: p})
       .catch(() => toast('Obsidian se nepodařilo otevřít.')),
   });
+}
+
+/* ── firemní Obsidian ─────────────────────────────────────────────────────────
+   Společný trezor pro všechny účty na bráně. Claude do něj sám nezapíše:
+   poznámku připraví (tools/firma.py), hub ji tady ukáže s náhledem a nahraje
+   ji až brána po kliknutí na Nahrát. */
+let firmaTimer = null;
+let firmaCard = null;
+const firmaLater = new Set();          // „Později": do obnovení stránky se neukáže
+
+function renderFirma() {
+  const on = !!(STATE.firma && STATE.firma.vault);
+  $('firma-section').hidden = !on;
+  if (!on) return;
+  $('btn-firma').onclick = () => openVault('', 'firma');
+  if (!firmaTimer) {
+    firmaTimer = setInterval(checkFirma, 3000);
+    checkFirma();
+  }
+}
+
+async function checkFirma() {
+  if (document.hidden || firmaCard || !window.HubVault) return;
+  let res;
+  try {
+    res = await api('firma');
+  } catch (err) {
+    return;                            // starší hub v prostoru — po restartu to umí
+  }
+  const waiting = (res.pending || []).filter((p) => !firmaLater.has(p.id));
+  if (waiting.length && !firmaCard) showFirmaCard(waiting[0], waiting.length);
+}
+
+function showFirmaCard(p, total) {
+  const root = document.createElement('div');
+  root.className = 'onb firma-modal';
+  root.innerHTML = `
+    <div class="onb-box">
+      <div class="onb-head">
+        <span class="onb-mark">${icon('i-book')}</span>
+        <div>
+          <div class="onb-title">Nahrát do firemního Obsidianu?</div>
+          <div class="onb-sub"></div>
+        </div>
+      </div>
+      <div class="onb-body">
+        <div class="firma-target"><span>Kam</span><code></code></div>
+        <div class="firma-warn" hidden>Na téhle cestě už poznámka je — nahráním se přepíše.</div>
+        <article class="vault-md firma-preview"></article>
+      </div>
+      <div class="onb-foot">
+        <button class="btn ghost firma-later">Později</button>
+        <button class="btn ghost firma-discard">Zahodit</button>
+        <span class="spacer"></span>
+        <button class="btn primary firma-ok"></button>
+      </div>
+    </div>`;
+  const $$ = (sel) => root.querySelector(sel);
+  $$('.onb-sub').textContent = 'Claude to připravil v tomhle prostoru' +
+    (total > 1 ? ` · čeká ${total} návrhů` : '') + '. Nahraje se až po potvrzení.';
+  $$('.firma-target code').textContent = p.cil;
+  const paint = () => {
+    $$('.firma-warn').hidden = !p.prepise;
+    $$('.firma-ok').textContent = p.prepise ? 'Přepsat' : 'Nahrát';
+  };
+  paint();
+  $$('.firma-preview').innerHTML = HubVault.render(p.text,
+    {resolve: () => '', image: () => '', current: ''}).html;
+  const buttons = [...root.querySelectorAll('button')];
+  const busy = (on) => buttons.forEach((b) => { b.disabled = on; });
+  const close = () => {
+    root.remove();
+    document.removeEventListener('keydown', onKey, true);
+    firmaCard = null;
+    setTimeout(checkFirma, 300);       // další návrh v řadě
+  };
+  const later = () => { firmaLater.add(p.id); close(); };
+  function onKey(ev) {
+    if (ev.key === 'Escape') { ev.stopPropagation(); later(); }
+  }
+  $$('.firma-later').onclick = later;
+  root.addEventListener('click', (ev) => { if (ev.target === root) later(); });
+  $$('.firma-discard').onclick = async () => {
+    busy(true);
+    try {
+      await api('firma', {action: 'discard', id: p.id});
+      toast('Návrh do firemního Obsidianu zahozen.');
+      close();
+    } catch (err) {
+      toast('Zahodit se nepodařilo: ' + err.message);
+      busy(false);
+    }
+  };
+  $$('.firma-ok').onclick = async () => {
+    busy(true);
+    let res = {};
+    try {
+      // Nahrává brána, ne hub v prostoru — a jen s cookie z tohohle prohlížeče.
+      const r = await fetch('/gw/firma/publish', {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json', 'X-Hub-Firma': '1'},
+        body: JSON.stringify({id: p.id, prepsat: !!p.prepise}),
+      });
+      res = await r.json().catch(() => ({error: `HTTP ${r.status}`}));
+    } catch (err) {
+      res = {error: err.message};
+    }
+    if (res.ok) {
+      toast(`Nahráno do firemního Obsidianu: ${res.path}`);
+      close();
+    } else if (res.exists) {
+      // Mezitím tam poznámku nahrál někdo jiný — ať je vidět, že se přepíše.
+      p.prepise = true;
+      paint();
+      busy(false);
+    } else {
+      toast('Nahrát se nepodařilo: ' + (res.error || 'neznámá chyba'));
+      busy(false);
+    }
+  };
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(root);
+  firmaCard = root;
 }
 
 function renderMemory() {
@@ -819,6 +946,7 @@ async function reload() {
   STATE = await api('state');
   renderProjects($('search').value);
   renderMemory();
+  renderFirma();
   renderActions();
   renderFooter();
   renderPlace();

@@ -463,6 +463,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._redirect("/login")
                 return self._send(401, b"Neprihlaseno.")
 
+            if route == "/gw/firma/publish":
+                return self._firma_publish(method, user)
+
             # Přihlášený → všechno ostatní jde do jeho instance hubu.
             return self._proxy(method, user)
         except BrokenPipeError:
@@ -473,6 +476,30 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": f"Brána: {exc}"}, 502)
             except Exception:
                 pass
+
+    # ---- firemní Obsidian ----
+    def _firma_publish(self, method, user):
+        """Nahrání návrhu do firemního Obsidianu — jen tlačítkem v hubu.
+
+        Rozhoduje člověk v prohlížeči, ne Claude v prostoru: požadavek musí
+        přijít z téhle stránky, s přihlašovací cookie (do prostoru se
+        nepřeposílá, viz _forward_headers) a s hlavičkou, kterou cizí web
+        bez povolení poslat nemůže.
+        """
+        if method != "POST":
+            return self._json({"error": "Jen POST."}, 405)
+        if not self._same_origin() or self.headers.get("X-Hub-Firma") != "1":
+            return self._json({"error": "Nahrát jde jen tlačítkem v hubu."}, 403)
+        form = self._read_form()
+        try:
+            result = workspace.publish_company(user, form.get("id", ""),
+                                               form.get("prepsat") is True)
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, 400)
+        except OSError as exc:
+            _errlog("firma publish", exc)
+            return self._json({"error": f"Uložit se nepodařilo: {exc}"}, 500)
+        return self._json(result)
 
     # ---- přihlášení ----
     def _wants_json(self):
@@ -589,6 +616,16 @@ class Handler(BaseHTTPRequestHandler):
             if key.lower() in HOP_BY_HOP:
                 continue
             out[key] = self.headers.get(key)
+        # Přihlašovací cookie brány do prostoru nepatří: běží v něm Claude
+        # a s ní by si mohl sám potvrdit třeba nahrání do firemního Obsidianu.
+        # Hub se ověřuje tokenem X-Hub-Token, cookie brány nepotřebuje.
+        for key in [k for k in out if k.lower() == "cookie"]:
+            kept = [c.strip() for c in out[key].split(";")
+                    if c.strip() and c.split("=", 1)[0].strip() != config.SESSION_COOKIE]
+            if kept:
+                out[key] = "; ".join(kept)
+            else:
+                del out[key]
         # Hub pozná původ podle shody Host == Origin; drž veřejný host a řekni
         # mu, že spojení bylo přes https (kvůli Secure cookie uvnitř).
         out["Host"] = self._public_host() or f"127.0.0.1:{hub.port}"

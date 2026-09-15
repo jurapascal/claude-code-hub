@@ -574,27 +574,40 @@ _VAULT_LINK = re.compile(r"\[\[([^\]|#\n]+)|\]\(<?([^)\s>]+?\.md)(?:#[^)\s]*)?>?
 _VAULT_LINKS = {}      # plná cesta → (mtime, {jména, na která poznámka odkazuje})
 
 
-def _vault_root():
+def company_vault():
+    """Firemní Obsidian společný pro všechny účty na bráně (hub-config
+    `company_vault`), nebo ''. V prostoru je jen ke čtení."""
+    path = CONFIG.get("company_vault") or ""
+    return os.path.abspath(os.path.expanduser(path)) if path else ""
+
+
+def _vault_root(vault=""):
+    """Kořen trezoru: osobní (BRAIN), s `vault="firma"` firemní ('' když není)."""
+    if vault == "firma":
+        return company_vault()
     return os.path.abspath(os.path.expanduser(BRAIN))
 
 
-def vault_path(rel, exts=(".md",)):
+def vault_path(rel, exts=(".md",), vault=""):
     """Plná cesta k souboru trezoru s danou příponou, nebo ''."""
+    root = _vault_root(vault)
     rel = str(rel or "").replace("\\", "/").strip()
-    if not rel or rel.startswith("/") or re.match(r"^[A-Za-z]:", rel):
+    if not root or not rel or rel.startswith("/") or re.match(r"^[A-Za-z]:", rel):
         return ""
     parts = [p for p in rel.split("/") if p not in ("", ".")]
     if not parts or any(p == ".." or p.startswith(".") or p in VAULT_SKIP for p in parts):
         return ""
-    full = os.path.join(_vault_root(), *parts)
+    full = os.path.join(root, *parts)
     if not full.lower().endswith(tuple(exts)) or not os.path.isfile(full):
         return ""
     return full
 
 
-def _walk_vault():
+def _walk_vault(vault=""):
     """(relativní cesta, plná cesta, mtime) souborů trezoru, bez skrytých složek."""
-    root = _vault_root()
+    root = _vault_root(vault)
+    if not root:
+        return
     seen = 0
     for base, dirs, files in os.walk(root):
         dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in VAULT_SKIP)
@@ -612,17 +625,18 @@ def _walk_vault():
                 return
 
 
-def vault_tree():
+def vault_tree(vault=""):
     """Poznámky a obrázky trezoru pro náhled."""
     notes, images = [], []
-    for rel, _full, mtime in _walk_vault():
+    for rel, _full, mtime in _walk_vault(vault):
         low = rel.lower()
         if low.endswith(".md"):
             notes.append({"path": rel, "mtime": int(mtime)})
         elif low.endswith(VAULT_IMAGES):
             images.append(rel)
-    root = _vault_root()
-    return {"name": os.path.basename(root.rstrip(os.sep)), "exists": os.path.isdir(root),
+    root = _vault_root(vault)
+    return {"name": os.path.basename(root.rstrip(os.sep)),
+            "exists": bool(root) and os.path.isdir(root),
             "notes": notes, "images": images}
 
 
@@ -647,9 +661,9 @@ def _note_links(full, mtime):
     return names
 
 
-def vault_note(rel):
+def vault_note(rel, vault=""):
     """Poznámka pro náhled: text, kdy se měnila a které poznámky na ni odkazují."""
-    full = vault_path(rel)
+    full = vault_path(rel, vault=vault)
     if not full:
         return None
     try:
@@ -659,9 +673,9 @@ def vault_note(rel):
             text = fh.read(VAULT_MAX_NOTE)
     except OSError:
         return None
-    path = os.path.relpath(full, _vault_root()).replace(os.sep, "/")
+    path = os.path.relpath(full, _vault_root(vault)).replace(os.sep, "/")
     name = os.path.splitext(os.path.basename(path))[0].lower()
-    backlinks = [r for r, f, m in _walk_vault()
+    backlinks = [r for r, f, m in _walk_vault(vault)
                  if r.lower().endswith(".md") and f != full and name in _note_links(f, m)]
     return {"path": path, "text": text, "mtime": int(mtime),
             "truncated": size > VAULT_MAX_NOTE, "backlinks": backlinks[:300]}
@@ -673,13 +687,13 @@ def _fold(text):
                    if not unicodedata.combining(c)).lower()
 
 
-def vault_search(query, limit=60):
+def vault_search(query, limit=60, vault=""):
     """Poznámky, které obsahují všechna slova (bez ohledu na diakritiku), s úryvkem."""
     words = _fold(query).split()
     if not words:
         return []
     out = []
-    for rel, full, _mtime in _walk_vault():
+    for rel, full, _mtime in _walk_vault(vault):
         if not rel.lower().endswith(".md"):
             continue
         try:
@@ -700,6 +714,61 @@ def vault_search(query, limit=60):
         if len(out) >= limit:
             break
     return out
+
+
+# ── návrhy do firemního Obsidianu ────────────────────────────────────────────
+# Claude je připraví nástrojem tools/firma.py do ~/.firma/ke-schvaleni/. Hub je
+# ukáže s náhledem a umí je zahodit; nahrává je brána po kliknutí na Nahrát
+# (/gw/firma/publish) — do firemního trezoru prostor sám zapsat nemůže.
+FIRMA_PENDING = os.path.join(HOME, ".firma", "ke-schvaleni")
+_FIRMA_ID = re.compile(r"\d{8}-\d{6}-[0-9a-f]{6}")
+
+
+def firma_state():
+    vault = company_vault()
+    return {"vault": vault, "name": os.path.basename(vault) if vault else ""}
+
+
+def firma_pending():
+    """Návrhy čekající na potvrzení, nejstarší první."""
+    if not company_vault():
+        return []
+    try:
+        names = sorted(os.listdir(FIRMA_PENDING))
+    except OSError:
+        return []
+    out = []
+    for name in names:
+        pid = name[:-5] if name.endswith(".json") else ""
+        if not _FIRMA_ID.fullmatch(pid):
+            continue
+        path = os.path.join(FIRMA_PENDING, name)
+        try:
+            if os.path.islink(path) or os.path.getsize(path) > 1024 * 1024:
+                continue
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict) or not isinstance(data.get("text"), str):
+            continue
+        rel = str(data.get("cil") or "")
+        out.append({"id": pid, "cil": rel, "text": data["text"],
+                    "autor": str(data.get("autor") or ""),
+                    "vytvoreno": str(data.get("vytvoreno") or ""),
+                    "prepise": bool(vault_path(rel, vault="firma"))})
+    return out
+
+
+def firma_discard(pid):
+    """Zahodí návrh. False = žádný takový není."""
+    if not _FIRMA_ID.fullmatch(str(pid or "")):
+        return False
+    try:
+        os.remove(os.path.join(FIRMA_PENDING, str(pid) + ".json"))
+        return True
+    except OSError:
+        return False
 
 
 _SAFE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".avif",

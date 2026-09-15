@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Návrh do firemního Obsidianu — pro Claude Code v prostoru na bráně.
+
+    python3 firma.py navrh CÍL [SOUBOR | -]   připraví poznámku ke schválení
+    python3 firma.py seznam                    co čeká na potvrzení
+    python3 firma.py kde                       kde je firemní trezor
+
+Nic nenahrává. Návrh uloží do ~/.firma/ke-schvaleni/ a hub ho uživateli ukáže
+s náhledem a tlačítkem Nahrát. Firemní trezor je v prostoru jen ke čtení
+a zapisuje do něj až brána po tom kliknutí (gateway/workspace.py,
+publish_company).
+"""
+import json
+import os
+import re
+import secrets
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+PENDING = os.path.join(HOME, ".firma", "ke-schvaleni")
+CLAUDE_DIR = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude")
+MAX_TEXT = 512 * 1024
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    sys.exit(1)
+
+
+def config():
+    try:
+        with open(os.path.join(CLAUDE_DIR, "hub-config.json"), encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def company_vault():
+    vault = config().get("company_vault") or ""
+    if not vault:
+        fail("Firemní Obsidian tu není — je jen v prostorech na serveru (bráně).")
+    return vault
+
+
+def target(rel):
+    """Stejná pravidla jako brána (workspace.company_rel): relativní .md bez ..
+    a skrytých částí. Chybu je lepší ukázat hned, ne až po kliknutí."""
+    raw = str(rel or "").replace("\\", "/").strip()
+    rel = raw.strip("/")
+    if rel and not rel.lower().endswith(".md"):
+        rel += ".md"
+    parts = [p for p in rel.split("/") if p not in ("", ".")]
+    if (not parts or len(rel) > 300 or raw.startswith("/") or re.match(r"^[A-Za-z]:", rel)
+            or any(p == ".." or p.startswith(".") for p in parts)):
+        fail(f"Neplatná cesta ve firemním Obsidianu: {rel or '(prázdná)'} — "
+             "zadej relativní cestu, třeba postupy/fakturace.md.")
+    return "/".join(parts)
+
+
+def navrh(args):
+    if not args:
+        fail("Použití: firma.py navrh CÍL [SOUBOR | -]")
+    rel = target(args[0])
+    vault = company_vault()
+    source = args[1] if len(args) > 1 else "-"
+    try:
+        if source == "-":
+            text = sys.stdin.read()
+        else:
+            with open(source, encoding="utf-8") as fh:
+                text = fh.read()
+    except OSError as exc:
+        fail(f"Soubor s poznámkou nejde přečíst: {exc}")
+    if not text.strip():
+        fail("Poznámka je prázdná — nic se nenavrhlo.")
+    if len(text.encode("utf-8")) > MAX_TEXT:
+        fail("Poznámka je na firemní Obsidian moc velká (víc než 512 kB).")
+    exists = os.path.exists(os.path.join(vault, *rel.split("/")))
+    os.makedirs(PENDING, exist_ok=True)
+    pid = time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3)
+    who = (config().get("gateway_user") or {}).get("email", "")
+    data = {"cil": rel, "text": text, "autor": who,
+            "vytvoreno": time.strftime("%Y-%m-%d %H:%M:%S")}
+    # Nejdřív dočasný soubor: hub čte jen hotové .json, rozepsaný návrh nevidí.
+    tmp = os.path.join(PENDING, pid + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False)
+    os.replace(tmp, os.path.join(PENDING, pid + ".json"))
+    print(f"Návrh je připravený: {rel}" + (" (přepíše existující poznámku)" if exists else ""))
+    print("Hub teď uživateli ukázal kartu s náhledem. Do firemního Obsidianu se "
+          "poznámka nahraje, až ji potvrdí tlačítkem Nahrát.")
+
+
+def seznam():
+    try:
+        names = sorted(n for n in os.listdir(PENDING) if n.endswith(".json"))
+    except OSError:
+        names = []
+    if not names:
+        print("Nic nečeká na potvrzení.")
+        return
+    for name in names:
+        try:
+            with open(os.path.join(PENDING, name), encoding="utf-8") as fh:
+                data = json.load(fh)
+            print(f"{data.get('vytvoreno', '')}  {data.get('cil', '')}")
+        except (OSError, ValueError):
+            continue
+
+
+def main(argv):
+    cmd = argv[0] if argv else ""
+    if cmd == "navrh":
+        navrh(argv[1:])
+    elif cmd == "seznam":
+        seznam()
+    elif cmd == "kde":
+        print(company_vault())
+    else:
+        print(__doc__.strip())
+        sys.exit(0 if cmd in ("-h", "--help", "") else 2)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

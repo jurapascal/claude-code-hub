@@ -450,6 +450,8 @@ def _hub_config(user, home):
         "gateway_user": {"email": user.get("email", ""),
                          "name": user.get("name", ""),
                          "role": user.get("role", "user")},
+        # Společný firemní Obsidian (jen ke čtení) — hub ho ukáže v panelu.
+        "company_vault": config.COMPANY_VAULT,
     }
 
 
@@ -495,8 +497,200 @@ def ensure(user):
     if key:
         _approve_api_key(home, key)
 
+    # Firemní Obsidian: trezor, pokyny pro Clauda a přístup ke čtení. Bez něj
+    # prostor nastartuje taky — jen o firemním nebude vědět.
+    try:
+        ensure_company_vault()
+        _company_claude_md(claude)
+        _company_settings(claude)
+    except OSError:
+        pass
+
     return {"home": home, "vault": vault, "claude": claude,
             "projects": projects}
+
+
+# ── firemní Obsidian ─────────────────────────────────────────────────────────
+# Jeden trezor pro všechny. V prostorech je svázaný jen ke čtení, takže Claude
+# do něj sám nezapíše. Poznámku připraví nástrojem tools/firma.py do
+# ~/.firma/ke-schvaleni/, hub ji ukáže s tlačítkem Nahrát a zapíše až brána
+# (publish_company) — na požadavek z prohlížeče s přihlašovací cookie, kterou
+# session nemá.
+PENDING = os.path.join(".firma", "ke-schvaleni")
+PENDING_ID = re.compile(r"\d{8}-\d{6}-[0-9a-f]{6}")
+MAX_PROPOSAL = 1024 * 1024
+FIRMA_MARK = ("<!-- claude-hub:firma -->", "<!-- /claude-hub:firma -->")
+
+COMPANY_README = """# Firemní Obsidian
+
+Společné know-how celého týmu. Každý má vedle toho svůj osobní trezor.
+
+Nahrává se přes Claude Code: řekni mu „nahraj to do firemního", hub ukáže
+kartu s náhledem a poznámka se uloží, až ji potvrdíš tlačítkem **Nahrát**.
+"""
+
+
+def ensure_company_vault():
+    """Založí firemní trezor, když ještě není. Vrací jeho cestu."""
+    vault = config.COMPANY_VAULT
+    os.makedirs(vault, exist_ok=True)
+    readme = os.path.join(vault, "README.md")
+    if not os.path.exists(readme) and not [n for n in os.listdir(vault)
+                                           if not n.startswith(".")]:
+        with open(readme, "w", encoding="utf-8") as fh:
+            fh.write(COMPANY_README)
+    return vault
+
+
+def _company_block():
+    tool = os.path.join(REPO_DIR, "tools", "firma.py")
+    return f"""{FIRMA_MARK[0]}
+## Firemní Obsidian
+
+Vedle osobního trezoru tohohle uživatele je společný **firemní Obsidian**
+celého týmu: `{config.COMPANY_VAULT}`. Je jen ke čtení — firemní postupy,
+kontakty a know-how hledej a čti tam.
+
+Zapisovat do něj přímo nejde. Když tě uživatel požádá, ať něco nahraješ do
+firemního:
+
+1. Připrav poznámku v Markdownu a vyber pro ni cestu podle struktury, která už
+   ve firemním trezoru je (třeba `postupy/fakturace.md`).
+2. Pošli ji ke schválení:
+   `python3 {tool} navrh "postupy/fakturace.md" poznamka.md`
+   (místo souboru jde obsah poslat na standardní vstup: `-`).
+3. Řekni uživateli, že mu hub ukázal kartu s náhledem: poznámka se nahraje, až
+   ji potvrdí tlačítkem **Nahrát**. Sám ji potvrdit nemůžeš.
+
+Existující firemní poznámku upravíš tak, že pošleš celý nový obsah na stejnou
+cestu — karta upozorní, že se přepíše. Hesla, klíče a osobní údaje do
+firemního nepatří, pokud o to uživatel výslovně nežádá.
+{FIRMA_MARK[1]}
+"""
+
+
+def _company_claude_md(claude_dir):
+    """Pokyny k firemnímu Obsidianu v ~/.claude/CLAUDE.md prostoru. Mezi
+    značkami se vždy přepíšou, zbytek souboru patří uživateli a zůstane."""
+    path = os.path.join(claude_dir, "CLAUDE.md")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except FileNotFoundError:
+        text = ""
+    except (OSError, ValueError):
+        return
+    block = _company_block()
+    start, end = text.find(FIRMA_MARK[0]), text.find(FIRMA_MARK[1])
+    if start >= 0 and end > start:
+        new = text[:start] + block.rstrip("\n") + text[end + len(FIRMA_MARK[1]):]
+    else:
+        new = (text.rstrip("\n") + "\n\n" if text.strip() else "") + block
+    if new != text:
+        tmp = path + ".hub-tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(new)
+        os.replace(tmp, path)
+
+
+def _company_settings(claude_dir):
+    """Firemní trezor mezi složkami, které Claude Code smí číst bez ptaní
+    (permissions.additionalDirectories). Nečitelné nastavení se nepřepisuje."""
+    path = os.path.join(claude_dir, "settings.json")
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        data = {}
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    perms = data.get("permissions", {})
+    if not isinstance(perms, dict):
+        return
+    dirs = perms.get("additionalDirectories", [])
+    if not isinstance(dirs, list) or config.COMPANY_VAULT in dirs:
+        return
+    perms["additionalDirectories"] = dirs + [config.COMPANY_VAULT]
+    data["permissions"] = perms
+    tmp = path + ".hub-tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+
+def company_rel(rel):
+    """Cesta ve firemním trezoru: relativní, .md, bez `..` a skrytých částí.
+    Absolutní cesta se odmítne — tiše ji brát jako relativní by jen mátlo."""
+    raw = str(rel or "").replace("\\", "/").strip()
+    rel = raw.strip("/")
+    if rel and not rel.lower().endswith(".md"):
+        rel += ".md"
+    parts = [p for p in rel.split("/") if p not in ("", ".")]
+    if (not parts or len(rel) > 300 or raw.startswith("/") or re.match(r"^[A-Za-z]:", rel)
+            or any(p == ".." or p.startswith(".") for p in parts)):
+        raise ValueError(f"Neplatná cesta ve firemním Obsidianu: {rel or '(prázdná)'}")
+    return "/".join(parts)
+
+
+def publish_company(user, pid, overwrite=False):
+    """Nahraje návrh uživatele do firemního trezoru. Volá ji brána po kliknutí
+    na Nahrát. Vrací {"ok", "path", ...}; když poznámka už existuje a
+    `overwrite` není, nic nezapíše a vrátí `exists`.
+
+    Návrh leží v domově uživatele, kam session zapisuje — může to být
+    podvržený odkaz kamkoli na serveru. Čte se proto jen obyčejný soubor přímo
+    na své cestě, bez následování odkazů.
+    """
+    pid = str(pid or "")
+    if not PENDING_ID.fullmatch(pid):
+        raise ValueError("Neplatný návrh.")
+    home = os.path.realpath(home_for(user))
+    src = os.path.join(home, PENDING, pid + ".json")
+    gone = ValueError("Návrh už není — nejspíš byl nahraný nebo zahozený.")
+    if os.path.realpath(src) != src:
+        raise gone
+    try:
+        fd = os.open(src, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        raise gone from None
+    with os.fdopen(fd, "rb") as fh:
+        raw = fh.read(MAX_PROPOSAL + 1)
+    if len(raw) > MAX_PROPOSAL:
+        raise ValueError("Návrh je moc velký.")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        raise ValueError("Návrh je poškozený.") from None
+    if not isinstance(data, dict) or not isinstance(data.get("text"), str):
+        raise ValueError("Návrh je poškozený.")
+    rel = company_rel(data.get("cil"))
+    vault = os.path.realpath(ensure_company_vault())
+    target = os.path.join(vault, *rel.split("/"))
+    if os.path.commonpath([os.path.realpath(os.path.dirname(target)), vault]) != vault:
+        raise ValueError("Neplatná cesta ve firemním Obsidianu.")
+    existed = os.path.exists(target)
+    if existed and not overwrite:
+        return {"ok": False, "exists": True, "path": rel}
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    tmp = target + ".hub-tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(data["text"])
+    os.replace(tmp, target)
+    entry = {"cas": time.strftime("%Y-%m-%d %H:%M:%S"), "email": user.get("email", ""),
+             "cil": rel, "prepsano": existed, "znaku": len(data["text"])}
+    try:
+        with open(config.COMPANY_LOG, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+    try:
+        os.remove(src)
+    except OSError:
+        pass
+    return {"ok": True, "path": rel, "overwritten": existed}
 
 
 def session_spec(user, isolation, mode):
@@ -512,7 +706,8 @@ def session_spec(user, isolation, mode):
     inner = [PYTHON, os.path.join(REPO_DIR, "claude-hub.py"), "--no-browser"]
     # REPO_DIR ke čtení (zdroj hubu). Nic víc: klíč API přijde v prostředí
     # (session_env), žádný soubor mimo domov se do sandboxu nepřivazuje.
-    extra_ro = [REPO_DIR]
+    # Firemní Obsidian taky jen ke čtení: zapisuje do něj brána po potvrzení.
+    extra_ro = [REPO_DIR, config.COMPANY_VAULT]
     unit = unit_name(user)
     # Stará cesta u<id> vede v sandboxu na nový domov: cache (uv, npx) mají
     # absolutní cesty zapečené uvnitř a přepisovat je by bylo křehké.

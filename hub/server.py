@@ -495,6 +495,7 @@ class Handler(BaseHTTPRequestHandler):
                 "doctor": core.doctor(),
                 "user": os.environ.get("USER") or os.environ.get("USERNAME") or "",
                 "obsidian": core.has_obsidian(),
+                "firma": core.firma_state(),
                 "onboarded": bool(core.CONFIG.get("onboarded")),
                 "config": {"project_dirs": core.CONFIG.get("project_dirs") or [],
                            "brain_dir": core.CONFIG.get("brain_dir") or "",
@@ -523,17 +524,26 @@ class Handler(BaseHTTPRequestHandler):
                 "autosave_recent": core.autosave_recent(),
             })
         # Náhled trezoru Obsidian (vault.js) — jen ke čtení, jen uvnitř trezoru.
+        # `vault=firma` je společný firemní Obsidian (na bráně), jinak osobní.
+        which = "firma" if query.get("vault", [""])[0] == "firma" else ""
         if name == "vault-tree":
-            return self._json(core.vault_tree())
+            return self._json(core.vault_tree(which))
         if name == "vault-note":
-            note = core.vault_note(query.get("path", [""])[0])
+            note = core.vault_note(query.get("path", [""])[0], which)
             if not note:
                 return self._json({"error": "Poznámka v trezoru není."}, 404)
             return self._json(note)
         if name == "vault-search":
-            return self._json({"results": core.vault_search(query.get("q", [""])[0])})
+            return self._json({"results": core.vault_search(query.get("q", [""])[0],
+                                                            vault=which)})
+        if name == "firma":
+            # Návrhy do firemního Obsidianu od Clauda (tools/firma.py). Hub je
+            # ukáže a umí zahodit; nahrává brána po kliknutí (/gw/firma/publish).
+            if payload.get("action") == "discard":
+                return self._json({"ok": core.firma_discard(payload.get("id"))})
+            return self._json({**core.firma_state(), "pending": core.firma_pending()})
         if name == "vault-file":
-            full = core.vault_path(query.get("path", [""])[0], core.VAULT_IMAGES)
+            full = core.vault_path(query.get("path", [""])[0], core.VAULT_IMAGES, which)
             if not full:
                 return self._send(404, b"404")
             ctype = mimetypes.guess_type(full)[0] or "application/octet-stream"

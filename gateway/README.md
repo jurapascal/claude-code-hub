@@ -77,6 +77,27 @@ Dokumenty, Tabulky, Prezentace, Formuláře, Úkoly, Kontakty a aplikaci
 ho: `claude-hub-admin google set`. Google běží přes workspace-mcp na `uv`,
 který doinstaluje `install.sh`.
 
+## Firemní Obsidian
+
+Vedle osobního trezoru v každém prostoru je jeden společný trezor pro všechny:
+`/home/hub/firma/Firemní Brain` (`HUB_GW_COMPANY_DIR`, `HUB_GW_COMPANY_VAULT`).
+
+- **Čtení:** v každém prostoru je svázaný jen ke čtení (bwrap `--ro-bind`),
+  Claude Code ho má v `permissions.additionalDirectories` a pokyny k němu
+  v `~/.claude/CLAUDE.md` (blok mezi `<!-- claude-hub:firma -->`, zbytek
+  souboru patří uživateli). V hubu je sekce **Firemní Obsidian** s náhledem.
+- **Zápis:** Claude poznámku jen připraví — `python3 tools/firma.py navrh
+  CÍL [SOUBOR | -]` ji uloží do `~/.firma/ke-schvaleni/`. Hub ukáže kartu
+  s náhledem a cílovou cestou; **Nahrát** pošle prohlížeč na
+  `/gw/firma/publish` a zapíše brána (`workspace.publish_company`).
+  Existující poznámku přepíše jen tlačítko **Přepsat**.
+- **Proč to Claude sám potvrdit nemůže:** zápis vyžaduje přihlašovací cookie
+  brány, stejný původ stránky a hlavičku `X-Hub-Firma`. Cookie brány se do
+  prostoru nepřeposílá (hub se ověřuje vlastním tokenem) a firemní trezor je
+  v sandboxu jen ke čtení. Návrh z domova se čte bez následování odkazů
+  a cílová cesta nesmí ven z trezoru.
+- Kdo co nahrál: `/home/hub/firma/nahrano.jsonl` (mimo trezor).
+
 ## Běžící prostory
 
 Každý prostor běží ve vlastní systemd scope pojmenované podle e-mailu —
