@@ -564,6 +564,17 @@ class Handler(BaseHTTPRequestHandler):
         if name == "vault-search":
             return self._json({"results": core.vault_search(query.get("q", [""])[0],
                                                             vault=which)})
+        if name == "vault-graph":
+            return self._json(core.vault_graph(which))
+        if name == "vault-save":
+            # Osobní trezor hub zapíše rovnou. Do firemního a sdílených zapsat
+            # neumí (jsou jen ke čtení) — vznikne návrh a kartu potvrdí člověk.
+            if which:
+                return self._json({**core.vault_proposal(payload.get("path", ""),
+                                                         payload.get("text", ""), which),
+                                   "proposal": True})
+            return self._json(core.vault_save(payload.get("path", ""), payload.get("text", ""),
+                                              mtime=payload.get("mtime")))
         if name == "firma":
             # Návrhy do firemního Obsidianu od Clauda (tools/firma.py). Hub je
             # ukáže a umí zahodit; nahrává brána po kliknutí (/gw/firma/publish).

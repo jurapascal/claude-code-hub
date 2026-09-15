@@ -89,8 +89,12 @@ dělá jednu aplikaci:
   QR kód v nastavení, ikona na ploše, šuplík místo panelu a řádek kláves,
   ze kterého jde poslat Esc, Tab i šipky. Podrobně níž.
 - **Dark/light** — řídí se motivem systému, přepínač v hlavičce.
-- **Obsidian paměť (volitelné)** — když máš vault, panel ukáže poslední poznámky
-  (learnings/errors/wins) a klikem je otevře v Obsidianu. Bez vaultu se sekce
+- **Obsidian (volitelné)** — když máš vault, panel ukáže **Osobní Obsidian**
+  s posledními poznámkami (learnings/errors/wins); na serveru k tomu **Firemní**
+  a **Sdílené**. Poznámky jde v hubu i psát: editor se živým náhledem jako
+  v Obsidianu ([[odkazy]] s našeptáváním, ==zvýraznění==, #štítky, úkoly) a graf
+  poznámek s barvami a nastavením jako v originále. Osobní se ukládá samo, do
+  firemního a sdílených se změna potvrzuje kartou. Bez vaultu se sekce
   vůbec nezobrazí.
 
 ## Jak to funguje

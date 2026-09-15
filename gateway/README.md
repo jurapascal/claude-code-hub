@@ -115,7 +115,9 @@ Vedle osobního trezoru v každém prostoru je jeden společný trezor pro všec
   CÍL [SOUBOR | -] --potvrzeno` ji uloží do `~/.firma/ke-schvaleni/`. Hub ukáže kartu
   s náhledem a cílovou cestou; **Nahrát** pošle prohlížeč na
   `/gw/firma/publish` a zapíše brána (`workspace.publish_company`).
-  Existující poznámku přepíše jen tlačítko **Přepsat**.
+  Existující poznámku přepíše jen tlačítko **Přepsat**. Totéž dělá editor
+  v hubu: **Uložit** ve firemním (i sdíleném) Obsidianu poznámku nezapíše,
+  jen připraví stejný návrh (`core.vault_proposal`) a čeká na kartu.
 - **Proč to Claude sám potvrdit nemůže:** zápis vyžaduje přihlašovací cookie
   brány, stejný původ stránky a hlavičku `X-Hub-Firma`. Cookie brány se do
   prostoru nepřeposílá (hub se ověřuje vlastním tokenem) a firemní trezor je

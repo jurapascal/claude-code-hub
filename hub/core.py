@@ -12,6 +12,7 @@ import datetime
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -571,7 +572,9 @@ VAULT_IMAGES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif
 VAULT_MAX_NOTE = 4 * 1024 * 1024
 VAULT_MAX_FILES = 20000
 _VAULT_LINK = re.compile(r"\[\[([^\]|#\n]+)|\]\(<?([^)\s>]+?\.md)(?:#[^)\s]*)?>?\)")
-_VAULT_LINKS = {}      # plná cesta → (mtime, {jména, na která poznámka odkazuje})
+# Štítek jako v Obsidianu: #jméno s aspoň jedním písmenem, ne nadpis („# Nadpis“).
+_VAULT_TAG = re.compile(r"(?:^|[\s(\[])#([\w/-]*[^\W\d_][\w/-]*)", re.UNICODE)
+_VAULT_LINKS = {}      # plná cesta → (mtime, {jména odkazů}, {štítky})
 
 
 def company_vault():
@@ -658,12 +661,12 @@ def vault_tree(vault=""):
             "notes": notes, "images": images}
 
 
-def _note_links(full, mtime):
-    """Jména poznámek, na která poznámka odkazuje ([[…]] i [..](….md)). Podle
-    mtime z mezipaměti — „Odkazuje sem" prochází celý trezor."""
+def _note_meta(full, mtime):
+    """(jména, na která poznámka odkazuje; její štítky). Podle mtime
+    z mezipaměti — „Odkazuje sem" i graf prochází celý trezor."""
     cached = _VAULT_LINKS.get(full)
     if cached and cached[0] == mtime:
-        return cached[1]
+        return cached[1], cached[2]
     from urllib.parse import unquote
     try:
         with open(full, encoding="utf-8", errors="replace") as fh:
@@ -675,8 +678,14 @@ def _note_links(full, mtime):
         target = (wiki or unquote(md)).strip().replace("\\", "/")
         target = re.sub(r"\.md$", "", target, flags=re.I)
         names.add(target.rsplit("/", 1)[-1].lower())
-    _VAULT_LINKS[full] = (mtime, names)
-    return names
+    tags = {t.lower() for t in _VAULT_TAG.findall(text)}
+    _VAULT_LINKS[full] = (mtime, names, tags)
+    return names, tags
+
+
+def _note_links(full, mtime):
+    """Jména poznámek, na která poznámka odkazuje ([[…]] i [..](….md))."""
+    return _note_meta(full, mtime)[0]
 
 
 def vault_note(rel, vault=""):
@@ -732,6 +741,183 @@ def vault_search(query, limit=60, vault=""):
         if len(out) >= limit:
             break
     return out
+
+
+# ── zápis do trezoru a graf (vault.js) ───────────────────────────────────────
+# Osobní trezor patří uživateli, do něj hub zapisuje rovnou. Firemní a sdílené
+# jsou v prostoru jen ke čtení: z editoru vznikne stejný návrh jako od Clauda
+# (~/.firma/ke-schvaleni/) a zapisuje je brána, až se karta v hubu potvrdí.
+VAULT_MAX_SAVE = 2 * 1024 * 1024
+VAULT_MAX_GRAPH_LINKS = 60000
+
+
+def vault_target(rel, vault=""):
+    """Plná cesta pro zápis poznámky (i takové, která ještě není), nebo ''."""
+    root = _vault_root(vault)
+    rel = str(rel or "").replace("\\", "/").strip()
+    if not root or not rel or len(rel) > 300 or rel.startswith("/") or re.match(r"^[A-Za-z]:", rel):
+        return ""
+    parts = [p for p in rel.split("/") if p not in ("", ".")]
+    if not parts or any(p == ".." or p.startswith(".") or p in VAULT_SKIP for p in parts):
+        return ""
+    if not parts[-1].lower().endswith(".md"):
+        parts[-1] += ".md"
+    full = os.path.join(root, *parts)
+    if os.path.islink(full):
+        return ""
+    # Odkaz ve složce by pustil zápis ven z trezoru — porovnat skutečné cesty.
+    real_root = os.path.realpath(root)
+    at = os.path.dirname(full)
+    while not os.path.isdir(at) and os.path.dirname(at) != at:
+        at = os.path.dirname(at)
+    try:
+        if os.path.commonpath([os.path.realpath(at), real_root]) != real_root:
+            return ""
+    except ValueError:
+        return ""
+    return full
+
+
+def vault_rel(full, vault=""):
+    return os.path.relpath(full, _vault_root(vault)).replace(os.sep, "/")
+
+
+def vault_save(rel, text, vault="", mtime=None):
+    """Uloží poznámku do osobního trezoru. `mtime` = jak stará byla při otevření:
+    když se mezitím změnila, nic se nepřepíše a vrátí se `conflict`."""
+    if vault:
+        return {"ok": False, "error": "Do tohohle Obsidianu zapisuje až brána po potvrzení."}
+    text = str(text if text is not None else "")
+    if len(text.encode("utf-8")) > VAULT_MAX_SAVE:
+        return {"ok": False, "error": "Poznámka je moc velká (víc než 2 MB)."}
+    full = vault_target(rel, vault)
+    if not full:
+        return {"ok": False, "error": "Tuhle cestu v trezoru uložit nejde."}
+    exists = os.path.isfile(full)
+    if exists and mtime is not None:
+        try:
+            if int(os.path.getmtime(full)) > int(mtime):
+                return {"ok": False, "conflict": True, "path": vault_rel(full, vault),
+                        "error": "Poznámka se mezitím změnila jinde."}
+        except (OSError, TypeError, ValueError):
+            pass
+    try:
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        tmp = full + ".hub-tmp"
+        with open(tmp, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+        os.replace(tmp, full)
+        saved = int(os.path.getmtime(full))
+    except OSError as exc:
+        return {"ok": False, "error": f"Uložit se nepodařilo: {exc}"}
+    _VAULT_LINKS.pop(full, None)
+    return {"ok": True, "path": vault_rel(full, vault), "mtime": saved, "created": not exists}
+
+
+def vault_proposal(rel, text, vault):
+    """Návrh zápisu do firemního nebo sdíleného Obsidianu — stejný soubor, jaký
+    píše Claude (tools/firma.py, tools/sdilene.py). Potvrzuje se kartou v hubu."""
+    root = _vault_root(vault)
+    if not root or not vault:
+        return {"ok": False, "error": "Takový Obsidian tu není."}
+    full = vault_target(rel, vault)
+    if not full:
+        return {"ok": False, "error": "Tuhle cestu v Obsidianu uložit nejde."}
+    text = str(text if text is not None else "")
+    if not text.strip():
+        return {"ok": False, "error": "Poznámka je prázdná — nic se nenavrhlo."}
+    if len(text.encode("utf-8")) > VAULT_MAX_SAVE:
+        return {"ok": False, "error": "Poznámka je moc velká (víc než 2 MB)."}
+    target = vault_rel(full, vault)
+    who = (CONFIG.get("gateway_user") or {}).get("email", "")
+    data = {"cil": target, "text": text, "autor": who,
+            "vytvoreno": time.strftime("%Y-%m-%d %H:%M:%S")}
+    if vault != "firma":
+        slug = vault[len("sdilene:"):]
+        info = next((v for v in shared_state() if v["slug"] == slug), None)
+        if not info:
+            return {"ok": False, "error": "Takový sdílený Obsidian tu není."}
+        data.update({"druh": "sdilene-zapis", "vault": slug, "nazev": info["name"],
+                     "lide": [m.get("name") or m.get("email", "") for m in info["members"]]})
+    pid = time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3)
+    try:
+        os.makedirs(FIRMA_PENDING, exist_ok=True)
+        tmp = os.path.join(FIRMA_PENDING, pid + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False)
+        os.replace(tmp, os.path.join(FIRMA_PENDING, pid + ".json"))
+    except OSError as exc:
+        return {"ok": False, "error": f"Návrh se nepodařilo připravit: {exc}"}
+    return {"ok": True, "id": pid, "path": target,
+            "prepise": os.path.isfile(full)}
+
+
+def _graph_settings(vault=""):
+    """Barevné skupiny a nastavení grafu z Obsidianu (.obsidian/graph.json)."""
+    root = _vault_root(vault)
+    if not root:
+        return {}
+    try:
+        with open(os.path.join(root, ".obsidian", "graph.json"), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    groups = []
+    for g in data.get("colorGroups") or []:
+        if not isinstance(g, dict) or not g.get("query"):
+            continue
+        rgb = (g.get("color") or {}).get("rgb")
+        groups.append({"query": str(g["query"])[:200],
+                       "color": "#%06x" % (int(rgb) & 0xFFFFFF) if isinstance(rgb, int) else ""})
+    out = {"groups": groups[:30]}
+    for key in ("showTags", "showOrphans", "hideUnresolved", "showArrow",
+                "nodeSizeMultiplier", "lineSizeMultiplier", "textFadeMultiplier",
+                "centerStrength", "repelStrength", "linkStrength", "linkDistance"):
+        if key in data and isinstance(data[key], (bool, int, float)):
+            out[key] = data[key]
+    return out
+
+
+def vault_graph(vault=""):
+    """Graf trezoru jako v Obsidianu: poznámky, jejich odkazy a štítky.
+
+    Odkazy se párují po jménu souboru (kratší cesta vyhrává, jako v Obsidianu);
+    na co odkaz nesedí, je „nenalezená" poznámka — Obsidian ji taky kreslí.
+    """
+    notes, tags_of = [], []
+    for rel, full, mtime in _walk_vault(vault):
+        if not rel.lower().endswith(".md"):
+            continue
+        links, tags = _note_meta(full, mtime)
+        notes.append({"path": rel, "links": links})
+        tags_of.append(sorted(tags)[:20])
+    by_name = {}
+    for i, n in enumerate(notes):
+        key = n["path"].rsplit("/", 1)[-1][:-3].lower()
+        if key not in by_name or len(n["path"]) < len(notes[by_name[key]]["path"]):
+            by_name[key] = i
+    nodes = [{"path": n["path"], "tags": t} for n, t in zip(notes, tags_of)]
+    missing = {}
+    links = []
+    for i, n in enumerate(notes):
+        for name in n["links"]:
+            j = by_name.get(name)
+            if j is None:
+                if name not in missing:
+                    missing[name] = len(nodes)
+                    nodes.append({"path": name, "missing": True, "tags": []})
+                j = missing[name]
+            if j != i:
+                links.append([i, j])
+            if len(links) >= VAULT_MAX_GRAPH_LINKS:
+                break
+        if len(links) >= VAULT_MAX_GRAPH_LINKS:
+            break
+    root = _vault_root(vault)
+    return {"name": os.path.basename(root.rstrip(os.sep)) if root else "",
+            "nodes": nodes, "links": links, "settings": _graph_settings(vault)}
 
 
 # ── návrhy do firemního Obsidianu ────────────────────────────────────────────

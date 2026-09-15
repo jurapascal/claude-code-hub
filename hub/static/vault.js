@@ -440,14 +440,331 @@
       links.appendChild(node('div', 'set-title', 'Odkazuje sem (' + note.backlinks.length + ')'));
       for (const p of note.backlinks) links.appendChild(itemButton(p));
     }
+    lastText = note.text || '';
+    noteMtime = note.mtime || 0;
+    dirty = false;
+    clearTimeout(saveTimer);
+    q('.vault-modes').hidden = !canEdit();
+    setState(mode === 'edit' ? (proposes() ? 'úpravy se potvrzují kartou' : 'ukládá se samo') : '');
+    if (mode === 'edit' && editor) editor.setDoc(lastText);
+    if (graph) graph.setFocus(current);
+
     q('.vault-panel').scrollTop = 0;
     if (heading) scrollToHeading(heading);
     markCurrent();
   }
 
+  /* ── úpravy poznámky ──────────────────────────────────────────────────────
+     Osobní trezor hub zapíše rovnou (ukládá se samo). Firemní a sdílený jsou
+     jen ke čtení: z Uložit vznikne návrh a zapíše ho brána, až se potvrdí
+     karta v hubu — stejně jako když poznámku připraví Claude. */
+
+  let lastText = '';      // text otevřené poznámky, jak přišel ze serveru
+  let mode = 'read';
+  let editor = null;
+  let saveTimer = null;
+  let dirty = false;
+  let noteMtime = 0;
+  let graph = null;
+
+  const canEdit = () => !!(root.HubEditor && root.HubEditor.available);
+  const proposes = () => !!(io && io.vault);
+
+  function setState(text, kind) {
+    const el = q('.vault-state');
+    el.textContent = text || '';
+    el.className = 'vault-state' + (kind ? ' ' + kind : '');
+  }
+
+  function setMode(next) {
+    if (!box || mode === next) return;
+    if (next === 'edit' && !canEdit()) return io.toast('Editor se nenačetl — zkus obnovit stránku.');
+    mode = next;
+    for (const b of box.querySelectorAll('.vault-mode')) b.classList.toggle('on', b.dataset.mode === mode);
+    q('.vault-md').hidden = mode === 'edit';
+    q('.vault-edit').hidden = mode !== 'edit';
+    q('.vault-backlinks').hidden = mode === 'edit';
+    if (mode !== 'edit') {
+      // Ve čtení má být vidět to, co se právě napsalo, ne text z načtení.
+      if (editor) showRendered(editor.getDoc());
+      if (dirty && !proposes()) saveNow();
+      return;
+    }
+    mountEditor();
+  }
+
+  function showRendered(text) {
+    const out = render(text, {resolve: resolveNote, image: resolveImage, current});
+    const props = q('.vault-props');
+    props.textContent = '';
+    for (const [key, value] of out.props) {
+      const chip = node('span', 'vault-prop');
+      chip.appendChild(node('b', '', key + ': '));
+      chip.appendChild(document.createTextNode(value));
+      props.appendChild(chip);
+    }
+    q('.vault-md').innerHTML = out.html || '<p class="vault-empty">(prázdná poznámka)</p>';
+  }
+
+  function mountEditor() {
+    const host = q('.vault-edit');
+    if (editor) {
+      editor.setDoc(lastText);
+      return;
+    }
+    host.textContent = '';
+    editor = root.HubEditor.create({
+      parent: host,
+      doc: lastText,
+      readOnly: false,
+      notes: () => notes.map((n) => n.path),
+      onChange: () => {
+        dirty = true;
+        if (proposes()) setState('neuložené změny', 'warn');
+        else { setState('ukládá se…'); scheduleSave(); }
+      },
+      onSave: () => saveNow(),
+      onOpenNote: (target) => {
+        const path = resolveNote(target);
+        if (path) { setMode('read'); load(path); }
+        else io.toast('Poznámka „' + target + '" v trezoru není.');
+      },
+    });
+    setState(proposes() ? 'úpravy se potvrzují kartou' : 'ukládá se samo');
+  }
+
+  function scheduleSave() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveNow, 900);
+  }
+
+  async function saveNow() {
+    clearTimeout(saveTimer);
+    if (!editor || !dirty || !current) return;
+    const text = editor.getDoc();
+    const path = current;
+    setState('ukládám…');
+    let res;
+    try {
+      res = await io.api('vault-save' + (io.vault ? '?vault=' + encodeURIComponent(io.vault) : ''),
+                         {path, text, mtime: noteMtime});
+    } catch (err) {
+      setState('neuloženo', 'bad');
+      io.toast('Uložit se nepodařilo: ' + err.message);
+      return;
+    }
+    if (!box) return;
+    if (res.conflict) {
+      setState('změnila se jinde', 'bad');
+      io.toast('Poznámka se mezitím změnila jinde — otevři ji znovu a změny přenes ručně.');
+      return;
+    }
+    if (!res.ok) {
+      setState('neuloženo', 'bad');
+      io.toast(res.error || 'Uložit se nepodařilo.');
+      return;
+    }
+    dirty = false;
+    lastText = text;
+    if (res.proposal) {
+      setState('čeká na potvrzení', 'warn');
+      io.toast('Návrh je připravený — potvrď ho kartou „Nahrát".');
+      return;
+    }
+    noteMtime = res.mtime || noteMtime;
+    setState('uloženo');
+    q('.vault-date').textContent = 'upraveno ' + new Date(noteMtime * 1000).toLocaleString('cs-CZ');
+    if (res.created && !notes.some((n) => n.path === res.path)) {
+      notes.push({path: res.path, mtime: noteMtime});
+      resolveNote = indexOf(notes.map((n) => n.path), true);
+      renderList();
+      markCurrent();
+    }
+  }
+
+  async function newNote() {
+    const name = (prompt('Jméno nové poznámky (může být i se složkou):', '') || '').trim();
+    if (!name) return;
+    const path = name.replace(/\.md$/i, '') + '.md';
+    if (notes.some((n) => n.path.toLowerCase() === path.toLowerCase())) {
+      io.toast('Taková poznámka už tu je.');
+      return load(path);
+    }
+    lastText = '# ' + baseName(path) + '\n\n';
+    current = path;
+    noteMtime = 0;
+    dirty = true;
+    q('.vault-path').textContent = path;
+    q('.vault-date').textContent = '';
+    q('.vault-props').textContent = '';
+    q('.vault-backlinks').textContent = '';
+    q('.vault-modes').hidden = false;
+    setMode('edit');
+    if (editor) editor.setDoc(lastText);
+    if (!proposes()) saveNow();
+  }
+
+  /* ── graf trezoru ─────────────────────────────────────────────────────── */
+
+  async function toggleGraph() {
+    if (graph) return closeGraph();
+    if (!root.HubGraph) return io.toast('Graf se nenačetl — zkus obnovit stránku.');
+    const wrap = q('.vault-graph');
+    wrap.hidden = false;
+    q('.vault-graph-btn').classList.add('on');
+    let data;
+    try {
+      data = await io.api('vault-graph' + (io.vault ? '?vault=' + encodeURIComponent(io.vault) : ''));
+    } catch (err) {
+      wrap.hidden = true;
+      q('.vault-graph-btn').classList.remove('on');
+      io.toast('Graf se nepodařilo načíst: ' + err.message);
+      return;
+    }
+    if (!box || wrap.hidden) return;
+    graph = root.HubGraph.render(q('.graph-mount'), data, {
+      onOpenNote: (path) => { closeGraph(); load(path); },
+    });
+    graph.setFocus(current);
+    graphPanel(data);
+  }
+
+  function closeGraph() {
+    if (graph) graph.destroy();
+    graph = null;
+    if (!box) return;
+    q('.vault-graph').hidden = true;
+    q('.graph-side').textContent = '';
+    q('.vault-graph-btn').classList.remove('on');
+  }
+
+  function graphPanel(data) {
+    const side = q('.graph-side');
+    side.textContent = '';
+    const opts = graph.options();
+    let counts = () => {};          // přepíše se, až bude kam počty psát
+    const section = (title) => {
+      const el = node('div', 'graph-section');
+      el.appendChild(node('div', 'graph-title', title));
+      side.appendChild(el);
+      return el;
+    };
+    const slider = (parent, label, key, min, max, step) => {
+      const row = node('label', 'graph-row');
+      row.appendChild(node('span', '', label));
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = min; input.max = max; input.step = step;
+      input.value = opts[key];
+      input.addEventListener('input', () => {
+        graph.setOption(key, parseFloat(input.value));
+        counts();
+      });
+      row.appendChild(input);
+      parent.appendChild(row);
+    };
+    const toggle = (parent, label, key, invert) => {
+      const row = node('label', 'graph-row graph-check');
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = invert ? !opts[key] : !!opts[key];
+      input.addEventListener('change', () => {
+        graph.setOption(key, invert ? !input.checked : input.checked);
+        counts();
+      });
+      row.appendChild(input);
+      row.appendChild(node('span', '', label));
+      parent.appendChild(row);
+    };
+
+    const filters = section('Filtry');
+    const find = document.createElement('input');
+    find.type = 'search';
+    find.className = 'vault-search graph-find';
+    find.placeholder = 'Hledat v grafu…';
+    find.addEventListener('input', () => { graph.setFilter(find.value); counts(); });
+    filters.appendChild(find);
+    toggle(filters, 'Poznámky bez odkazů', 'showOrphans');
+    toggle(filters, 'Nenalezené odkazy', 'hideUnresolved', true);
+    const local = node('label', 'graph-row');
+    local.appendChild(node('span', '', 'Okolí otevřené'));
+    const depth = document.createElement('select');
+    for (const [v, t] of [[0, 'celý trezor'], [1, '1 krok'], [2, '2 kroky'], [3, '3 kroky']]) {
+      const o = document.createElement('option');
+      o.value = String(v); o.textContent = t;
+      depth.appendChild(o);
+    }
+    depth.value = String(opts.localDepth || 0);
+    depth.addEventListener('change', () => {
+      graph.setFocus(current);
+      graph.setOption('localDepth', parseInt(depth.value, 10));
+      counts();
+    });
+    local.appendChild(depth);
+    filters.appendChild(local);
+
+    const display = section('Zobrazení');
+    slider(display, 'Velikost uzlů', 'nodeSizeMultiplier', 0.3, 3, 0.1);
+    slider(display, 'Tloušťka čar', 'lineSizeMultiplier', 0.2, 4, 0.1);
+    slider(display, 'Mizení textu', 'textFadeMultiplier', -1, 3, 0.1);
+    toggle(display, 'Šipky', 'showArrow');
+
+    const forces = section('Síly');
+    slider(forces, 'Střed', 'centerStrength', 0, 3, 0.1);
+    slider(forces, 'Odpuzování', 'repelStrength', 1, 40, 1);
+    slider(forces, 'Síla odkazů', 'linkStrength', 0, 3, 0.1);
+    slider(forces, 'Délka odkazů', 'linkDistance', 40, 600, 10);
+
+    const groups = (data.settings && data.settings.groups) || [];
+    const legend = section(groups.length ? 'Skupiny' : 'Barvy podle složek');
+    const folders = [...new Set(data.nodes.filter((n) => !n.missing && n.path.includes('/'))
+                                  .map((n) => n.path.split('/')[0]))].slice(0, 10);
+    const items = groups.length ? groups.map((g) => [g.color, g.query])
+                                : folders.map((f, i) => [null, f]);
+    for (const [color, label] of items) {
+      const row = node('div', 'graph-legend');
+      const dot = node('span', 'graph-dot');
+      dot.style.background = color || '';
+      if (!color) dot.dataset.folder = label;
+      row.appendChild(dot);
+      row.appendChild(node('span', '', label));
+      legend.appendChild(row);
+    }
+
+    const foot = node('div', 'graph-foot');
+    const info = node('span', 'graph-count', '');
+    const center = node('button', 'btn ghost', 'Vycentrovat');
+    center.onclick = () => graph.center();
+    foot.appendChild(info);
+    foot.appendChild(center);
+    side.appendChild(foot);
+    counts = () => {
+      const c = graph.counts();
+      info.textContent = c.nodes + ' poznámek · ' + c.links + ' odkazů';
+    };
+    counts();
+    // Barvy podle složek přiřazuje graf sám — legenda si je vezme z plátna.
+    for (const dot of side.querySelectorAll('.graph-dot[data-folder]')) {
+      const found = data.nodes.find((n) => n.path.split('/')[0] === dot.dataset.folder);
+      dot.style.background = found ? graphColor(data, found) : '';
+    }
+  }
+
+  function graphColor(data, node) {
+    const folders = [...new Set(data.nodes.filter((n) => !n.missing && n.path.includes('/'))
+                                 .map((n) => n.path.split('/')[0]))];
+    const PALETTE = ['#e0843c', '#5aa9e6', '#44cf6e', '#c678dd', '#e5c07b',
+                     '#e06c75', '#56b6c2', '#a3be8c', '#d19a66', '#7aa2f7'];
+    const i = folders.indexOf(node.path.split('/')[0]);
+    return i >= 0 ? PALETTE[i % PALETTE.length] : '#9fa3ad';
+  }
+
   function onKey(ev) {
     if (!box || ev.key !== 'Escape') return;
     ev.stopPropagation();
+    if (graph) return closeGraph();
+    // Při psaní patří Escape editoru (zavře našeptávání nebo hledání), ne oknu.
+    if (mode === 'edit' && editor && editor.view.hasFocus) return;
     const search = q('.vault-search');
     if (document.activeElement === search && search.value) {
       search.value = '';
@@ -459,12 +776,20 @@
 
   function close() {
     if (!box) return;
+    // Rozepsanou změnu v osobním trezoru ještě uložit — okno se zavírá i Escapem.
+    if (dirty && editor && !proposes()) saveNow();
+    if (graph) { graph.destroy(); graph = null; }
+    if (editor) { editor.destroy(); editor = null; }
     document.removeEventListener('keydown', onKey, true);
     clearTimeout(searchTimer);
+    clearTimeout(saveTimer);
     box.remove();
     box = null;
     current = '';
     back = [];
+    mode = 'read';
+    lastText = '';
+    dirty = false;
   }
 
   function failure(text) {
@@ -485,6 +810,8 @@
             <div class="onb-sub">načítám…</div>
           </div>
           <span class="spacer"></span>
+          <button class="btn ghost vault-new" title="Nová poznámka" hidden>+ Nová</button>
+          <button class="btn ghost vault-graph-btn" title="Graf poznámek">Graf</button>
           <button class="btn ghost vault-app" hidden>Otevřít v Obsidianu</button>
           <button class="set-x vault-close" title="Zavřít (Esc)">×</button>
         </div>
@@ -497,11 +824,21 @@
             <div class="vault-bar">
               <button class="btn ghost vault-back" title="Zpět" hidden>←</button>
               <span class="vault-path"></span>
+              <span class="vault-state"></span>
               <span class="vault-date"></span>
+              <div class="vault-modes" hidden>
+                <button class="vault-mode on" data-mode="read">Čtení</button>
+                <button class="vault-mode" data-mode="edit">Úpravy</button>
+              </div>
             </div>
             <div class="vault-props"></div>
             <article class="vault-md"></article>
+            <div class="vault-edit" hidden></div>
             <div class="vault-backlinks"></div>
+          </div>
+          <div class="vault-graph" hidden>
+            <div class="graph-mount"></div>
+            <aside class="graph-side"></aside>
           </div>
         </div>
       </div>`;
@@ -514,6 +851,12 @@
     box.addEventListener('click', (ev) => { if (ev.target === box && downOutside) close(); });
     q('.vault-close').onclick = close;
     q('.vault-back').onclick = () => { if (back.length) load(back.pop(), {remember: false}); };
+    q('.vault-new').hidden = !canEdit();
+    q('.vault-new').onclick = newNote;
+    q('.vault-graph-btn').onclick = toggleGraph;
+    for (const b of box.querySelectorAll('.vault-mode')) {
+      b.onclick = () => setMode(b.dataset.mode);
+    }
     q('.vault-search').addEventListener('input', renderList);
     const pick = (ev) => {
       const b = ev.target.closest('.vault-item');

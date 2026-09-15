@@ -1089,6 +1089,74 @@ body { display: flex; flex-direction: column; }
   color: var(--amber); font-size: .9em; padding: 0 7px; border-radius: 999px;
   background: color-mix(in srgb, var(--amber) 12%, transparent);
 }
+/* Úpravy poznámky (editor.js) a graf (graph.js). */
+.vault-state { font-size: 11.5px; color: var(--dim); }
+.vault-state.warn { color: var(--amber); }
+.vault-state.bad { color: var(--red); }
+.vault-modes { display: flex; gap: 2px; margin-left: auto; padding: 2px; border-radius: 8px; background: var(--bg-card); }
+.vault-bar .vault-date + .vault-modes { margin-left: 10px; }
+.vault-mode {
+  border: none; background: none; color: var(--dim); font: inherit; font-size: 12px;
+  padding: 3px 12px; border-radius: 6px; cursor: pointer;
+}
+.vault-mode:hover { color: var(--fg-bright); }
+.vault-mode.on { background: var(--bg); color: var(--amber); font-weight: 600; }
+.vault-graph-btn.on { color: var(--amber); border-color: var(--amber); }
+.vault-modal .onb-body { position: relative; }
+.vault-modal .vault-panel { display: flex; flex-direction: column; }
+.vault-modal .vault-md { flex: none; }
+.vault-edit { flex: 1; min-height: 0; display: flex; }
+.vault-edit[hidden], .vault-graph[hidden], .vault-modes[hidden] { display: none; }
+.vault-edit .cm-editor { flex: 1; min-width: 0; }
+/* Živý náhled: co se v Obsidianu ukazuje jako formátovaný text. */
+.cm-h1, .cm-h2, .cm-h3, .cm-h4, .cm-h5, .cm-h6 { color: var(--fg-bright); font-weight: 700; }
+.cm-line-h1 { font-size: 24px; line-height: 1.3; }
+.cm-line-h2 { font-size: 19px; line-height: 1.35; }
+.cm-line-h3 { font-size: 16px; }
+.cm-line-h4, .cm-line-h5, .cm-line-h6 { font-size: 14px; }
+.cm-b { font-weight: 700; color: var(--fg-bright); }
+.cm-i { font-style: italic; }
+.cm-strike { text-decoration: line-through; color: var(--dim); }
+.cm-wiki { color: var(--amber); cursor: pointer; }
+.cm-url { color: var(--amber); }
+.cm-code { font-family: ui-monospace, monospace; font-size: .9em; color: var(--fg-bright); }
+.cm-tag { color: var(--amber); }
+.cm-mark { background: color-mix(in srgb, var(--amber) 35%, transparent); border-radius: 3px; }
+.cm-quote { color: var(--dim); }
+.cm-syntax { color: var(--dim); opacity: .7; }
+.cm-task { margin: 0 6px 0 0; vertical-align: -1px; }
+.cm-bullet { color: var(--dim); }
+.cm-rule { display: inline-block; width: 100%; border-top: 1px solid var(--border); vertical-align: middle; }
+.vault-graph { position: absolute; inset: 0; display: flex; background: var(--bg); z-index: 2; }
+.graph-mount { flex: 1; min-width: 0; position: relative; }
+.graph-box { position: absolute; inset: 0; }
+.graph-canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+.graph-side {
+  width: 250px; flex: none; overflow-y: auto; padding: 14px 14px 18px;
+  border-left: 1px solid var(--border); background: var(--bg-sidebar); font-size: 12.5px;
+}
+.graph-section { margin-bottom: 16px; }
+.graph-title {
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--dim); margin-bottom: 8px;
+}
+.graph-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; color: var(--fg); }
+/* Přebíjí obecné `.onb-body label > span` (blok, tučné) — tady je to řádek. */
+.graph-side .graph-row > span {
+  display: inline; flex: 1; margin: 0; font-size: 12.5px; font-weight: 400; color: var(--fg);
+}
+.graph-row input[type=range] { width: 108px; accent-color: var(--amber); }
+.graph-row select {
+  font: inherit; font-size: 12px; padding: 2px 6px; border-radius: 6px;
+  background: var(--bg-card); color: var(--fg); border: 1px solid var(--border);
+}
+.graph-check { cursor: pointer; }
+.graph-check input { accent-color: var(--amber); }
+.graph-find { margin-bottom: 9px; }
+.graph-legend { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; color: var(--fg); }
+.graph-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--dim); }
+.graph-foot { display: flex; align-items: center; gap: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.graph-count { flex: 1; color: var(--dim); font-size: 11.5px; }
 .vault-backlinks { max-width: 820px; margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--border); }
 .vault-backlinks:empty { display: none; }
 .vault-backlinks .set-title { margin-bottom: 8px; }
@@ -1139,6 +1207,10 @@ body { display: flex; flex-direction: column; }
   }
   .vault-modal .vault-panel { padding: 14px 16px 22px; }
   .vault-date { display: none; }
+  /* Graf na telefonu: nastavení pod plátnem, ať je na kreslení místo. */
+  .vault-graph { flex-direction: column; }
+  .graph-mount { flex: 1; min-height: 45vh; }
+  .graph-side { width: auto; max-height: 45vh; border-left: none; border-top: 1px solid var(--border); }
 }
 
 /* Napojení (MCP): stav napřed, cíl až pod ním — po stavu se kouká, cesta
