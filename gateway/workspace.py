@@ -1,7 +1,8 @@
 """
 Domov uživatele na bráně — jeho vault, jeho konfigurace hubu, jeho session.
 
-Každý účet dostane vlastní domovskou složku (`/home/hub/users/u<id>`), a v ní:
+Každý účet dostane vlastní domovskou složku pojmenovanou podle e-mailu
+(`/home/hub/users/boucnik.jiri`, do 2.5.3 `u<id>` — viz migrate_home), a v ní:
 
 * **Obsidian vault** s jeho pamětí. Je jen jeho: izolace (`isolation.py`) pustí
   session tak, že mimo tenhle domov nevidí — takže paměť jednoho člověka se
@@ -17,9 +18,13 @@ Každý účet dostane vlastní domovskou složku (`/home/hub/users/u<id>`), a v
 
 Cesty jdou přebít proměnnými prostředí, aby šel modul otestovat i mimo server.
 """
+import contextlib
+import fcntl
 import json
 import os
 import re
+import shutil
+import threading
 import time
 
 from . import config
@@ -51,8 +56,8 @@ EMPTY_MEMORY = """\
 
 
 def slug(user):
-    """Bezpečné jméno složky. Vychází z id, ne z e-mailu — id se nemění a
-    nemá znaky, které by v cestě vadily."""
+    """Jméno složky domova do 2.5.3 (`u7`). Dnes jen pro starý domov, který
+    ještě čeká na přejmenování, a pro odkaz na starou cestu v sandboxu."""
     return "u%d" % int(user["id"])
 
 
@@ -94,25 +99,239 @@ def unit_name(user):
     return name
 
 
+# Kdo má kterou složku domova: {"boucnik.jiri": 1}. Leží vedle domovů, ne
+# v nich — do svého domova session zapisuje, a kdyby šlo přiřazení změnit
+# odtamtud, dal by si člověk cizí složku.
+REGISTRY = os.path.join(USERS_ROOT, ".domovy.json")
+_REGISTRY_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def _locked():
+    """Registr mění brána (víc vláken) i claude-hub-admin (jiný proces)."""
+    with _REGISTRY_LOCK:
+        os.makedirs(USERS_ROOT, exist_ok=True)
+        with open(REGISTRY + ".lock", "a") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def _registry():
+    try:
+        with open(REGISTRY, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(v, int)}
+
+
+def _save_registry(reg):
+    tmp = REGISTRY + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(reg, fh, ensure_ascii=False, indent=2, sort_keys=True)
+    os.replace(tmp, REGISTRY)
+
+
+def _registered(reg, user):
+    uid = int(user["id"])
+    return next((name for name, owner in sorted(reg.items()) if owner == uid), "")
+
+
+def _home_names(user):
+    """Jména složky, o která se účet uchází, v tomhle pořadí: část e-mailu
+    před zavináčem, pak s doménou, pak s číslem účtu. `u<číslo>` ne — tak se
+    jmenovaly domovy do 2.5.3 a mohl by to být cizí."""
+    def clean(text):
+        text = re.sub(r"[^a-z0-9._-]", "-", text.lower())
+        return re.sub(r"-{2,}", "-", text).strip("._-")[:40]
+    local, _at, domain = (user.get("email") or "").strip().rpartition("@")
+    base = clean(local)
+    names = []
+    if base and not re.fullmatch(r"u\d+", base):
+        names.append(base)
+        if clean(domain):
+            names.append(f"{base}_{clean(domain)}")
+    names.append(f"{base or 'ucet'}-{int(user['id'])}")
+    return names
+
+
+def _owner_email(path):
+    try:
+        with open(os.path.join(path, ".claude", "hub-config.json"), encoding="utf-8") as fh:
+            owner = json.load(fh).get("gateway_user") or {}
+        return str(owner.get("email") or "").strip().lower()
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def _pick_home_name(user, reg):
+    mine = _registered(reg, user)
+    if mine:
+        return mine
+    email = (user.get("email") or "").strip().lower()
+    for name in _home_names(user):
+        if name in reg:
+            continue
+        path = os.path.join(USERS_ROOT, name)
+        if not os.path.lexists(path):
+            return name
+        # Složka bez záznamu (registr se ztratil): vezme si ji jen ten, komu
+        # podle hub-config.json patří. Kdo by si tam cizí e-mail zapsal sám,
+        # nic nezíská — přišel by jen o vlastní domov.
+        if os.path.isdir(path) and email and _owner_email(path) == email:
+            return name
+    return slug(user)
+
+
 def home_for(user):
-    return os.path.join(USERS_ROOT, slug(user))
+    """Domov účtu: složka podle e-mailu (`/home/hub/users/boucnik.jiri`).
+
+    Dokud se starý `u<id>` nepřejmenoval — prostor od aktualizace ještě
+    neběžel, přejmenovává ho až migrate_home před startem — je to on.
+    """
+    reg = _registry()
+    name = _registered(reg, user)
+    if name and os.path.isdir(os.path.join(USERS_ROOT, name)):
+        return os.path.join(USERS_ROOT, name)
+    legacy = os.path.join(USERS_ROOT, slug(user))
+    if os.path.isdir(legacy) or not name:
+        return legacy
+    return os.path.join(USERS_ROOT, name)
+
+
+def migrate_home(user):
+    """Přidělí domovu jméno podle e-mailu a starý `u<id>` na něj přejmenuje.
+    Vrací cestu domova.
+
+    Volá se jen před startem prostoru, kdy prokazatelně neběží: přejmenovat
+    složku, ze které zrovna jede Claude Code, by mu vzalo půdu pod nohama.
+    Jméno se do registru zapíše dřív, než se složka přejmenuje — kdyby se to
+    přerušilo mezi tím, další start pod stejným jménem dokončí, co zbylo.
+    """
+    uid = int(user["id"])
+    with _locked():
+        reg = _registry()
+        name = _pick_home_name(user, reg)
+        if reg.get(name) != uid:
+            reg = {k: v for k, v in reg.items() if v != uid}
+            reg[name] = uid
+            _save_registry(reg)
+        target = os.path.join(USERS_ROOT, name)
+        legacy = os.path.join(USERS_ROOT, slug(user))
+        if target != legacy and os.path.isdir(legacy) and not os.path.lexists(target):
+            os.rename(legacy, target)
+            rewrite_paths(target, legacy, target)
+        return target
+
+
+# Kam se při přejmenování domova nesahá: cache mají tisíce souborů a cesty
+# v nich (skripty uv, npx) dál fungují přes odkaz, který na starém místě
+# vyrobí sandbox (session_spec, aliases).
+_SKIP_DIRS = {".npm", ".cache", "node_modules", ".git"}
+_MAX_REWRITE = 64 * 1024 * 1024
+
+
+def claude_slug(path):
+    """Jak Claude Code pojmenuje složku projektu: cokoli mimo písmena a číslice
+    je pomlčka (`/home/hub/users/boucnik.jiri` → `-home-hub-users-boucnik-jiri`)."""
+    return re.sub(r"[^A-Za-z0-9]", "-", path)
+
+
+def _retarget(link, old, new):
+    target = os.readlink(link)
+    if target == old or target.startswith(old + "/"):
+        os.remove(link)
+        os.symlink(new + target[len(old):], link)
+        return True
+    return False
+
+
+def rewrite_paths(home, old, new):
+    """Po přejmenování domova přepíše starou cestu na novou: v textových
+    souborech (nastavení, skilly, přepisy konverzací), v odkazech a ve jménech
+    složek projektů Claude Code. Vrací počet změněných souborů."""
+    path_re = re.compile(re.escape(old.encode()) + rb"(?![A-Za-z0-9._-])")
+    old_slug, new_slug = claude_slug(old), claude_slug(new)
+    slug_re = re.compile(re.escape(old_slug.encode()) + rb"(?![A-Za-z0-9])")
+    changed = 0
+    for root, dirs, files in os.walk(home):
+        keep = []
+        for d in dirs:
+            full = os.path.join(root, d)
+            if os.path.islink(full):
+                changed += _retarget(full, old, new)
+            elif d not in _SKIP_DIRS:
+                keep.append(d)
+        dirs[:] = keep
+        for name in files:
+            full = os.path.join(root, name)
+            if os.path.islink(full):
+                changed += _retarget(full, old, new)
+                continue
+            try:
+                if os.path.getsize(full) > _MAX_REWRITE:
+                    continue
+                with open(full, "rb") as fh:
+                    data = fh.read()
+            except OSError:
+                continue
+            if b"\0" in data[:8192]:
+                continue                  # binární soubor
+            fixed = slug_re.sub(new_slug.encode(), path_re.sub(new.encode(), data))
+            if fixed == data:
+                continue
+            tmp = full + ".hub-tmp"
+            try:
+                with open(tmp, "wb") as fh:
+                    fh.write(fixed)
+                shutil.copymode(full, tmp)
+                os.replace(tmp, full)
+                changed += 1
+            except OSError:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+    # Složky projektů Claude Code nesou cestu ve jméně — bez přejmenování by
+    # přišel o historii konverzací i paměť projektu.
+    projects = os.path.join(home, ".claude", "projects")
+    try:
+        entries = os.listdir(projects)
+    except OSError:
+        entries = []
+    for entry in entries:
+        if entry == old_slug or entry.startswith(old_slug + "-"):
+            dst = os.path.join(projects, new_slug + entry[len(old_slug):])
+            if not os.path.lexists(dst):
+                os.rename(os.path.join(projects, entry), dst)
+    return changed
 
 
 def retire(user):
     """Odloží domov smazaného účtu stranou. Vrací novou cestu, nebo ''.
 
-    Nestačí ho nechat ležet: SQLite po smazání posledního účtu dá dalšímu
-    stejné id, tedy i stejnou složku `u<id>` — a nový člověk by zdědil paměť,
-    projekty i přihlášení Claude Code toho předchozího. Data se nemažou,
-    jen přestanou být na cestě, kterou může dostat někdo jiný.
+    Nestačí ho nechat ležet: nový účet se stejným e-mailem (nebo po smazání
+    posledního účtu i se stejným id) by dostal stejnou složku a zdědil paměť,
+    projekty i napojení toho předchozího. Data se nemažou, jen přestanou být
+    na cestě, kterou může dostat někdo jiný — a jméno se v registru uvolní.
     """
-    home = home_for(user)
-    if not os.path.isdir(home):
-        return ""
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    target = os.path.join(USERS_ROOT, f"_smazany-{slug(user)}-{stamp}")
-    os.rename(home, target)
-    return target
+    uid = int(user["id"])
+    with _locked():
+        home = home_for(user)
+        reg = _registry()
+        if uid in reg.values():
+            _save_registry({k: v for k, v in reg.items() if v != uid})
+        if not os.path.isdir(home):
+            return ""
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        target = os.path.join(USERS_ROOT, f"_smazany-{os.path.basename(home)}-{stamp}")
+        os.rename(home, target)
+        return target
 
 
 def vault_name(user):
@@ -295,7 +514,11 @@ def session_spec(user, isolation, mode):
     # (session_env), žádný soubor mimo domov se do sandboxu nepřivazuje.
     extra_ro = [REPO_DIR]
     unit = unit_name(user)
-    argv = isolation.wrap(mode, inner, home, extra_ro=extra_ro, unit=unit)
+    # Stará cesta u<id> vede v sandboxu na nový domov: cache (uv, npx) mají
+    # absolutní cesty zapečené uvnitř a přepisovat je by bylo křehké.
+    legacy = os.path.join(USERS_ROOT, slug(user))
+    argv = isolation.wrap(mode, inner, home, extra_ro=extra_ro, unit=unit,
+                          aliases=[legacy] if legacy != home else [])
     if argv[:1] != ["systemd-run"]:
         unit = ""                 # bez scope (docker, stroj bez systemd)
     return argv, home, unit

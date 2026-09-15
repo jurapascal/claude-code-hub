@@ -1677,6 +1677,48 @@ def current_model():
     return str(model) if isinstance(model, str) else ""
 
 
+# Tímhle klíčem si Claude Code v ~/.claude/settings.json pamatuje, že člověk
+# potvrdil varování k bypassu.
+BYPASS_ACK = "skipDangerousModePermissionPrompt"
+
+
+def bypass_accepted():
+    """Potvrdil už člověk varování k bypassu? Bez toho se Claude Code
+    s možností bypassu při každém startu anglicky ptá a předvybrané má
+    „No, exit" — Enter ho ukončí. Proto se možnost dává jen po potvrzení."""
+    try:
+        with open(os.path.join(CLAUDE_DIR, "settings.json"),
+                  encoding="utf-8-sig") as fh:
+            return json.load(fh).get(BYPASS_ACK) is True
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def accept_bypass():
+    """Zapíše potvrzení bypassu do ~/.claude/settings.json (jako Claude Code
+    sám). Soubor, který nejde přečíst, se nepřepisuje — o nastavení nepřijít."""
+    path = os.path.join(CLAUDE_DIR, "settings.json")
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        data = {}
+    except (OSError, ValueError):
+        raise ValueError("~/.claude/settings.json nejde přečíst — "
+                         "bypass nezapínám, ať o nastavení nepřijdeš.")
+    if not isinstance(data, dict):
+        raise ValueError("~/.claude/settings.json nemá obvyklý tvar — bypass nezapínám.")
+    if data.get(BYPASS_ACK) is True:
+        return
+    data[BYPASS_ACK] = True
+    os.makedirs(CLAUDE_DIR, exist_ok=True)
+    tmp = path + ".hub-tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+
 _MODEL_ID = re.compile(r"^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(?:\[[^\]]*\])?$")
 
 
@@ -1739,13 +1781,37 @@ def _tab_transcript(sid, cwd, started):
                     if not entry.name.endswith(".jsonl"):
                         continue
                     mtime = entry.stat().st_mtime
-                    if mtime >= started - 2 and mtime > newest:
+                    # Změněný po startu tabu nestačí (přepis mohl upravit
+                    # kdokoli jiný) — musí i začínat až po něm.
+                    if mtime >= started - 2 and mtime > newest \
+                            and _first_time(entry.path) >= started - 5:
                         found, newest = entry.path, mtime
         except OSError:
             pass
     if found:
         _TAB_TRANSCRIPTS[tag] = (found, time.time())
     return found
+
+
+def _first_time(transcript):
+    """Čas prvního záznamu přepisu (epoch), 0 = nevíme."""
+    try:
+        with open(transcript, "rb") as fh:
+            head = fh.read(32768)
+    except OSError:
+        return 0.0
+    for raw in head.splitlines():
+        try:
+            stamp = json.loads(raw).get("timestamp")
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(stamp, str):
+            try:
+                return datetime.datetime.fromisoformat(
+                    stamp.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                return 0.0
+    return 0.0
 
 
 def _last_model(transcript):
@@ -1873,7 +1939,10 @@ def _wrapper_path():
 def cmd_agent(path, agent_id="", slash="", model=""):
     """(příkaz pro tab, proměnné prostředí) — tudy se spouští každý agent."""
     spec = agent_spec(agent_id)
-    argv = agents.launch_args(spec, model, slash)
+    # Možnost bypassu jen po potvrzeném varování (bypass_accepted) — jinak by
+    # se Claude Code při každém startu ptal a Enter by ho ukončil.
+    bypass = bool(agents.bypass_arg(spec)) and bypass_accepted()
+    argv = agents.launch_args(spec, model, slash, bypass=bypass)
     wrapper = _wrapper_path()
     if not wrapper:
         # Radši prázdný shell s vysvětlením než spustit někoho jiného.
@@ -1885,7 +1954,10 @@ def cmd_agent(path, agent_id="", slash="", model=""):
     args = "".join(" " + sh_quote(a) for a in argv)
     script = (f'cd {p} && bash {w}{args}; '
               f'echo; echo "[ session ukončena — tab zůstává jako shell ]"; exec bash')
-    return script, agents.env_for(spec, model)
+    env = agents.env_for(spec, model)
+    if bypass:
+        env["HUB_AGENT_BYPASS"] = "1"     # tab ví, že bypass v něm jde zapnout
+    return script, env
 
 
 def cmd_install(agent_id):

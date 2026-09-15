@@ -542,6 +542,11 @@
     let actualAt = '';       // čas té odpovědi; po přepnutí se starší nebere
     let modelAsked = 0;
     let modelTimer = null;
+    // Model z hlavičky Claude Code („Opus 5 (1M context) · API Usage Billing").
+    // Je tam od startu, takže chip nemusí čekat na první odpověď.
+    let banner = '';
+    let picked = false;      // model se v tomhle tabu přepínal z nabídky
+    const bornAt = Date.now();
 
     /* ── odesílání ────────────────────────────────────────────────────────── */
 
@@ -633,9 +638,31 @@
       return near ? near[0] : key;
     }
 
+    /* Co ukázat: čím Claude naposledy odpověděl; jinak volba z nabídky; jinak
+       hlavička, se kterou nastartoval; a teprve pak settings.json. */
+    function shownModel() {
+      return actual || (picked ? modelName(model) : (banner || modelName(model)));
+    }
+
     function syncModel() {
-      modelChip.textContent = AG.models.length ? (actual || modelName(model))
+      modelChip.textContent = AG.models.length ? shownModel()
         : (AG.modelCmd || '').replace('{model}', '').trim();
+    }
+
+    // Hlavička je v prvních řádcích — hledá se jen chvíli po startu tabu.
+    const BANNER_RE = /\b(Opus|Sonnet|Haiku|Fable) (\d+(?:\.\d+)?)\b/;
+    function readBanner() {
+      if (banner || !AG.full || !AG.models.length || Date.now() - bornAt > 60000) return;
+      const buf = term.buffer.active;
+      for (let i = 0, n = Math.min(buf.length, 60); i < n; i++) {
+        const row = buf.getLine(i);
+        const m = row && row.translateToString(true).match(BANNER_RE);
+        if (m) {
+          banner = m[1] + ' ' + m[2];
+          syncModel();
+          return;
+        }
+      }
     }
 
     /* Co doopravdy odpovídá, ví jen přepis konverzace. Ptá se na něj, když se
@@ -672,11 +699,12 @@
       io.menu(x, y, AG.models.map(([label, key]) => ({
         icon: 'i-star',
         label: AG.full ? label : label + '  (nový tab)',
-        on: (actual || modelName(model)) === label,
+        on: shownModel() === label,
         run: () => {
           if (AG.full) {
             submit('/model ' + key);
             model = key;
+            picked = true;
             actual = '';           // do další odpovědi platí volba
             if (io.model) io.model(key);
             syncModel();
@@ -751,9 +779,29 @@
           icon: key === 'plan' ? 'i-note' : 'i-dot',
           label,
           on: key === mode,
-          run: () => setMode(key),
+          run: () => (key === 'bypass' ? chooseBypass() : setMode(key)),
         }));
       io.menu(x, y, items, {above: true});
+    }
+
+    /* Bypass jde v běžícím Claude Code zapnout, jen když se tab spustil
+       s možností bypassu. Tu hub dává až po potvrzeném varování — bez něj se
+       Claude Code při každém startu anglicky ptá a Enter ho ukončí. Po
+       potvrzení se proto otevře nový tab, rovnou v bypassu. */
+    async function chooseBypass() {
+      if (tab.bypass || seenBypass) return setMode('bypass');
+      const ok = window.confirm(
+        'Bypass: Claude pak spouští příkazy a mění soubory bez ptaní — ' +
+        'i ty, které můžou něco smazat nebo rozbít.\n\n' +
+        'Zapne se v novém tabu, tenhle zůstane, jak je. Pokračovat?');
+      if (!ok) return;
+      try {
+        if (io.acceptBypass) await io.acceptBypass();
+      } catch (err) {
+        io.notice('Bypass se zapnout nepodařilo: ' + err.message);
+        return;
+      }
+      if (io.openWith) io.openWith(AG.id, model, {mode: 'bypass'});
     }
 
     function slashMenu(ev) {
@@ -1310,7 +1358,18 @@
       }
       // Měřit jde až s nasazenou třídou: složená bublina je jenom proužek
       // a vyšla by z ní čtvrtinová výška.
-      if (shown) { fitOver(); refreshModel(); }
+      if (AG.full) readBanner();
+      if (shown) {
+        fitOver();
+        refreshModel();
+        // Tab otevřený rovnou do režimu (Bypass po potvrzení): přepne se,
+        // jakmile Claude Code čeká na zadání a nápověda s režimem je čitelná.
+        if (tab.wantMode && !switching) {
+          const want = tab.wantMode;
+          tab.wantMode = '';
+          setMode(want);
+        }
+      }
       renderAnswer();
     }
 

@@ -858,8 +858,8 @@ function newAgentMenu(ev) {
 }
 
 /* ── tabs ─────────────────────────────────────────────────────────────────── */
-function openTab({kind, path, title, agent, model}) {
-  const tab = createTab({kind, path, title, agent, model});
+function openTab({kind, path, title, agent, model, mode}) {
+  const tab = createTab({kind, path, title, agent, model, mode});
   const dims = measure(tab);
   send({t: 'open', ref: tab.ref, kind, path, title, agent: agent || '',
         model: model || '', cols: dims.cols, rows: dims.rows});
@@ -872,7 +872,7 @@ function openWith(agentId, {path, title}) {
   return openTab({kind: 'project', path, title, agent: agentId});
 }
 
-function createTab({kind, path, title, id, agent, model, background}) {
+function createTab({kind, path, title, id, agent, model, background, bypass, mode}) {
   const ref = ++refSeq;
   const pane = document.createElement('div');
   pane.className = 'pane';
@@ -901,7 +901,10 @@ function createTab({kind, path, title, id, agent, model, background}) {
   const tab = {ref, id: id || null, title, kind, path, term, fit, pane, termbox,
                // Agent musí být na tabu hned: bublina se podle něj rozhoduje,
                // co umí, a instaluje se o pár řádků níž.
-               agent: agent || '', model: model || '', exited: false};
+               agent: agent || '', model: model || '', exited: false,
+               // Jde v tabu zapnout bypass (agent se spustil s tou možností)?
+               // A režim, do kterého se má tab po startu přepnout sám.
+               bypass: !!bypass, wantMode: mode || ''};
   const toPty = (d) => {
     tab.lastInput = Date.now();          // ozvěna psaní není „agent pracuje"
     if (tab.id) send({t: 'in', id: tab.id, d});
@@ -943,12 +946,15 @@ function createTab({kind, path, title, id, agent, model, background}) {
       /* Přepnout agenta ani model v běžícím tabu nejde: je to jiný program,
          případně jiný startovací argument. Otevře se proto nový tab nad tímtéž
          projektem — a ten starý zůstane, dokud ho člověk sám nezavře. */
-      openWith: (agentId, model) => {
+      openWith: (agentId, model, opts = {}) => {
         rememberAgent(tab.path, agentId);
         const a = agentById(agentId);
         openTab({kind: 'project', path: tab.path,
-                 title: (a && a.label) || agentId, agent: agentId, model});
+                 title: (a && a.label) || agentId, agent: agentId, model,
+                 mode: opts.mode});
       },
+      // Potvrzení varování k bypassu — pak ho nabízí každý nový tab.
+      acceptBypass: () => api('bypass', {accept: true}),
       model: (key) => {
         if (key) STATE.model = key;
         return STATE.model || '';
@@ -1469,6 +1475,7 @@ function handle(msg) {
     const tab = TABS.find(t => t.ref === msg.ref);
     if (tab) {
       tab.id = msg.id;
+      tab.bypass = !!msg.bypass;
       // Server mohl model doplnit sám (Ollama bez modelu nespustíš), tak se
       // tím, co doopravdy běží, přepíše i to, s čím se tab zakládal.
       if (msg.model && msg.model !== tab.model) {
@@ -1487,7 +1494,7 @@ function handle(msg) {
     if (!TABS.some(t => t.id === msg.id)) {
       attachTab(createTab({kind: msg.kind, path: msg.path, title: msg.title,
                            id: msg.id, agent: msg.agent, model: msg.model,
-                           background: true}));
+                           bypass: msg.bypass, background: true}));
     }
   } else if (msg.t === 'tab-closed') {
     const tab = TABS.find(t => t.id === msg.id);
@@ -1496,6 +1503,7 @@ function handle(msg) {
     const tab = TABS.find(t => t.id === msg.id);
     if (tab) setTitle(tab, msg.title);
   } else if (msg.t === 'sessions') {
+    if (staleVersion(msg.version)) return;
     restore(msg.list);
   } else if (msg.t === 'memory-saved') {
     memorySaved(msg);
@@ -1504,6 +1512,21 @@ function handle(msg) {
     if (tab) closeTab(tab);
     toast(msg.d);
   }
+}
+
+/* Po aktualizaci serveru (brána, noční aktualizace) se stránka jen znovu
+   připojí a jela by dál se starým JavaScriptem, který o nových věcech neví.
+   Rozepsaný text v bublině se ale nezahazuje — pak jen hláška. */
+function staleVersion(version) {
+  const mine = STATE && STATE.version && STATE.version.version;
+  if (!version || !mine || version === mine) return false;
+  const typing = [...document.querySelectorAll('.composer-input')].some(i => i.value.trim());
+  if (typing) {
+    toast('Hub je aktualizovaný — obnov stránku (F5), až dopíšeš.');
+    return false;
+  }
+  location.reload();
+  return true;
 }
 
 /* Re-attach after a reload or a dropped connection: the server is the source of
@@ -1523,8 +1546,9 @@ function restore(list) {
     if (!tab) {
       tab = createTab({kind: info.kind, path: info.path, title: info.title,
                        id: info.id, agent: info.agent, model: info.model,
-                       background: true});
+                       bypass: info.bypass, background: true});
     }
+    tab.bypass = !!info.bypass;
     attachTab(tab);
   }
   const keep = before && TABS.includes(before) ? before : TABS[TABS.length - 1];

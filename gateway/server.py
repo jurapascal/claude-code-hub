@@ -123,13 +123,19 @@ class HubProc:
         self._lock = threading.Lock()
 
     def start(self):
+        # Scope, která zbyla z minula (spadlá brána, instance, o které se
+        # nevědělo), i pod starým jménem u<id>: systemd-run by na stejném jménu
+        # skončil chybou a domov se pod běžícím prostorem přejmenovat nesmí.
+        names = (workspace.unit_name(self.user), workspace.legacy_unit_name(self.user))
+        running = [n for n in names
+                   if not isolation.stop_scope(n) and isolation.scope_active(n)]
+        if not running:
+            # Domov podle e-mailu; starý u<id> se přejmenuje tady, kdy prostor
+            # prokazatelně neběží.
+            workspace.migrate_home(self.user)
         argv, home, unit = workspace.session_spec(self.user, isolation, self.mode)
         self.home = home
         self.unit = unit
-        if unit:
-            # Scope stejného jména může zbýt z minula (spadlá brána, instance,
-            # o které se nevědělo). systemd-run by na ní skončil chybou.
-            isolation.stop_scope(unit)
         env = dict(os.environ, HOME=home)
         # Klíč API brány jen tomu, kdo jede na `central` — `own` ho nesmí
         # zdědit ani z prostředí samotné brány.

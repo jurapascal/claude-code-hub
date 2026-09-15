@@ -128,6 +128,8 @@ class Session:
         self.agent = agent
         self.model = model
         self.started = time.time()
+        # Spustil se agent s možností bypassu? Bez ní ho v tabu zapnout nejde.
+        self.bypass = (env or {}).get("HUB_AGENT_BYPASS") == "1"
         child = core.child_env()
         child.update(env or {})
         self.pty = pty_backend.spawn(argv, cwd=cwd, env=child,
@@ -241,7 +243,7 @@ class Session:
     def info(self):
         return {"id": self.id, "title": self.title, "kind": self.kind,
                 "path": self.path, "exited": self.exited,
-                "agent": self.agent, "model": self.model}
+                "agent": self.agent, "model": self.model, "bypass": self.bypass}
 
 
 class Hub:
@@ -457,6 +459,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def _api_inner(self, name, query, payload=None):
         payload = payload or {}
+        if name == "bypass":
+            # Potvrzení varování k bypassu, které by se jinak Claude Code ptal
+            # v každém novém tabu. Jen výslovně (POST s accept: true).
+            if payload.get("accept") is not True:
+                return self._json({"error": "Chybí potvrzení."}, 400)
+            try:
+                core.accept_bypass()
+            except ValueError as exc:
+                return self._json({"error": str(exc)}, 400)
+            return self._json({"ok": True})
         if name == "tab-model":
             try:
                 session = HUB.sessions.get(int((query.get("id") or ["0"])[0]))
@@ -935,7 +947,9 @@ class Handler(BaseHTTPRequestHandler):
         session = HUB.sessions.get(sid)
 
         if kind == "hello":
-            conn.send_json({"t": "sessions",
+            # Verze: stránka po aktualizaci serveru jen znovu připojí websocket
+            # a jela by se starým JavaScriptem — podle tohohle se načte znovu.
+            conn.send_json({"t": "sessions", "version": core.version(),
                             "list": [s.info() for s in HUB.sessions.values()]})
         elif kind == "open":
             try:

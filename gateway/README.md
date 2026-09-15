@@ -82,8 +82,16 @@ který doinstaluje `install.sh`.
 Každý prostor běží ve vlastní systemd scope pojmenované podle e-mailu —
 `boucnik.jiri@gmail.com` → `claude-hub-boucnik.jiri_gmail.com.scope` (zavináč
 systemd nepřijme; znaky mimo `a-z0-9.-` jdou jako `\xNN`). Do 2.5.1 se
-jmenovala `claude-hub-u<id>`; `claude-hub-admin` pozná obě. Složka domova
-zůstává `u<id>`, na ní visí přihlášení, projekty i napojení. Podle scope
+jmenovala `claude-hub-u<id>`; `claude-hub-admin` pozná obě.
+
+Domov má taky jméno podle e-mailu: `/home/hub/users/boucnik.jiri` (když už
+ho má jiný účet, s doménou `boucnik.jiri_gmail.com`, pak s číslem účtu). Kdo má
+kterou složku, drží `/home/hub/users/.domovy.json` — vedle domovů, ne v nich,
+aby si přiřazení nešlo změnit ze session. Do 2.5.3 se domovy jmenovaly
+`u<id>`; brána je přejmenuje při dalším startu prostoru (jen když neběží)
+a přepíše starou cestu v nastavení, skillech a přepisech konverzací
+i ve jménech složek projektů Claude Code. Cache (`.npm`, `.cache`) se
+nepřepisují: stará cesta vede v sandboxu odkazem na nový domov. Podle scope
 brána pozná, jestli prostor žije (čte `cgroup.procs`, nespouští nic), a přes ni
 ho zastavuje — celý, i s Claude Code a vším, co v něm běží. Nečinný se uspí po
 `HUB_GW_IDLE_SLEEP`; psaní do terminálu (websocket) se počítá jako aktivita.

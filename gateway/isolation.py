@@ -64,7 +64,8 @@ def check(mode, host):
     return ""
 
 
-def wrap(mode, argv, home, extra_ro=(), extra_rw=(), limits=None, unit=""):
+def wrap(mode, argv, home, extra_ro=(), extra_rw=(), limits=None, unit="",
+         aliases=()):
     """argv, kterým se session doopravdy spustí.
 
     `home` je domov uživatele na bráně — jediné místo, kam smí zapisovat.
@@ -78,12 +79,14 @@ def wrap(mode, argv, home, extra_ro=(), extra_rw=(), limits=None, unit=""):
     `limits` je strop na paměť, procesy a podíl na procesoru; None = LIMITS.
     `unit` je jméno systemd scope (bez `.scope`), přes které se prostor pozná
     a zastaví; prázdné = náhodné, jako dřív.
+    `aliases` jsou cesty, které mají v sandboxu vést na domov (odkaz) — stará
+    jména domova, na která ukazují cesty zapečené v cache. Jen u bwrap.
     """
     limits = LIMITS if limits is None else limits
     if mode == "none":
         return _limited(list(argv), limits, unit)
     if mode == "bwrap":
-        return _limited(_bwrap(argv, home, extra_ro, extra_rw), limits, unit)
+        return _limited(_bwrap(argv, home, extra_ro, extra_rw, aliases), limits, unit)
     if mode == "docker":
         # Docker si limity řeší sám, přes systemd by se počítaly dvakrát.
         return _docker(argv, home, extra_ro, limits, extra_rw)
@@ -116,7 +119,7 @@ def _limited(argv, limits, unit=""):
     return scope + argv
 
 
-def _bwrap(argv, home, extra_ro, extra_rw=()):
+def _bwrap(argv, home, extra_ro, extra_rw=(), aliases=()):
     cmd = ["bwrap",
            # Systém ke čtení. Zápis nikam mimo domov: i kdyby session někoho
            # napadlo sáhnout na /usr, nemá kam.
@@ -139,6 +142,9 @@ def _bwrap(argv, home, extra_ro, extra_rw=()):
            # sandbox okamžitě zabil (session by umřela pár vteřin po startu).
            # Úklid proto řeší brána sama: zastaví celou scope, viz stop_scope.
            "--new-session"]
+    for alias in aliases:
+        if alias and alias != home:
+            cmd += ["--symlink", home, alias]
     # /bin a /lib jsou na dnešních distribucích symlinky do /usr. Přeskočit je
     # nejde: v sandboxu by pak nebyl ani shell („execvp /bin/sh: No such file“).
     # Symlink se proto uvnitř vyrobí znovu, ne sváže.

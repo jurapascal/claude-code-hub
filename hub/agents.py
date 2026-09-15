@@ -481,9 +481,10 @@ def bypass_arg(spec):
     return arg if _knows_flag(spec, arg) else ""
 
 
-def launch_args(spec, model="", prompt=""):
-    """Argumenty za jméno binárky: bypass v nabídce, model a úvodní prompt."""
-    args = [bypass_arg(spec)] if bypass_arg(spec) else []
+def launch_args(spec, model="", prompt="", bypass=True):
+    """Argumenty za jméno binárky: bypass v nabídce (když `bypass` a agent ho
+    umí), model a úvodní prompt."""
+    args = [bypass_arg(spec)] if bypass and bypass_arg(spec) else []
     model = resolved_model(spec, model)
     if model:
         # `ollama run <model>` je celý příkaz, ne přepínač
