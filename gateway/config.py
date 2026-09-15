@@ -20,6 +20,9 @@ ISOLATION = os.environ.get("HUB_GW_ISOLATION", "bwrap")
 # Cookie s přihlašovacím tokenem. Token sám je v databázi jen jako otisk.
 SESSION_COOKIE = "gw_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 30      # měsíc; jinak by se pořád přihlašovalo
+# Dvoufázové ověření: po heslu kód z aplikace v mobilu (gateway/totp.py). Kdo ho
+# ještě nemá, nastaví si ho při přihlášení — bez něj se dál nedostane.
+REQUIRE_2FA = os.environ.get("HUB_GW_REQUIRE_2FA", "1") != "0"
 
 # Kolik instancí hubu smí běžet naráz a kdy uspat nečinnou. Změřeno v README
 # brány: na 8GB stroj s weby a mailem se vejdou realisticky čtyři.

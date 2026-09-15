@@ -132,6 +132,11 @@
     creds.appendChild(loginErr);
     box.appendChild(creds);
 
+    // Druhý krok přihlášení (kód z aplikace v mobilu).
+    const second = el('div', 'srv-second');
+    second.hidden = true;
+    box.appendChild(second);
+
     let verified = '';          // adresa, která prošla ověřením
 
     function say(node, kind, text) {
@@ -180,6 +185,8 @@
         pass.value = '';
         if (res.error) {
           say(loginErr, 'err', res.error);
+        } else if (res.need) {
+          showSecond(res);
         } else if (opts.onReady) {
           await opts.onReady(res);
         }
@@ -188,6 +195,94 @@
       }
       login.disabled = false;
       login.textContent = 'Přihlásit se';
+    }
+
+    /* Druhý krok: kód z aplikace v mobilu. Při prvním přihlášení se aplikace
+       teprve nastavuje — QR kód nakreslil hub na počítači (hub/account.py). */
+    function showSecond(res) {
+      const setup = res.need === 'setup';
+      creds.hidden = true;
+      second.hidden = false;
+      second.textContent = '';
+      second.appendChild(el('div', 'srv-label', setup ? 'Zapni dvoufázové ověření' : 'Ověření'));
+      second.appendChild(el('div', 'srv-note', setup
+        ? 'Server teď chce kromě hesla i kód z telefonu. Nainstaluj si aplikaci na ' +
+          'ověřovací kódy (Google Authenticator, Microsoft Authenticator…), přidej ' +
+          'v ní účet a naskenuj QR kód:'
+        : 'Opiš šesticiferný kód z aplikace v mobilu. Nemáš telefon? Zadej záložní kód.'));
+      if (setup) {
+        const pic = el('div', 'srv-qr');
+        pic.innerHTML = res.qr || '';
+        second.appendChild(pic);
+        const key = el('div', 'srv-note');
+        key.appendChild(document.createTextNode('Nejde skenovat? Ruční klíč: '));
+        key.appendChild(el('code', 'srv-secret', res.secret_grouped || res.secret || ''));
+        second.appendChild(key);
+      }
+      const code = el('input', 'srv-input');
+      code.inputMode = 'numeric';
+      code.autocomplete = 'one-time-code';
+      code.placeholder = setup ? 'kód z aplikace' : 'kód z aplikace nebo záložní kód';
+      second.appendChild(code);
+      const row = el('div', 'srv-row srv-actions');
+      const go = el('button', 'btn primary', setup ? 'Zapnout a přihlásit' : 'Ověřit');
+      const back = el('button', 'btn ghost', 'Zpět');
+      row.appendChild(go);
+      row.appendChild(back);
+      second.appendChild(row);
+      const err = el('div', 'srv-status err');
+      err.hidden = true;
+      second.appendChild(err);
+
+      back.onclick = () => {
+        second.hidden = true;
+        second.textContent = '';
+        creds.hidden = false;
+        pass.focus();
+      };
+      const submit = async () => {
+        if (!code.value.trim()) { say(err, 'err', 'Opiš kód z aplikace.'); return; }
+        go.disabled = true;
+        try {
+          const r = await io.api('account', {action: '2fa', server: res.server,
+                                             ticket: res.ticket, code: code.value});
+          if (r.error) {
+            say(err, 'err', r.error);
+            code.select();
+            if (/Přihlas se znovu|vypršelo/.test(r.error)) setTimeout(back.onclick, 1500);
+          } else if (r.recovery && r.recovery.length) {
+            showRecovery(r);
+          } else if (opts.onReady) {
+            await opts.onReady(r);
+          }
+        } catch (e) {
+          say(err, 'err', 'Nepovedlo se: ' + e.message);
+        }
+        go.disabled = false;
+      };
+      go.onclick = submit;
+      code.onkeydown = (ev) => { if (ev.key === 'Enter') submit(); };
+      setTimeout(() => code.focus(), 0);
+    }
+
+    /* Záložní kódy po zapnutí ověřování — ukážou se jen jednou. */
+    function showRecovery(r) {
+      second.textContent = '';
+      second.appendChild(el('div', 'srv-label', 'Záložní kódy'));
+      second.appendChild(el('div', 'srv-note',
+        'Když ztratíš telefon, přihlásíš se jedním z nich — každý platí jednou. ' +
+        'Ulož si je (správce hesel, papír). Znovu se neukážou.'));
+      const list = el('div', 'srv-codes');
+      for (const c of r.recovery) list.appendChild(el('code', '', c));
+      second.appendChild(list);
+      const row = el('div', 'srv-row srv-actions');
+      const done = el('button', 'btn primary', 'Uloženo, pokračovat');
+      done.onclick = async () => {
+        done.disabled = true;
+        if (opts.onReady) await opts.onReady(r);
+      };
+      row.appendChild(done);
+      second.appendChild(row);
     }
 
     check.onclick = probe;

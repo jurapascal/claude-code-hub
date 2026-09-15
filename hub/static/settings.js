@@ -585,6 +585,111 @@
           'Otevřeno v prohlížeči. Na počítači se mezi ním a serverem ' +
           'přepíná v appce Claude Code Hub.'));
       }
+      body.appendChild(zabezpeceni());
+    }
+
+    /* Zabezpečení na serveru: dvoufázové ověření a heslo. Mluví přímo s bránou
+       (/gw/…), ne s hubem v prostoru — ten o heslech nic neví. */
+    function zabezpeceni() {
+      const wrap = el('div', 'acc-sec');
+      wrap.appendChild(el('div', 'set-title', 'Zabezpečení'));
+      const gw = async (path, payload) => {
+        const r = await fetch(path, payload === undefined ? {credentials: 'same-origin'} : {
+          method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json', 'X-Hub-Account': '1'},
+          body: JSON.stringify(payload),
+        });
+        const data = await r.json().catch(() => ({error: 'HTTP ' + r.status}));
+        if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
+        return data;
+      };
+
+      const tfa = el('div', 'set-note', 'Dvoufázové ověření: zjišťuji…');
+      wrap.appendChild(tfa);
+      const codesBox = el('div');
+      wrap.appendChild(codesBox);
+      gw('/gw/account').then((d) => {
+        const t = d.twofa || {};
+        tfa.textContent = '';
+        tfa.appendChild(el('span', t.enabled ? 'set-ok' : 'set-warn',
+          t.enabled ? '✓ Dvoufázové ověření zapnuté' : '! Dvoufázové ověření není zapnuté'));
+        if (!t.enabled) return;
+        tfa.appendChild(document.createTextNode(' · záložních kódů zbývá ' + t.recovery_left));
+        const row = el('div', 'set-row');
+        const again = el('button', 'btn ghost', 'Nové záložní kódy');
+        again.onclick = newCodes;
+        row.appendChild(again);
+        codesBox.appendChild(row);
+      }, (e) => { tfa.textContent = 'Stav ověření se nenačetl: ' + e.message; });
+
+      function newCodes() {
+        codesBox.textContent = '';
+        const row = el('div', 'set-row');
+        const code = el('input', 'srv-input acc-code');
+        code.placeholder = 'kód z aplikace';
+        code.inputMode = 'numeric';
+        code.autocomplete = 'one-time-code';
+        const go = el('button', 'btn primary', 'Vygenerovat');
+        row.appendChild(code);
+        row.appendChild(go);
+        codesBox.appendChild(row);
+        codesBox.appendChild(el('div', 'set-note', 'Staré záložní kódy tím přestanou platit.'));
+        const run = async () => {
+          go.disabled = true;
+          try {
+            const d = await gw('/gw/2fa/recovery', {code: code.value});
+            codesBox.textContent = '';
+            codesBox.appendChild(el('div', 'set-note',
+              'Nové záložní kódy — každý platí jednou. Ulož si je, znovu se neukážou.'));
+            const list = el('div', 'srv-codes');
+            for (const c of d.recovery) list.appendChild(el('code', '', c));
+            codesBox.appendChild(list);
+          } catch (e) {
+            io.toast(e.message);
+            go.disabled = false;
+          }
+        };
+        go.onclick = run;
+        code.onkeydown = (ev) => { if (ev.key === 'Enter') run(); };
+        code.focus();
+      }
+
+      wrap.appendChild(el('div', 'set-title acc-sub', 'Změna hesla'));
+      const form = el('div', 'acc-pass');
+      const field = (placeholder, auto) => {
+        const input = el('input', 'srv-input');
+        input.type = 'password';
+        input.placeholder = placeholder;
+        input.autocomplete = auto;
+        form.appendChild(input);
+        return input;
+      };
+      const cur = field('současné heslo', 'current-password');
+      const nw = field('nové heslo (aspoň 10 znaků)', 'new-password');
+      const nw2 = field('nové heslo znovu', 'new-password');
+      const row = el('div', 'set-row');
+      const save = el('button', 'btn primary', 'Změnit heslo');
+      row.appendChild(save);
+      form.appendChild(row);
+      form.appendChild(el('div', 'set-note',
+        'Po změně se odhlásí ostatní zařízení i appka na počítači; tenhle ' +
+        'prohlížeč zůstane přihlášený.'));
+      wrap.appendChild(form);
+      save.onclick = async () => {
+        if (!cur.value) return io.toast('Vyplň současné heslo.');
+        if (nw.value.length < 10) return io.toast('Nové heslo musí mít aspoň 10 znaků.');
+        if (nw.value !== nw2.value) return io.toast('Nová hesla se neshodují.');
+        save.disabled = true;
+        try {
+          await gw('/gw/password', {current: cur.value, new: nw.value});
+          cur.value = nw.value = nw2.value = '';
+          io.toast('Heslo změněno. Ostatní zařízení jsou odhlášená.');
+        } catch (e) {
+          io.toast(e.message);
+        }
+        save.disabled = false;
+      };
+      return wrap;
     }
 
     // ---- hub na počítači, nepřihlášený ----
@@ -661,7 +766,8 @@
 
       body.appendChild(el('div', 'set-note',
         'Appka si pamatuje, kde jsi pracoval naposledy. Ze serveru se sem ' +
-        'vrátíš v jeho nastavení: Účet → Pracovat na tomto počítači.'));
+        'vrátíš v jeho nastavení: Účet → Pracovat na tomto počítači. Heslo ' +
+        'a záložní kódy změníš tamtéž, v Nastavení → Účet v prostoru na serveru.'));
     }
 
     function draw(data) {

@@ -77,6 +77,27 @@ Dokumenty, Tabulky, Prezentace, Formuláře, Úkoly, Kontakty a aplikaci
 ho: `claude-hub-admin google set`. Google běží přes workspace-mcp na `uv`,
 který doinstaluje `install.sh`.
 
+## Přihlášení a dvoufázové ověření
+
+Po hesle brána chce ještě šesticiferný kód z aplikace v mobilu (TOTP,
+`gateway/totp.py` — Google Authenticator, Microsoft Authenticator, Authy…).
+Povinné je pro všechny (`HUB_GW_REQUIRE_2FA=0` ho vypne).
+
+- **První přihlášení:** po správném heslu stránka ukáže QR kód a ruční klíč;
+  ověřování se zapne, až ho člověk potvrdí prvním kódem. Pak ukáže osm
+  **záložních kódů** pro ztracený telefon (každý platí jednou, v databázi jen
+  otisk). Appka na počítači má tytéž kroky — QR si kreslí sama z odkazu.
+- **Tokeny:** platí jen ty vydané po druhém kroku (`tokens.mfa`). Přihlášení
+  z doby před 2.7.0 skončila — každý se jednou přihlásí znovu.
+- **Hádání:** druhý krok má lístek s platností 5 minut a pěti pokusy; po osmi
+  neúspěších (heslo i kód) za čtvrt hodinu brána z téže adresy (`X-Real-IP`)
+  ani na tentýž e-mail nepustí. Stejný kód z aplikace podruhé neprojde.
+- **Nastavení → Účet** v prostoru: stav ověření, nové záložní kódy (s kódem
+  z aplikace) a změna hesla (se současným heslem; odhlásí ostatní zařízení).
+- **Ztracený telefon i kódy:** `claude-hub-admin 2fa reset <e-mail>` — ověřování
+  se zruší a při příštím přihlášení se nastaví znovu. `claude-hub-admin 2fa
+  status` ukáže, kdo ho má.
+
 ## Firemní Obsidian
 
 Vedle osobního trezoru v každém prostoru je jeden společný trezor pro všechny:

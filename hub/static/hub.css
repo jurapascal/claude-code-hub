@@ -1549,6 +1549,22 @@ body { display: flex; flex-direction: column; }
 .srv-status.ok   { color: var(--green); font-weight: 600; }
 .srv-status.err  { color: var(--red); }
 .srv-status.warn { color: var(--amber); margin: 0 0 14px; }
+/* Dvoufázové ověření: druhý krok přihlášení a záložní kódy. */
+.srv-second { display: flex; flex-direction: column; }
+.srv-note { font-size: 12.5px; color: var(--dim); line-height: 1.55; margin: 6px 0 8px; }
+.srv-qr { align-self: flex-start; background: #fff; border-radius: 10px; padding: 10px; margin: 2px 0 8px; }
+.srv-qr svg { display: block; width: 200px; height: 200px; }
+.srv-secret { font-family: ui-monospace, monospace; color: var(--fg-bright); word-break: break-all; }
+.srv-codes { display: grid; grid-template-columns: repeat(2, minmax(0, 11rem)); gap: 8px; margin: 10px 0; }
+.srv-codes code {
+  font-family: ui-monospace, monospace; font-size: 14px; text-align: center; padding: 6px 8px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg-card); color: var(--fg-bright);
+}
+.acc-sec { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+.acc-sec .acc-sub { margin-top: 18px; }
+.acc-pass { display: flex; flex-direction: column; gap: 8px; max-width: 22rem; }
+.acc-pass .set-row { margin: 4px 0 0; }
+.acc-code { max-width: 12rem; }
 .srv-status.busy { color: var(--dim); }
 .srv-gate .onb-box { width: min(520px, 100%); }
 .srv-gate .onb-body { min-height: 9rem; }

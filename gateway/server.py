@@ -29,10 +29,13 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from hub import __version__
+from hub import __version__, qr
 
-from . import config, isolation, workspace
+from . import config, isolation, totp, workspace
 from .accounts import Accounts
+
+HTML = "text/html; charset=utf-8"
+TOO_MANY = "Moc neúspěšných pokusů. Zkus to znovu za čtvrt hodiny."
 
 # Hlavičky, které se u proxy nepřeposílají — patří jednomu skoku spojení, ne
 # tomu za ním.
@@ -64,6 +67,85 @@ def _handoff_new(token):
                 _handoffs.pop(old, None)
         _handoffs[code] = (token, now + HANDOFF_TTL)
     return code
+
+
+# Přihlášení ve dvou krocích. Po správném hesle brána ještě nevydá token, jen
+# lístek na druhý krok — kód z aplikace, nebo první nastavení aplikace — s pěti
+# minutami platnosti a pěti pokusy. Lístek žije jen v paměti brány.
+LOGIN_TTL = 5 * 60
+LOGIN_TRIES = 5
+_tickets = {}                        # lístek -> {"uid", "exp", "tries", "secret", "label"}
+_ticket_lock = threading.Lock()
+
+# Hádání hesel a kódů: po FAIL_MAX neúspěších za FAIL_WINDOW se z téže adresy
+# ani na tentýž e-mail nepřihlašuje. scrypt sám zdrží jen o desetinu vteřiny.
+FAIL_MAX = 8
+FAIL_WINDOW = 15 * 60
+_fails = {}                          # klíč -> [časy neúspěchů]
+_fail_lock = threading.Lock()
+
+
+def _ticket_new(uid, label="", secret=""):
+    ticket = secrets.token_urlsafe(24)
+    now = time.time()
+    with _ticket_lock:
+        for old, t in list(_tickets.items()):
+            if t["exp"] < now:
+                _tickets.pop(old, None)
+        _tickets[ticket] = {"uid": uid, "exp": now + LOGIN_TTL, "tries": 0,
+                            "secret": secret, "label": label}
+    return ticket
+
+
+def _ticket_get(ticket):
+    with _ticket_lock:
+        found = _tickets.get(ticket or "")
+        if found and found["exp"] < time.time():
+            _tickets.pop(ticket, None)
+            return None
+        return found
+
+
+def _ticket_drop(ticket):
+    with _ticket_lock:
+        _tickets.pop(ticket or "", None)
+
+
+def _ticket_miss(ticket):
+    """Špatný kód. Vrací, kolik pokusů zbývá; po posledním lístek propadne."""
+    with _ticket_lock:
+        found = _tickets.get(ticket or "")
+        if not found:
+            return 0
+        found["tries"] += 1
+        left = LOGIN_TRIES - found["tries"]
+        if left <= 0:
+            _tickets.pop(ticket, None)
+        return max(0, left)
+
+
+def _blocked(keys):
+    now = time.time()
+    with _fail_lock:
+        for key in keys:
+            hits = [t for t in _fails.get(key, []) if now - t < FAIL_WINDOW]
+            if hits:
+                _fails[key] = hits
+            else:
+                _fails.pop(key, None)
+            if len(hits) >= FAIL_MAX:
+                return True
+    return False
+
+
+def _failed(keys):
+    now = time.time()
+    with _fail_lock:
+        if len(_fails) > 10000:                  # rozsypané pokusy na tisíce e-mailů
+            for key in [k for k, v in _fails.items() if now - v[-1] >= FAIL_WINDOW]:
+                _fails.pop(key, None)
+        for key in keys:
+            _fails.setdefault(key, []).append(now)
 
 
 def _handoff_take(code):
@@ -329,6 +411,17 @@ background:#e0a458;color:#1a1710;font-weight:600;font-size:1rem;cursor:pointer}
 button:hover{background:#e8b76a}
 .err{margin-top:14px;color:#f0a0a0;font-size:.9rem;min-height:1.2em}
 a{color:#e0a458}
+.card.wide{max-width:30rem}
+.steps{padding-left:1.2rem;margin:10px 0;font-size:.92rem;line-height:1.55;color:#c8c0a8}
+.qr{background:#fff;border-radius:10px;padding:10px;display:flex;justify-content:center;margin:12px 0}
+.qr svg{display:block;width:220px;height:220px}
+.hint{font-size:.85rem;color:#9a927c;margin:10px 0 0;line-height:1.5}
+code{font-family:ui-monospace,monospace;color:#e0a458;overflow-wrap:anywhere}
+.key{display:block;margin-top:4px;font-size:1rem;letter-spacing:.02em}
+.codes{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0}
+.codes code{background:#14130d;border:1px solid #3a3524;border-radius:6px;padding:7px;text-align:center;font-size:1rem;color:#e8e3d3}
+a.button{display:block;text-align:center;margin-top:20px;padding:11px;border-radius:8px;
+background:#e0a458;color:#1a1710;font-weight:600;text-decoration:none}
 </style>
 """ + body + "</html>").encode("utf-8")
 
@@ -346,6 +439,62 @@ def login_page(error=""):
 <button type=submit>Přihlásit se</button>
 {err}
 </form>""")
+
+
+def code_page(ticket, error=""):
+    """Druhý krok přihlášení: kód z aplikace (nebo záložní kód)."""
+    err = f'<div class=err>{html.escape(error)}</div>' if error else ''
+    return _page("Ověření — Code Hub", f"""
+<form class=card method=post action="/login/2fa">
+<h1>Ověření</h1>
+<p class=sub>Opiš šesticiferný kód z aplikace v mobilu
+(Google Authenticator, Microsoft Authenticator…).</p>
+<input type=hidden name=ticket value="{html.escape(ticket)}">
+<label>Kód</label>
+<input name=code inputmode=numeric autocomplete=one-time-code autofocus required
+ maxlength=16 placeholder="123 456">
+<button type=submit>Ověřit</button>
+<p class=hint>Nemáš u sebe telefon? Zadej jeden ze záložních kódů.</p>
+{err}
+</form>""")
+
+
+def setup_page(ticket, secret, email, error=""):
+    """Při prvním přihlášení: zapnutí dvoufázového ověření."""
+    err = f'<div class=err>{html.escape(error)}</div>' if error else ''
+    svg = qr.svg(totp.uri(secret, email), quiet=2, scale=5)
+    return _page("Dvoufázové ověření — Code Hub", f"""
+<form class="card wide" method=post action="/login/2fa">
+<h1>Zapni dvoufázové ověření</h1>
+<p class=sub>Přihlášení na server teď chce kromě hesla i kód z telefonu.</p>
+<ol class=steps>
+<li>Nainstaluj si do mobilu aplikaci na ověřovací kódy — třeba
+<b>Google Authenticator</b> nebo <b>Microsoft Authenticator</b>.</li>
+<li>V aplikaci přidej účet a naskenuj tenhle QR kód:</li>
+</ol>
+<div class=qr>{svg}</div>
+<p class=hint>Nejde skenovat? Zadej v aplikaci ručně klíč
+<code class=key>{html.escape(totp.grouped(secret))}</code></p>
+<ol class=steps start=3><li>Opiš šesticiferný kód, který aplikace ukáže:</li></ol>
+<input type=hidden name=ticket value="{html.escape(ticket)}">
+<input name=code inputmode=numeric autocomplete=one-time-code autofocus required
+ maxlength=8 placeholder="123 456">
+<button type=submit>Zapnout a přihlásit</button>
+{err}
+</form>""")
+
+
+def recovery_page(codes):
+    """Záložní kódy hned po zapnutí ověřování — ukážou se jen tady."""
+    items = "".join(f"<code>{html.escape(c)}</code>" for c in codes)
+    return _page("Záložní kódy — Code Hub", f"""
+<div class="card wide">
+<h1>Záložní kódy</h1>
+<p class=sub>Když ztratíš telefon, přihlásíš se jedním z nich — každý platí
+jednou. Ulož si je (správce hesel, vytisknout). Znovu se neukážou.</p>
+<div class=codes>{items}</div>
+<a class=button href="/">Uloženo, pokračovat</a>
+</div>""")
 
 
 # ── HTTP handler ──────────────────────────────────────────────────────────────
@@ -446,6 +595,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._login(method)
             if route == "/logout":
                 return self._logout()
+            if route == "/login/2fa":
+                return self._login_second(method)
             # Rozhraní pro hub běžící na počítači: ověřuje se tokenem
             # v hlavičce, ne cookie, a nikdy se neproxuje do instance.
             if route == "/gw/info":
@@ -465,6 +616,14 @@ class Handler(BaseHTTPRequestHandler):
 
             if route == "/gw/firma/publish":
                 return self._firma_publish(method, user)
+            # Zabezpečení účtu z Nastavení → Účet (hub v prostoru o heslech nic neví).
+            if route == "/gw/account":
+                return self._json({"user": user, "twofa": self.accounts.twofa(user["id"]),
+                                   "required": config.REQUIRE_2FA})
+            if route == "/gw/password":
+                return self._gw_password(method, user)
+            if route == "/gw/2fa/recovery":
+                return self._gw_recovery(method, user)
 
             # Přihlášený → všechno ostatní jde do jeho instance hubu.
             return self._proxy(method, user)
@@ -529,17 +688,146 @@ class Handler(BaseHTTPRequestHandler):
         email = (form.get("email") or "").strip()
         password = form.get("password") or ""
         label = self.headers.get("User-Agent", "")[:60]
-        token = self.accounts.login(email, password, label=label)
-        if not token:
+        keys = self._fail_keys(email)
+        if _blocked(keys):
+            return self._login_error(TOO_MANY, 429)
+        user = self.accounts.verify(email, password)
+        if not user:
+            _failed(keys)
+            return self._login_error("Špatný e-mail nebo heslo.")
+        state = self.accounts.twofa(user["id"])
+        if not state["enabled"] and not config.REQUIRE_2FA:
+            return self._login_done(self.accounts.issue_token(user, label), user)
+        if state["enabled"]:
+            ticket = _ticket_new(user["id"], label)
             if self._wants_json():
-                return self._json({"error": "Špatný e-mail nebo heslo."}, 401)
-            return self._send(200, login_page("Špatný e-mail nebo heslo."),
-                              "text/html; charset=utf-8")
+                return self._json({"need": "totp", "ticket": ticket})
+            return self._send(200, code_page(ticket), HTML)
+        # Ověřování ještě nemá: tajemství vznikne teď a do účtu se zapíše, až
+        # ho člověk potvrdí prvním kódem z aplikace.
+        secret = totp.new_secret()
+        ticket = _ticket_new(user["id"], label, secret)
+        if self._wants_json():
+            return self._json({"need": "setup", "ticket": ticket, "secret": secret,
+                               "uri": totp.uri(secret, user["email"])})
+        return self._send(200, setup_page(ticket, secret, user["email"]), HTML)
+
+    def _client_ip(self):
+        # nginx před bránou posílá skutečnou adresu v X-Real-IP; brána sama
+        # poslouchá jen na loopbacku, takže ji odjinud nikdo nepodvrhne.
+        return self.headers.get("X-Real-IP") or self.client_address[0]
+
+    def _fail_keys(self, email=""):
+        keys = ["ip:" + self._client_ip()]
+        if email:
+            keys.append("email:" + email.strip().lower())
+        return keys
+
+    def _login_error(self, message, code=401):
+        if self._wants_json():
+            return self._json({"error": message}, code)
+        return self._send(200, login_page(message), HTML)
+
+    def _login_done(self, token, user, recovery=None):
         if self._wants_json():
             # Hub na počítači si token uloží sám; cookie by mu byla k ničemu.
-            return self._json({"token": token,
-                               "user": self.accounts.user_for_token(token)})
-        return self._redirect("/", extra={"Set-Cookie": self._set_cookie(token)})
+            out = {"token": token, "user": user}
+            if recovery:
+                out["recovery"] = recovery
+            return self._json(out)
+        cookie = {"Set-Cookie": self._set_cookie(token)}
+        if recovery:
+            return self._send(200, recovery_page(recovery), HTML, cookie)
+        return self._redirect("/", extra=cookie)
+
+    def _login_second(self, method):
+        """Druhý krok: kód z aplikace (nebo záložní), při prvním přihlášení
+        zapnutí ověřování potvrzené prvním kódem."""
+        if method != "POST":
+            return self._redirect("/login")
+        form = self._read_form()
+        ticket_id = form.get("ticket") or ""
+        code = str(form.get("code") or "")
+        ticket = _ticket_get(ticket_id)
+        user = self.accounts.by_id(ticket["uid"]) if ticket else None
+        if not user:
+            _ticket_drop(ticket_id)
+            return self._login_error("Přihlášení vypršelo — zadej znovu e-mail a heslo.")
+        keys = self._fail_keys(user["email"])
+        if _blocked(keys):
+            _ticket_drop(ticket_id)
+            return self._login_error(TOO_MANY, 429)
+        recovery = None
+        if ticket["secret"]:
+            ok = bool(totp.verify(ticket["secret"], code))
+            if ok:
+                recovery = self.accounts.enable_totp(user["id"], ticket["secret"])
+                # Kód, kterým se nastavení potvrdilo, ať už podruhé neprojde.
+                self.accounts.second_factor(user["id"], code, allow_recovery=False)
+        else:
+            ok = bool(self.accounts.second_factor(user["id"], code))
+        if not ok:
+            _failed(keys)
+            left = _ticket_miss(ticket_id)
+            message = "Kód nesedí." + (f" Zbývá pokusů: {left}." if left
+                                       else " Přihlas se znovu.")
+            if self._wants_json():
+                return self._json({"error": message, "left": left}, 401)
+            if not left:
+                return self._send(200, login_page(message), HTML)
+            page = (setup_page(ticket_id, ticket["secret"], user["email"], message)
+                    if ticket["secret"] else code_page(ticket_id, message))
+            return self._send(200, page, HTML)
+        _ticket_drop(ticket_id)
+        token = self.accounts.issue_token(user, ticket["label"], mfa=True)
+        return self._login_done(token, user, recovery)
+
+    def _account_post_ok(self):
+        """Změny účtu jen z vlastní stránky a s hlavičkou, kterou cizí web nepošle."""
+        return self._same_origin() and self.headers.get("X-Hub-Account") == "1"
+
+    def _gw_password(self, method, user):
+        """Změna hesla z Nastavení → Účet. Chce současné heslo, odhlásí ostatní
+        zařízení a tomuhle prohlížeči vydá nové přihlášení."""
+        if method != "POST":
+            return self._json({"error": "Jen POST."}, 405)
+        if not self._account_post_ok():
+            return self._json({"error": "Heslo jde změnit jen v nastavení hubu."}, 403)
+        keys = self._fail_keys(user["email"])
+        if _blocked(keys):
+            return self._json({"error": TOO_MANY}, 429)
+        form = self._read_form()
+        current = str(form.get("current") or "")
+        new = str(form.get("new") or "")
+        if not self.accounts.verify(user["email"], current):
+            _failed(keys)
+            return self._json({"error": "Současné heslo nesedí."}, 400)
+        if new == current:
+            return self._json({"error": "Nové heslo je stejné jako to současné."}, 400)
+        try:
+            self.accounts.set_password(user["email"], new)      # odhlásí všechna zařízení
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, 400)
+        token = self.accounts.issue_token(user, self.headers.get("User-Agent", "")[:60],
+                                          mfa=True)
+        return self._send(200, json.dumps({"ok": True}), "application/json; charset=utf-8",
+                          {"Set-Cookie": self._set_cookie(token)})
+
+    def _gw_recovery(self, method, user):
+        """Nové záložní kódy — jen s platným kódem z aplikace, ne se záložním."""
+        if method != "POST":
+            return self._json({"error": "Jen POST."}, 405)
+        if not self._account_post_ok():
+            return self._json({"error": "Kódy jde vygenerovat jen v nastavení hubu."}, 403)
+        keys = self._fail_keys(user["email"])
+        if _blocked(keys):
+            return self._json({"error": TOO_MANY}, 429)
+        form = self._read_form()
+        if not self.accounts.second_factor(user["id"], str(form.get("code") or ""),
+                                           allow_recovery=False):
+            _failed(keys)
+            return self._json({"error": "Kód z aplikace nesedí."}, 400)
+        return self._json({"recovery": self.accounts.new_recovery(user["id"])})
 
     # ---- rozhraní pro hub na počítači ----
     def _bearer_token(self):
@@ -820,7 +1108,7 @@ def serve():
     # restartu brány zůstanou běžet huby, které už nikdo nespravuje — a každý
     # s Claude Code drží stovky MB.
     stop_orphans()
-    accounts = Accounts(config.DB_PATH)
+    accounts = Accounts(config.DB_PATH, require_mfa=config.REQUIRE_2FA)
     hubs = HubManager(config.ISOLATION, config.MAX_SESSIONS, config.IDLE_SLEEP)
     # assume_https zapneme, když je za bránou nginx s TLS (řekne to env).
     assume_https = os.environ.get("HUB_GW_ASSUME_HTTPS", "") == "1"

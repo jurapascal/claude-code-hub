@@ -66,12 +66,34 @@ def cmd_list(a, args):
         print("Zatím žádné účty.")
         return
     w = max(len(r["email"]) for r in rows)
-    print(f'{"e-mail":<{w}}  role   claude    vault              stav')
+    print(f'{"e-mail":<{w}}  role   claude    2fa  vault              stav')
     for r in rows:
         stav = "vypnutý" if r["disabled"] else "aktivní"
         auth = r.get("claude_auth") or "central"
-        print(f'{r["email"]:<{w}}  {r["role"]:<5}  {auth:<8}  '
+        twofa = "ano" if r.get("twofa") else "ne"
+        print(f'{r["email"]:<{w}}  {r["role"]:<5}  {auth:<8}  {twofa:<3}  '
               f'{(r["vault"] or "-"):<18} {stav}')
+
+
+def cmd_2fa(a, args):
+    """Dvoufázové ověření: stav, nebo reset (ztracený telefon i záložní kódy)."""
+    if args.action == "status":
+        email = (args.email or "").strip().lower()
+        rows = [r for r in a.list() if not email or r["email"] == email]
+        if not rows:
+            raise ValueError(f"{args.email} tu žádný účet nemá." if email else "Zatím žádné účty.")
+        w = max(len(r["email"]) for r in rows)
+        for r in rows:
+            st = a.twofa(r["id"])
+            print(f'{r["email"]:<{w}}  ' + (
+                f'zapnuté, záložních kódů zbývá {st["recovery_left"]}' if st["enabled"]
+                else "nenastavené — nastaví si ho při příštím přihlášení"))
+        return
+    if not args.email:
+        raise ValueError("Zadej e-mail účtu.")
+    a.reset_totp(args.email)
+    print(f"{args.email}: dvoufázové ověření zrušené a všechna zařízení odhlášená. "
+          "Při příštím přihlášení si ho nastaví znovu.")
 
 
 def cmd_passwd(a, args):
@@ -314,6 +336,11 @@ def build_parser():
     rm = sub.add_parser("remove", help="smazat účet")
     rm.add_argument("email")
     rm.set_defaults(func=cmd_remove)
+
+    tf = sub.add_parser("2fa", help="dvoufázové ověření: stav, nebo reset (ztracený telefon)")
+    tf.add_argument("action", choices=("status", "reset"))
+    tf.add_argument("email", nargs="?", default="", help="e-mail účtu (u status volitelný)")
+    tf.set_defaults(func=cmd_2fa)
 
     sub.add_parser("sessions", help="které prostory běží a kolik berou paměti"
                    ).set_defaults(func=cmd_sessions)

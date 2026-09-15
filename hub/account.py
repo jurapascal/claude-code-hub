@@ -192,6 +192,22 @@ def login(server, email, password):
     data, err, kind = _call("/login", base=base,
                             payload={"email": (email or "").strip(),
                                      "password": password or ""})
+    if data and data.get("need") in ("totp", "setup") and data.get("ticket"):
+        # Heslo sedí, brána chce ještě kód z aplikace (nebo ho teprve nastavit).
+        # Nic se neukládá, dokud neprojde i druhý krok (second_factor).
+        out = {"need": data["need"], "ticket": str(data["ticket"]), "server": base}
+        if data["need"] == "setup":
+            from . import qr
+            secret = str(data.get("secret") or "")
+            link = str(data.get("uri") or "")
+            if not secret or not link.startswith("otpauth://totp/"):
+                return {"error": "Server poslal neplatné nastavení ověřování."}
+            # QR se kreslí tady z odkazu, ne jako hotové SVG ze serveru — do
+            # stránky se tak nedostane nic, co by server mohl podstrčit.
+            out.update(secret=secret, qr=qr.svg(link, quiet=2, scale=5),
+                       secret_grouped=" ".join(secret[i:i + 4]
+                                               for i in range(0, len(secret), 4)))
+        return out
     if not data or not data.get("token"):
         return {"error": err or "Přihlášení se nepovedlo."}
     # Adresa se ukládá až po úspěchu: nepovedený pokus nesmí přepsat server,
@@ -199,6 +215,24 @@ def login(server, email, password):
     core.save_config({"gw_server": base, "gw_token": data["token"],
                       "gw_user": data.get("user")})
     return status()
+
+
+def second_factor(server, ticket, code):
+    """Druhý krok přihlášení: kód z aplikace (nebo záložní), při prvním
+    přihlášení zároveň zapnutí ověřování. Po úspěchu uloží token jako login()."""
+    base = normalize(server)
+    if not base or not ticket:
+        return {"error": "Přihlášení vypršelo — zadej znovu heslo."}
+    data, err, _kind = _call("/login/2fa", base=base,
+                             payload={"ticket": str(ticket), "code": str(code or "")})
+    if not data or not data.get("token"):
+        return {"error": err or "Ověření se nepovedlo."}
+    core.save_config({"gw_server": base, "gw_token": data["token"],
+                      "gw_user": data.get("user")})
+    out = status()
+    if isinstance(data.get("recovery"), list):
+        out["recovery"] = [str(c) for c in data["recovery"]][:20]
+    return out
 
 
 def logout():

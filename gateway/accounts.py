@@ -29,11 +29,14 @@ Tři věci, které stojí za vysvětlení:
 """
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import sqlite3
 import threading
 import time
+
+from . import totp
 
 # N=2^15, r=8 → scrypt si řekne o 128*N*r = přesně 32 MiB, což je zároveň
 # výchozí strop OpenSSL. Bez `maxmem` to spadne na „memory limit exceeded“,
@@ -85,10 +88,22 @@ def _clean_auth(auth):
     return auth if auth in AUTHS else "central"
 
 
+def _codes(raw):
+    """Otisky záložních kódů uložené jako JSON seznam."""
+    try:
+        data = json.loads(raw or "[]")
+    except ValueError:
+        return []
+    return [c for c in data if isinstance(c, str)] if isinstance(data, list) else []
+
+
 class Accounts:
     """Účty a přihlašovací tokeny. Bezpečné volat z více vláken (RLock)."""
 
-    def __init__(self, path):
+    def __init__(self, path, require_mfa=False):
+        # Brána s povinným dvoufázovým ověřením: platí jen tokeny vydané po
+        # druhém kroku (tokens.mfa). Správa z CLI tokeny nepoužívá.
+        self.require_mfa = require_mfa
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         # check_same_thread=False: brána obsluhuje každé spojení ve vlastním
         # vlákně. Jedno sdílené připojení ale NENÍ bezpečné volat z víc vláken
@@ -117,6 +132,22 @@ class Accounts:
         if "claude_auth" not in have:
             self.db.execute("ALTER TABLE users ADD COLUMN claude_auth TEXT NOT"
                             " NULL DEFAULT 'central'")
+        # Dvoufázové ověření (2.7.0): tajemství aplikace, poslední použité
+        # okno (proti opakovanému použití kódu) a otisky záložních kódů.
+        if "totp_secret" not in have:
+            self.db.execute("ALTER TABLE users ADD COLUMN totp_secret TEXT NOT"
+                            " NULL DEFAULT ''")
+        if "totp_last" not in have:
+            self.db.execute("ALTER TABLE users ADD COLUMN totp_last INTEGER NOT"
+                            " NULL DEFAULT 0")
+        if "recovery" not in have:
+            self.db.execute("ALTER TABLE users ADD COLUMN recovery TEXT NOT"
+                            " NULL DEFAULT ''")
+        tokens = {r["name"] for r in self.db.execute("PRAGMA table_info(tokens)")}
+        if "mfa" not in tokens:
+            # Tokeny z doby před 2FA mají 0 — s povinným ověřením neplatí.
+            self.db.execute("ALTER TABLE tokens ADD COLUMN mfa INTEGER NOT"
+                            " NULL DEFAULT 0")
 
     # ── uživatelé ────────────────────────────────────────────────────────────
     def add(self, email, password, name="", role="user", vault="",
@@ -234,7 +265,7 @@ class Accounts:
         with self._lock:
             return [dict(r) for r in self.db.execute(
                 "SELECT id, email, name, role, vault, claude_auth, created,"
-                " disabled FROM users ORDER BY email")]
+                " disabled, totp_secret != '' AS twofa FROM users ORDER BY email")]
 
     def _admin_count(self):
         return self.db.execute(
@@ -268,28 +299,99 @@ class Accounts:
                 "role": row["role"], "vault": row["vault"],
                 "claude_auth": row["claude_auth"]}
 
-    def issue_token(self, user, label=""):
+    def issue_token(self, user, label="", mfa=False):
         """Vydá token pro zařízení už prokázanému uživateli.
 
         Oddělené od `login()` schválně: heslo není jediný způsob, jak se dá
         prokázat totožnost. Předání přihlášení z hubu na počítači i pozdější
         přihlášení přes cizího poskytovatele potřebují tenhle krok bez hesla.
+        `mfa` = uživatel prošel i druhým krokem (kód z aplikace).
         """
         token = secrets.token_urlsafe(TOKEN_BYTES)
         now = time.time()
         with self._lock:
             self.db.execute(
-                "INSERT INTO tokens (fingerprint, user_id, label, created, seen)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (_fingerprint(token), user["id"], label or "", now, now))
+                "INSERT INTO tokens (fingerprint, user_id, label, created, seen, mfa)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (_fingerprint(token), user["id"], label or "", now, now,
+                 1 if mfa else 0))
         return token
 
     def login(self, email, password, label=""):
-        """Ověří heslo a vydá token pro zařízení. None = nepustit dál."""
+        """Ověří heslo a vydá token pro zařízení. None = nepustit dál.
+        Jen heslem — s povinným dvoufázovým ověřením takový token neplatí."""
         user = self.verify(email, password)
         if not user:
             return None
         return self.issue_token(user, label)
+
+    # ── dvoufázové ověření ───────────────────────────────────────────────────
+    def twofa(self, user_id):
+        """{"enabled", "recovery_left"} — pro přihlášení, nastavení i správu."""
+        with self._lock:
+            row = self.db.execute("SELECT totp_secret, recovery FROM users WHERE id = ?",
+                                  (user_id,)).fetchone()
+        if not row:
+            return {"enabled": False, "recovery_left": 0}
+        return {"enabled": bool(row["totp_secret"]),
+                "recovery_left": len(_codes(row["recovery"]))}
+
+    def _store_recovery(self, user_id):
+        codes = totp.recovery_codes()
+        self.db.execute("UPDATE users SET recovery = ? WHERE id = ?",
+                        (json.dumps([totp.recovery_hash(c) for c in codes]), user_id))
+        return codes
+
+    def enable_totp(self, user_id, secret):
+        """Zapne ověřování s tajemstvím, které už člověk potvrdil kódem.
+        Vrací záložní kódy — jediné místo, kde jsou k vidění v čitelné podobě."""
+        with self._lock:
+            self.db.execute("UPDATE users SET totp_secret = ?, totp_last = 0 WHERE id = ?",
+                            (secret, user_id))
+            return self._store_recovery(user_id)
+
+    def new_recovery(self, user_id):
+        """Nové záložní kódy; staré tím přestanou platit."""
+        with self._lock:
+            return self._store_recovery(user_id)
+
+    def second_factor(self, user_id, code, allow_recovery=True):
+        """Ověří kód z aplikace, nebo záložní kód. Vrací "totp", "recovery", nebo "".
+        Použitý kód z aplikace ani záložní kód podruhé neprojde."""
+        with self._lock:
+            row = self.db.execute(
+                "SELECT totp_secret, totp_last, recovery, disabled FROM users WHERE id = ?",
+                (user_id,)).fetchone()
+            if not row or row["disabled"] or not row["totp_secret"]:
+                return ""
+            counter = totp.verify(row["totp_secret"], code, row["totp_last"])
+            if counter:
+                self.db.execute("UPDATE users SET totp_last = ? WHERE id = ?",
+                                (counter, user_id))
+                return "totp"
+            if allow_recovery and totp.looks_like_recovery(code):
+                codes = _codes(row["recovery"])
+                digest = totp.recovery_hash(code)
+                if digest in codes:
+                    codes.remove(digest)
+                    self.db.execute("UPDATE users SET recovery = ? WHERE id = ?",
+                                    (json.dumps(codes), user_id))
+                    return "recovery"
+        return ""
+
+    def reset_totp(self, email):
+        """Zruší ověřování (ztracený telefon i záložní kódy) a odhlásí všechna
+        zařízení. Při příštím přihlášení si ho člověk nastaví znovu."""
+        email = (email or "").strip().lower()
+        with self._lock:
+            cur = self.db.execute(
+                "UPDATE users SET totp_secret = '', totp_last = 0, recovery = ''"
+                " WHERE email = ?", (email,))
+            if not cur.rowcount:
+                raise ValueError(f"{email} tu žádný účet nemá.")
+            self.db.execute(
+                "DELETE FROM tokens WHERE user_id ="
+                " (SELECT id FROM users WHERE email = ?)", (email,))
 
     def user_for_token(self, token):
         """Komu token patří, nebo None. Zaznamená, že se ozval."""
@@ -298,10 +400,14 @@ class Accounts:
         fp = _fingerprint(token)
         with self._lock:
             row = self.db.execute(
-                "SELECT u.* FROM tokens t"
+                "SELECT u.*, t.mfa AS token_mfa FROM tokens t"
                 " JOIN users u ON u.id = t.user_id WHERE t.fingerprint = ?",
                 (fp,)).fetchone()
             if not row or row["disabled"]:
+                return None
+            # Token vydaný jen na heslo (třeba z doby před 2FA) s povinným
+            # ověřením neplatí — člověk se přihlásí znovu i s kódem.
+            if self.require_mfa and not row["token_mfa"]:
                 return None
             self.db.execute("UPDATE tokens SET seen = ? WHERE fingerprint = ?",
                             (time.time(), fp))

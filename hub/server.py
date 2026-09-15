@@ -640,6 +640,10 @@ class Handler(BaseHTTPRequestHandler):
                     payload.get("server", ""),
                     payload.get("email", ""),
                     payload.get("password", "")))
+            if action == "2fa":
+                return self._json(account.second_factor(
+                    payload.get("server", ""), payload.get("ticket", ""),
+                    payload.get("code", "")))
             if action == "logout":
                 return self._json(account.logout())
             if action in ("handoff", "connect"):
