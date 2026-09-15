@@ -71,6 +71,13 @@ proxuje do instance hubu toho uživatele.
 | `GET /login?handoff=kód` | okno dostane cookie s **tímtéž** tokenem | kód |
 | `GET /logout` | zneplatní token z cookie | cookie |
 
+Appka i prohlížeč můžou být otevřené naráz — obě okna jsou jen pohled do
+jednoho hubu. Výpis tabů jde do všech, tab otevřený, přejmenovaný nebo zavřený
+v jednom se ukáže i v druhém a psát jde z kteréhokoli. Terminál má ale jen
+jeden rozměr: drží ho okno, ve kterém se naposledy psalo nebo na které se
+přepnulo, takže se Claude Code v tom druhém může do přepnutí vykreslit na cizí
+šířku.
+
 Předání při každém spuštění nevyrábí nový token: cookie okna nese token appky.
 Databáze tak nenarůstá s každým startem a *Odhlásit se* v okně odhlásí i appku —
 příště se opravdu zeptá. Brána z doby před `/gw/info` se pozná podle toho, jak

@@ -8,6 +8,11 @@ never reachable by anything that didn't get the token from us.
 Terminal sessions live in the server, not in the browser connection: reloading
 the page re-attaches to the running Claude sessions and replays their recent
 output instead of killing them.
+
+Several pages can watch the same sessions at once — on the gateway the app and
+a browser open the same user's hub. Output goes to every page, tabs opened,
+closed or renamed in one show up in the others, and the pty takes the size of
+the page that was used last (typing or focus), so pages don't fight over it.
 """
 import base64
 import codecs
@@ -127,7 +132,14 @@ class Session:
         self.pty = pty_backend.spawn(argv, cwd=cwd, env=child,
                                      cols=cols, rows=rows)
         self.buffer = bytearray()
-        self.conn = None
+        # Tab může vidět víc oken naráz — appka i prohlížeč na tentýž prostor.
+        # Výpis jde všem; pty ale má jen jeden rozměr a ten drží okno, které se
+        # naposledy používalo (`driver`). Rozměry ostatních se pamatují, aby
+        # rozměr šlo předat hned, jak se začne pracovat tam.
+        self.conns = set()
+        self.sizes = {}
+        self.driver = None
+        self.size = (cols, rows)
         self.exited = False
         self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         self._lock = threading.Lock()
@@ -146,27 +158,80 @@ class Session:
                 if len(self.buffer) > SCROLLBACK:
                     del self.buffer[:len(self.buffer) - SCROLLBACK]
                 text = self._decoder.decode(data)
-                if text and self.conn is not None:
-                    self.conn.send_json({"t": "out", "id": self.id, "d": text})
-        self.exited = True
-        if self.conn is not None:
-            self.conn.send_json({"t": "exit", "id": self.id})
+                if text:
+                    msg = {"t": "out", "id": self.id, "d": text}
+                    for conn in self.conns:
+                        conn.send_json(msg)
+        # Pod zámkem spolu s attach(): každé okno dostane „exit" právě jednou.
+        with self._lock:
+            self.exited = True
+            conns = list(self.conns)
+        for conn in conns:
+            conn.send_json({"t": "exit", "id": self.id})
 
     def attach(self, conn):
-        """Point the session at a (new) page and replay what it missed."""
+        """Add a page to the viewers and replay what it missed.
+
+        The replay goes only to that page — the others already show it."""
         with self._lock:
-            self.conn = conn
+            self.conns.add(conn)
             backlog = bytes(self.buffer)
             if backlog:
                 # Decoded separately: the live decoder carries partial-character
                 # state for the stream and replay must not disturb it.
                 conn.send_json({"t": "out", "id": self.id,
                                 "d": backlog.decode("utf-8", "replace")})
-        if self.exited:
+            exited = self.exited
+        if exited:
             conn.send_json({"t": "exit", "id": self.id})
 
+    def detach(self, conn):
+        """The page went away. If it held the pty size, another page takes it."""
+        with self._lock:
+            self.conns.discard(conn)
+            self.sizes.pop(conn, None)
+            if self.driver is conn:
+                # Převezme ho okno, které svůj rozměr hlásilo naposledy.
+                self.driver = next(reversed(self.sizes), None)
+                if self.driver is not None:
+                    self._apply(self.sizes[self.driver])
+
+    def resize(self, conn, cols, rows):
+        """Remember the page's terminal size; the pty follows only the driver."""
+        with self._lock:
+            self.sizes.pop(conn, None)       # na konec: „hlásil naposledy"
+            self.sizes[conn] = (cols, rows)
+            if self.driver is None:
+                self.driver = conn
+            if self.driver is conn:
+                self._apply((cols, rows))
+
+    def drive(self, conn):
+        """The page is in use now (typing, focus) — the pty takes its size.
+
+        Bez toho si okna rozměr přetahují: každé ho posílá při každém přepočtu
+        a Claude Code se pak v tom druhém vykreslí na cizí šířku."""
+        if self.driver is conn:              # při psaní skoro vždycky
+            return
+        with self._lock:
+            size = self.sizes.get(conn)
+            if size is None:
+                return
+            self.driver = conn
+            self._apply(size)
+
+    def _apply(self, size):
+        # Pod zámkem. Stejný rozměr znovu neposílat: ConPTY na Windows při
+        # každém resize překreslí celou obrazovku.
+        if size != self.size:
+            self.size = size
+            self.pty.resize(*size)
+
     def close(self):
-        self.conn = None
+        with self._lock:
+            self.conns.clear()
+            self.sizes.clear()
+            self.driver = None
         try:
             self.pty.close()
         except Exception:
@@ -245,8 +310,10 @@ class Hub:
             self.close(sid, autosave=False)
         core.autosave_tabs_closed(sids)      # jeden proces na všechny taby
 
-    def broadcast(self, message):
+    def broadcast(self, message, skip=None):
         for conn in list(self.conns):
+            if conn is skip:
+                continue
             try:
                 conn.send_json(message)
             except Exception:
@@ -785,9 +852,8 @@ class Handler(BaseHTTPRequestHandler):
             HUB.conns.discard(conn)
             if HUB.clients <= 0:
                 HUB.last_empty_at = time.time()
-            for session in HUB.sessions.values():
-                if session.conn is conn:
-                    session.conn = None
+            for session in list(HUB.sessions.values()):
+                session.detach(conn)
             conn.close()
 
     def _ws_loop(self, conn):
@@ -845,17 +911,27 @@ class Handler(BaseHTTPRequestHandler):
             core.log(f"tab otevřen: {session.kind} {session.path or '~'}"
                      + (f" [{session.agent}]" if session.agent else ""))
             conn.send_json({"t": "opened", "ref": msg.get("ref"), **session.info()})
+            # Rozměr drží okno, které tab otevřelo — zatím ho nikdo jiný nevidí.
+            session.resize(conn, int(msg.get("cols", 80)), int(msg.get("rows", 24)))
             session.attach(conn)
+            # Tentýž hub může mít otevřený i jiné okno (appka + prohlížeč).
+            HUB.broadcast({"t": "tab-opened", **session.info()}, skip=conn)
         elif kind == "attach" and session:
             session.attach(conn)
         elif kind == "in" and session:
+            session.drive(conn)
             session.pty.write(msg.get("d", "").encode("utf-8"))
+        elif kind == "focus" and session:
+            session.drive(conn)
         elif kind == "resize" and session:
-            session.pty.resize(int(msg.get("cols", 80)), int(msg.get("rows", 24)))
+            session.resize(conn, int(msg.get("cols", 80)), int(msg.get("rows", 24)))
         elif kind == "rename" and session:
             session.title = str(msg.get("title", session.title))[:60]
-        elif kind == "close":
+            HUB.broadcast({"t": "tab-renamed", "id": sid, "title": session.title},
+                          skip=conn)
+        elif kind == "close" and session:
             HUB.close(sid)
+            HUB.broadcast({"t": "tab-closed", "id": sid}, skip=conn)
 
 
 def listdir(path):

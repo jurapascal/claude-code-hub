@@ -816,7 +816,7 @@ function openWith(agentId, {path, title}) {
   return openTab({kind: 'project', path, title, agent: agentId});
 }
 
-function createTab({kind, path, title, id, agent, model}) {
+function createTab({kind, path, title, id, agent, model, background}) {
   const ref = ++refSeq;
   const pane = document.createElement('div');
   pane.className = 'pane';
@@ -930,7 +930,7 @@ function createTab({kind, path, title, id, agent, model}) {
   paintAgent(tab);   // až teď — dřív tab své tlačítko ještě nemá
 
   TABS.push(tab);
-  activate(tab);
+  if (!background || !ACTIVE) activate(tab);
   return tab;
 }
 
@@ -969,6 +969,7 @@ function activate(tab) {
   $('actionbar').hidden = !showsActions(tab);
   if (tab) {
     refit(tab);
+    claimSize(tab);
     tab.term.focus();
     // Když je vidět bublina, píše se do ní — fokus patří jí.
     if (tab.composer) tab.composer.focus();
@@ -987,6 +988,13 @@ function refit(tab) {
   tab.sentCols = tab.term.cols;
   tab.sentRows = tab.term.rows;
   send({t: 'resize', id: tab.id, cols: tab.sentCols, rows: tab.sentRows});
+}
+
+/* Tohle okno se teď používá — pty ať má jeho rozměr. Okno na pozadí si taby
+ * aktivuje taky (po znovupřipojení), a to rozměr brát nesmí: přetahovalo by ho
+ * tomu, kdo zrovna pracuje jinde. Psaní si rozměr bere samo na serveru. */
+function claimSize(tab) {
+  if (tab && tab.id && document.hasFocus()) send({t: 'focus', id: tab.id});
 }
 
 /* Potvrzení „Ano / Ne" jako slib. Vrací true, když člověk klikl na Ano.
@@ -1048,8 +1056,9 @@ function escapeHtml(text) {
   return d.innerHTML;
 }
 
-function closeTab(tab) {
-  if (tab.id) send({t: 'close', id: tab.id});
+/* `remote` = zavřelo ho jiné okno: server už o tom ví, tady se jen uklidí. */
+function closeTab(tab, {remote = false} = {}) {
+  if (tab.id && !remote) send({t: 'close', id: tab.id});
   if (tab.releaseIME) tab.releaseIME();
   if (tab.releaseClipboard) tab.releaseClipboard();
   if (tab.composer) tab.composer.release();
@@ -1085,6 +1094,13 @@ function startRename(tab) {
     ev.stopPropagation();
   };
   input.onclick = (ev) => ev.stopPropagation();
+}
+
+/* Název změněný v jiném okně. Kdo ho tu zrovna přepisuje, tomu se nepřepíše. */
+function setTitle(tab, name) {
+  tab.title = name;
+  const holder = tab.el.querySelector('.tab-title');
+  if (!holder.querySelector('input')) holder.textContent = name;
 }
 
 let dragged = null;
@@ -1369,6 +1385,9 @@ function connect() {
   WS.onclose = () => setTimeout(connect, 1000);
 }
 
+// Přepnutí do tohohle okna = pracuje se tady, rozměr terminálu patří jemu.
+window.addEventListener('focus', () => claimSize(ACTIVE));
+
 function handle(msg) {
   if (msg.t === 'out') {
     const tab = TABS.find(t => t.id === msg.id);
@@ -1396,6 +1415,20 @@ function handle(msg) {
   } else if (msg.t === 'exit') {
     const tab = TABS.find(t => t.id === msg.id);
     if (tab) { tab.exited = true; tab.el.classList.add('exited'); }
+  } else if (msg.t === 'tab-opened') {
+    // Tab z jiného okna téhož hubu (appka i prohlížeč naráz). Přidá se na
+    // pozadí — přepnout na něj by tomu, kdo tu zrovna pracuje, sebralo tab.
+    if (!TABS.some(t => t.id === msg.id)) {
+      attachTab(createTab({kind: msg.kind, path: msg.path, title: msg.title,
+                           id: msg.id, agent: msg.agent, model: msg.model,
+                           background: true}));
+    }
+  } else if (msg.t === 'tab-closed') {
+    const tab = TABS.find(t => t.id === msg.id);
+    if (tab) closeTab(tab, {remote: true});
+  } else if (msg.t === 'tab-renamed') {
+    const tab = TABS.find(t => t.id === msg.id);
+    if (tab) setTitle(tab, msg.title);
   } else if (msg.t === 'sessions') {
     restore(msg.list);
   } else if (msg.t === 'memory-saved') {
@@ -1420,11 +1453,19 @@ function restore(list) {
       tab = createTab({kind: info.kind, path: info.path, title: info.title,
                        id: info.id, agent: info.agent, model: info.model});
     }
-    tab.term.reset();          // the replay below is the full scrollback
-    send({t: 'attach', id: info.id});
-    refit(tab);
+    attachTab(tab);
   }
   if (TABS.length) activate(TABS[TABS.length - 1]);
+}
+
+/* Připojit tab k session na serveru. Server pošle celý výpis znovu, takže se
+ * terminál nejdřív vyčistí. Rozměr se pošle i beze změny: server si ho drží
+ * pro každé spojení zvlášť a nové spojení ho ještě nezná. */
+function attachTab(tab) {
+  tab.term.reset();          // the replay below is the full scrollback
+  send({t: 'attach', id: tab.id});
+  tab.sentCols = tab.sentRows = null;
+  refit(tab);
 }
 
 let toastTimer = null;

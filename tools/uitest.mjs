@@ -12,13 +12,14 @@
  * Použití:
  *     python3 claude-hub.py --no-browser        # v jiném okně, vypíše URL
  *     node tools/uitest.mjs <url> [profil…]
+ *
+ * Playwright si test najde sám (viz najdiPlaywright). Jinou kopii mu jde
+ * vnutit přes PLAYWRIGHT_MODULE=<složka balíčku playwright>.
  */
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { chromium, firefox, webkit, devices }
-  from '/home/pascaljura/.npm/_npx/9833c18b2d85bc59/node_modules/playwright/index.mjs';
-
-const ENGINES = { chromium, firefox, webkit };
+import { fileURLToPath, pathToFileURL } from 'url';
 
 /* Profily: jádro a rozměry tak, jak je má ten který systém. Windows se testuje
  * se škálováním 1.25 — na noteboocích je to výchozí a právě při něm vycházejí
@@ -28,13 +29,75 @@ const PROFILY = {
   linux:   { engine: 'chromium', ctx: { viewport: { width: 1920, height: 1000 } } },
   firefox: { engine: 'firefox',  ctx: { viewport: { width: 1600, height: 900 } } },
   mac:     { engine: 'webkit',   ctx: { viewport: { width: 1440, height: 860 }, deviceScaleFactor: 2 } },
-  android: { engine: 'chromium', ctx: { ...devices['Pixel 7'] }, touch: true },
-  ios:     { engine: 'webkit',   ctx: { ...devices['iPhone 13'] }, touch: true },
+  // Zařízení jménem: seznam `devices` je v Playwrightu, a ten se načítá až níž.
+  android: { engine: 'chromium', device: 'Pixel 7', touch: true },
+  ios:     { engine: 'webkit',   device: 'iPhone 13', touch: true },
 };
 
 const [, , url, ...vybrane] = process.argv;
 if (!url) { console.error('chybí URL hubu'); process.exit(2); }
 const profily = vybrane.length ? vybrane : Object.keys(PROFILY);
+
+/* Kde vzít Playwright. Pevná cesta do cache npx se rozbila sama od sebe: npx
+ * si stáhne novější verzi (Playwright MCP to dělá při startu) a ta chce jiné
+ * revize prohlížečů, než jsou stažené — test pak padá na „Executable doesn't
+ * exist". Bere se proto první kopie, ke které prohlížeče pro vybrané profily
+ * na disku opravdu jsou: PLAYWRIGHT_MODULE, playwright vedle repa, pak cache
+ * npx od nejnovější. */
+function najdiPlaywright(engines) {
+  const home = os.homedir();
+  const win = process.platform === 'win32';
+  const local = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+  const prohlizece = process.env.PLAYWRIGHT_BROWSERS_PATH ||
+    (win ? path.join(local, 'ms-playwright')
+      : process.platform === 'darwin' ? path.join(home, 'Library', 'Caches', 'ms-playwright')
+        : path.join(home, '.cache', 'ms-playwright'));
+  const npx = path.join(process.env.npm_config_cache ||
+    (win ? path.join(local, 'npm-cache') : path.join(home, '.npm')), '_npx');
+
+  const stari = (d) => fs.statSync(path.join(d, 'package.json')).mtimeMs;
+  const zNpx = fs.existsSync(npx)
+    ? fs.readdirSync(npx).map((d) => path.join(npx, d, 'node_modules', 'playwright'))
+      .filter((d) => fs.existsSync(path.join(d, 'package.json')))
+      .sort((a, b) => stari(b) - stari(a))
+    : [];
+  const repo = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+  const kopie = [process.env.PLAYWRIGHT_MODULE, path.join(repo, 'node_modules', 'playwright'), ...zNpx]
+    .filter((d) => d && fs.existsSync(path.join(d, 'index.mjs')));
+
+  // Které prohlížeče dané kopii chybí. Revize čte z browsers.json jejího
+  // playwright-core; headless Chromium je od 1.49 samostatný „headless shell".
+  const chybi = (d) => {
+    const core = [path.join(d, 'node_modules', 'playwright-core'), path.join(d, '..', 'playwright-core')]
+      .find((c) => fs.existsSync(path.join(c, 'browsers.json')));
+    if (!core) return engines;
+    const spec = JSON.parse(fs.readFileSync(path.join(core, 'browsers.json'), 'utf8')).browsers;
+    return engines.filter((engine) => {
+      const b = spec.find((x) => x.name === (engine === 'chromium' ? 'chromium-headless-shell' : engine)) ||
+                spec.find((x) => x.name === engine);
+      const revize = b ? [b.revision, ...Object.values(b.revisionOverrides || {})] : [];
+      return !revize.some((r) => fs.existsSync(
+        path.join(prohlizece, `${b.name.replace(/-/g, '_')}-${r}`, 'INSTALLATION_COMPLETE')));
+    });
+  };
+
+  const vhodna = kopie.find((d) => chybi(d).length === 0);
+  if (!vhodna) {
+    console.error(kopie.length
+      ? `Playwright na disku je, ale chybí mu prohlížeče (${chybi(kopie[0]).join(', ')}). Stáhni je:\n` +
+        `    npx playwright install ${engines.join(' ')}`
+      : `Playwright není nainstalovaný. Stáhni ho i s prohlížeči:\n` +
+        `    npx playwright install ${engines.join(' ')}`);
+    process.exit(2);
+  }
+  return vhodna;
+}
+
+const engines = [...new Set(profily.map((j) => PROFILY[j] && PROFILY[j].engine).filter(Boolean))];
+const pw = najdiPlaywright(engines);
+const { chromium, firefox, webkit, devices } = await import(pathToFileURL(path.join(pw, 'index.mjs')).href);
+const ENGINES = { chromium, firefox, webkit };
+console.log(`Playwright ${JSON.parse(fs.readFileSync(path.join(pw, 'package.json'), 'utf8')).version} (${pw})`);
 
 /* Hlášky, které nejsou chyba, i když je prohlížeč hlásí jako chybu.
  * Safari nezná ve <meta viewport> klíč interactive-widget a řekne to nahlas.
@@ -53,7 +116,8 @@ for (const jmeno of profily) {
   const engine = ENGINES[p.engine];
   const browser = await engine.launch(
     p.engine === 'chromium' ? { args: ['--no-sandbox'] } : {});
-  const ctx = await browser.newContext({ colorScheme: 'dark', ...p.ctx });
+  const ctx = await browser.newContext({ colorScheme: 'dark',
+    ...(p.device ? devices[p.device] : {}), ...p.ctx });
   const page = await ctx.newPage();
   const chyby = [];
   page.on('pageerror', (e) => chyby.push(String(e).slice(0, 120)));
