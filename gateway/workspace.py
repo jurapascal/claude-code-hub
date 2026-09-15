@@ -28,6 +28,7 @@ import threading
 import time
 
 from . import config
+from . import shared
 from .isolation import SCOPE_PREFIX
 
 HUB_HOME = os.environ.get("HUB_GW_HOME", "/home/hub")
@@ -452,6 +453,10 @@ def _hub_config(user, home):
                          "role": user.get("role", "user")},
         # Společný firemní Obsidian (jen ke čtení) — hub ho ukáže v panelu.
         "company_vault": config.COMPANY_VAULT,
+        # Sdílené Obsidiany, kde je členem (svázané při startu), a kdo je
+        # v týmu — z toho vybírá tools/sdilene.py.
+        "shared_vaults": shared.vaults_for(user),
+        "people": shared.people(),
     }
 
 
@@ -502,7 +507,9 @@ def ensure(user):
     try:
         ensure_company_vault()
         _company_claude_md(claude)
-        _company_settings(claude)
+        mine = shared.vaults_for(user)
+        _company_settings(claude, [v["path"] for v in mine])
+        _shared_claude_md(claude, mine)
     except OSError:
         pass
 
@@ -597,9 +604,10 @@ def _company_claude_md(claude_dir):
         os.replace(tmp, path)
 
 
-def _company_settings(claude_dir):
-    """Firemní trezor mezi složkami, které Claude Code smí číst bez ptaní
-    (permissions.additionalDirectories). Nečitelné nastavení se nepřepisuje."""
+def _company_settings(claude_dir, extra=()):
+    """Firemní trezor (a sdílené Obsidiany z `extra`) mezi složkami, které Claude
+    Code smí číst bez ptaní (permissions.additionalDirectories). Nečitelné
+    nastavení se nepřepisuje."""
     path = os.path.join(claude_dir, "settings.json")
     try:
         with open(path, encoding="utf-8-sig") as fh:
@@ -614,9 +622,12 @@ def _company_settings(claude_dir):
     if not isinstance(perms, dict):
         return
     dirs = perms.get("additionalDirectories", [])
-    if not isinstance(dirs, list) or config.COMPANY_VAULT in dirs:
+    if not isinstance(dirs, list):
         return
-    perms["additionalDirectories"] = dirs + [config.COMPANY_VAULT]
+    missing = [d for d in [config.COMPANY_VAULT, *extra] if d not in dirs]
+    if not missing:
+        return
+    perms["additionalDirectories"] = dirs + missing
     data["permissions"] = perms
     tmp = path + ".hub-tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
@@ -648,28 +659,10 @@ def publish_company(user, pid, overwrite=False):
     podvržený odkaz kamkoli na serveru. Čte se proto jen obyčejný soubor přímo
     na své cestě, bez následování odkazů.
     """
-    pid = str(pid or "")
-    if not PENDING_ID.fullmatch(pid):
-        raise ValueError("Neplatný návrh.")
-    home = os.path.realpath(home_for(user))
-    src = os.path.join(home, PENDING, pid + ".json")
-    gone = ValueError("Návrh už není — nejspíš byl nahraný nebo zahozený.")
-    if os.path.realpath(src) != src:
-        raise gone
-    try:
-        fd = os.open(src, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    except OSError:
-        raise gone from None
-    with os.fdopen(fd, "rb") as fh:
-        raw = fh.read(MAX_PROPOSAL + 1)
-    if len(raw) > MAX_PROPOSAL:
-        raise ValueError("Návrh je moc velký.")
-    try:
-        data = json.loads(raw.decode("utf-8"))
-    except ValueError:
-        raise ValueError("Návrh je poškozený.") from None
-    if not isinstance(data, dict) or not isinstance(data.get("text"), str):
+    data = _read_proposal(user, pid)
+    if not isinstance(data.get("text"), str):
         raise ValueError("Návrh je poškozený.")
+    src = os.path.join(os.path.realpath(home_for(user)), PENDING, str(pid) + ".json")
     rel = company_rel(data.get("cil"))
     vault = os.path.realpath(ensure_company_vault())
     target = os.path.join(vault, *rel.split("/"))
@@ -697,6 +690,125 @@ def publish_company(user, pid, overwrite=False):
     return {"ok": True, "path": rel, "overwritten": existed}
 
 
+# ── sdílené Obsidiany: pokyny pro Clauda a provedení návrhů ──────────────────
+SHARED_MARK = ("<!-- claude-hub:sdilene -->", "<!-- /claude-hub:sdilene -->")
+
+
+def _shared_block(mine):
+    tool = os.path.join(REPO_DIR, "tools", "sdilene.py")
+    if mine:
+        rows = "\n".join(
+            f"- **{v['name']}** (`{v['slug']}`, `{v['path']}`) — členové: "
+            + ", ".join(m["name"] or m["email"] for m in v["members"])
+            + (" · založil jsi ho ty" if v["is_owner"] else f" · založil {v['owner']}")
+            for v in mine)
+        have = "Tenhle uživatel je členem těchto (jen ke čtení — čti a hledej v nich):\n\n" + rows
+    else:
+        have = "Tenhle uživatel zatím není členem žádného."
+    return f"""{SHARED_MARK[0]}
+## Sdílené Obsidiany
+
+Kromě osobního a firemního Obsidianu jsou sdílené Obsidiany jen pro vybrané lidi.
+{have}
+
+Všechno níže jen na požádání uživatele a vždy se **nejdřív zeptej v chatu**:
+u založení na název a pro které lidi (nabídni lidi z týmu:
+`python3 {tool} lide`), u zápisu do kterého sdíleného Obsidianu (vyjmenuj ty
+výše), co a kam — a řekni, kdo to uvidí. Přepínač `--potvrzeno` přidej až po
+výslovném „ano“. Pak mu hub ukáže kartu k potvrzení; sám ji potvrdit nemůžeš.
+
+- Založit: `python3 {tool} zalozit "Marketing" --lide petr@firma.cz,jana@firma.cz --potvrzeno`
+- Uložit poznámku: `python3 {tool} navrh marketing "kampane/zari.md" poznamka.md --potvrzeno`
+  (obsah jde i na standardní vstup: `-`)
+- Změnit členy (jen zakladatel): `python3 {tool} clenove marketing --pridat a@firma.cz --odebrat b@firma.cz --potvrzeno`
+- Odejít (člen): `python3 {tool} odejit marketing --potvrzeno`
+- Smazat (zakladatel): `python3 {tool} smazat marketing --potvrzeno`
+
+Nový sdílený Obsidian i změna členů se v prostoru projeví až po jeho restartu —
+hub restart nabídne v panelu Sdílené Obsidiany.
+{SHARED_MARK[1]}
+"""
+
+
+def _shared_claude_md(claude_dir, mine):
+    """Pokyny ke sdíleným Obsidianům v ~/.claude/CLAUDE.md — mezi značkami se
+    přepíšou, zbytek souboru zůstane."""
+    path = os.path.join(claude_dir, "CLAUDE.md")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except FileNotFoundError:
+        text = ""
+    except (OSError, ValueError):
+        return
+    block = _shared_block(mine)
+    start, end = text.find(SHARED_MARK[0]), text.find(SHARED_MARK[1])
+    if start >= 0 and end > start:
+        new = text[:start] + block.rstrip("\n") + text[end + len(SHARED_MARK[1]):]
+    else:
+        new = (text.rstrip("\n") + "\n\n" if text.strip() else "") + block
+    if new != text:
+        tmp = path + ".hub-tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(new)
+        os.replace(tmp, path)
+
+
+def apply_proposal(user, pid, overwrite=False):
+    """Provede návrh z karty v hubu: firemní Obsidian, nebo sdílený (druh
+    sdilene-*). Oprávnění ověřuje shared.py podle registru, ne podle návrhu."""
+    data = _read_proposal(user, pid)
+    kind = data.get("druh") or "firma"
+    if kind == "firma":
+        return publish_company(user, pid, overwrite)
+    if kind == "sdilene-zapis":
+        result = shared.write_note(user, data.get("vault"), data.get("cil"), data.get("text"), overwrite)
+    elif kind == "sdilene-zalozit":
+        result = shared.create(user, data.get("nazev"), data.get("emaily"))
+    elif kind == "sdilene-clenove":
+        result = shared.change_members(user, data.get("vault"), data.get("emaily_pridat"),
+                                       data.get("emaily_odebrat"))
+    elif kind == "sdilene-odejit":
+        result = shared.leave(user, data.get("vault"))
+    elif kind == "sdilene-smazat":
+        result = shared.delete(user, data.get("vault"))
+    else:
+        raise ValueError("Neznámý návrh.")
+    if result.get("ok"):
+        try:
+            os.remove(os.path.join(os.path.realpath(home_for(user)), PENDING, str(pid) + ".json"))
+        except OSError:
+            pass
+    return result
+
+
+def _read_proposal(user, pid):
+    """Návrh z domova uživatele — bez následování odkazů (domov patří session)."""
+    pid = str(pid or "")
+    if not PENDING_ID.fullmatch(pid):
+        raise ValueError("Neplatný návrh.")
+    home = os.path.realpath(home_for(user))
+    src = os.path.join(home, PENDING, pid + ".json")
+    gone = ValueError("Návrh už není — nejspíš byl nahraný nebo zahozený.")
+    if os.path.realpath(src) != src:
+        raise gone
+    try:
+        fd = os.open(src, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        raise gone from None
+    with os.fdopen(fd, "rb") as fh:
+        raw = fh.read(MAX_PROPOSAL + 1)
+    if len(raw) > MAX_PROPOSAL:
+        raise ValueError("Návrh je moc velký.")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        raise ValueError("Návrh je poškozený.") from None
+    if not isinstance(data, dict):
+        raise ValueError("Návrh je poškozený.")
+    return data
+
+
 def session_spec(user, isolation, mode):
     """Co předat pty backendu, aby se spustila izolovaná instance hubu.
 
@@ -711,7 +823,7 @@ def session_spec(user, isolation, mode):
     # REPO_DIR ke čtení (zdroj hubu). Nic víc: klíč API přijde v prostředí
     # (session_env), žádný soubor mimo domov se do sandboxu nepřivazuje.
     # Firemní Obsidian taky jen ke čtení: zapisuje do něj brána po potvrzení.
-    extra_ro = [REPO_DIR, config.COMPANY_VAULT]
+    extra_ro = [REPO_DIR, config.COMPANY_VAULT] + [v["path"] for v in shared.vaults_for(user)]
     unit = unit_name(user)
     # Stará cesta u<id> vede v sandboxu na nový domov: cache (uv, npx) mají
     # absolutní cesty zapečené uvnitř a přepisovat je by bylo křehké.

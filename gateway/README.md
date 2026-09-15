@@ -123,6 +123,30 @@ Vedle osobního trezoru v každém prostoru je jeden společný trezor pro všec
   a cílová cesta nesmí ven z trezoru.
 - Kdo co nahrál: `/home/hub/firma/nahrano.jsonl` (mimo trezor).
 
+## Sdílené Obsidiany
+
+Trezory jen pro vybrané lidi: `/home/hub/sdilene/<zkratka>` (`HUB_GW_SHARED_DIR`),
+registr kdo je založil a kdo v nich je `/home/hub/sdilene/.sdilene.json`
+(podle id účtů), změny v `/home/hub/sdilene/zmeny.jsonl`.
+
+- **Kdo co může:** založit kdokoli (s aspoň jedním dalším člověkem), zapisovat
+  členové, měnit členy a mazat jen zakladatel nebo správce, členové můžou
+  odejít. Smazaný trezor se přesune stranou do `_smazany-<zkratka>-<čas>`.
+- **Přes Clauda se dvojím potvrzením**, stejně jako firemní: pokyny v bloku
+  `<!-- claude-hub:sdilene -->` v `~/.claude/CLAUDE.md`, nástroj
+  `python3 tools/sdilene.py` (`lide`, `seznam`, `zalozit`, `navrh`, `clenove`,
+  `odejit`, `smazat`) bez `--potvrzeno` nic nevytvoří. Návrh leží
+  v `~/.firma/ke-schvaleni/` s polem `druh`, hub ukáže kartu a potvrzení jde
+  přes `/gw/firma/publish` — brána znovu ověří členství a oprávnění
+  (`workspace.apply_proposal` → `shared.py`).
+- **Sandbox:** prostor má svázané jen ke čtení ty sdílené trezory, jejichž je
+  uživatel členem při startu. Nový trezor nebo nový člen se načte po restartu
+  prostoru — hub to ukáže v sekci **Sdílené Obsidiany** (`/gw/sdilene`)
+  a restartuje po dotazu (`POST /gw/restart`). Odebranému členovi brána
+  nečinný prostor zastaví hned; do běžícího už trezor nepřibude.
+- `claude-hub-admin sdilene` vypíše trezory, zakladatele a členy. Smazání
+  účtu ho ze všech trezorů odebere.
+
 ## Běžící prostory
 
 Každý prostor běží ve vlastní systemd scope pojmenované podle e-mailu —

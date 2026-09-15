@@ -1113,6 +1113,21 @@ body { display: flex; flex-direction: column; }
 }
 .firma-preview a { pointer-events: none; }
 #firma-section { margin-top: 10px; }
+.firma-people { font-size: 13px; color: var(--fg); white-space: pre-line; line-height: 1.5; }
+.firma-people.danger { color: var(--amber); }
+/* Sdílené Obsidiany v panelu. */
+#shared-section { margin-top: 10px; }
+.shared-item {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: left; cursor: pointer;
+  margin: 1px 8px; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-card); color: inherit; font: inherit;
+}
+.shared-item:hover { background: var(--card-hover); }
+.shared-name { color: var(--fg-bright); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shared-meta { color: var(--dim); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shared-item.pending { border-style: dashed; }
+.shared-item.pending .shared-meta { color: var(--amber); }
+.shared-hint { line-height: 1.5; }
 
 /* Telefon: seznam nahoře (svisle, ne řádek ikon jako v nastavení), poznámka pod ním. */
 @media (max-width: 720px) {

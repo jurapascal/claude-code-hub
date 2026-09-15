@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from hub import __version__, qr
 
-from . import config, isolation, totp, workspace
+from . import config, isolation, shared, totp, workspace
 from .accounts import Accounts
 
 HTML = "text/html; charset=utf-8"
@@ -203,6 +203,8 @@ class HubProc:
         # Kolik prohlížečů je k prostoru právě připojených (websocket). Prostor
         # s připojením se kvůli místu neuspává — shodil by rozdělanou práci.
         self.conns = 0
+        # Sdílené Obsidiany svázané při startu — nové se ukážou až po restartu.
+        self.shared = []
         self._checked = 0.0
         self._alive = False
         self._lock = threading.Lock()
@@ -218,6 +220,7 @@ class HubProc:
             # Domov podle e-mailu; starý u<id> se přejmenuje tady, kdy prostor
             # prokazatelně neběží.
             workspace.migrate_home(self.user)
+        self.shared = [v["slug"] for v in shared.vaults_for(self.user)]
         argv, home, unit = workspace.session_spec(self.user, isolation, self.mode)
         self.home = home
         self.unit = unit
@@ -379,6 +382,26 @@ class HubManager:
             # mimo zámek, ať mezitím nečekají požadavky ostatních.
             for proc in to_stop:
                 proc.stop()
+
+    def restart(self, user):
+        """Zastaví prostor uživatele; další požadavek ho spustí znovu — i s nově
+        svázanými sdílenými Obsidiany. Na přání z hubu."""
+        with self._lock:
+            proc = self.procs.pop(user["id"], None)
+        if proc:
+            proc.stop()
+        return bool(proc)
+
+    def stop_idle(self, uid):
+        """Zastaví prostor, ke kterému není připojený žádný prohlížeč. Po odebrání
+        ze sdíleného Obsidianu, ať přístup nevydrží do dalšího restartu."""
+        with self._lock:
+            proc = self.procs.get(uid)
+            if not proc or proc.conns:
+                return False
+            self.procs.pop(uid, None)
+        proc.stop()
+        return True
 
     def stop_all(self):
         with self._lock:
@@ -624,6 +647,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._gw_password(method, user)
             if route == "/gw/2fa/recovery":
                 return self._gw_recovery(method, user)
+            if route == "/gw/sdilene":
+                return self._gw_shared(user)
+            if route == "/gw/restart":
+                return self._gw_restart(method, user)
 
             # Přihlášený → všechno ostatní jde do jeho instance hubu.
             return self._proxy(method, user)
@@ -651,13 +678,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "Nahrát jde jen tlačítkem v hubu."}, 403)
         form = self._read_form()
         try:
-            result = workspace.publish_company(user, form.get("id", ""),
-                                               form.get("prepsat") is True)
+            result = workspace.apply_proposal(user, form.get("id", ""),
+                                              form.get("prepsat") is True)
         except ValueError as exc:
             return self._json({"error": str(exc)}, 400)
         except OSError as exc:
             _errlog("firma publish", exc)
             return self._json({"error": f"Uložit se nepodařilo: {exc}"}, 500)
+        # Odebraní ze sdíleného Obsidianu: kdo zrovna nepracuje, tomu se prostor
+        # zastaví hned (přístup zmizí); ostatním při dalším startu.
+        if self.hubs:
+            for uid in result.get("revoked") or []:
+                self.hubs.stop_idle(uid)
+        result = {k: v for k, v in result.items() if k not in ("affected", "revoked")}
         return self._json(result)
 
     # ---- přihlášení ----
@@ -828,6 +861,28 @@ class Handler(BaseHTTPRequestHandler):
             _failed(keys)
             return self._json({"error": "Kód z aplikace nesedí."}, 400)
         return self._json({"recovery": self.accounts.new_recovery(user["id"])})
+
+    def _gw_shared(self, user):
+        """Sdílené Obsidiany uživatele živě z registru. `needs_restart` = je
+        členem, ale běžící prostor ho ještě nemá svázaný."""
+        proc = self.hubs.procs.get(user["id"]) if self.hubs else None
+        bound = set(proc.shared) if proc and proc.alive() else None
+        vaults = shared.vaults_for(user)
+        for v in vaults:
+            v.pop("path", None)
+            v["needs_restart"] = bound is not None and v["slug"] not in bound
+        gone = sorted(bound - {v["slug"] for v in vaults}) if bound else []
+        return self._json({"vaults": vaults, "people": shared.people(), "gone": gone})
+
+    def _gw_restart(self, method, user):
+        """Restart vlastního prostoru z hubu (nové sdílené Obsidiany)."""
+        if method != "POST":
+            return self._json({"error": "Jen POST."}, 405)
+        if not self._account_post_ok():
+            return self._json({"error": "Restart jde jen z hubu."}, 403)
+        if self.hubs:
+            self.hubs.restart(user)
+        return self._json({"ok": True})
 
     # ---- rozhraní pro hub na počítači ----
     def _bearer_token(self):
@@ -1109,6 +1164,7 @@ def serve():
     # s Claude Code drží stovky MB.
     stop_orphans()
     accounts = Accounts(config.DB_PATH, require_mfa=config.REQUIRE_2FA)
+    shared.ACCOUNTS = accounts
     hubs = HubManager(config.ISOLATION, config.MAX_SESSIONS, config.IDLE_SLEEP)
     # assume_https zapneme, když je za bránou nginx s TLS (řekne to env).
     assume_https = os.environ.get("HUB_GW_ASSUME_HTTPS", "") == "1"

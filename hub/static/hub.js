@@ -412,18 +412,20 @@ function vaultPreview() {
   return !!window.HubVault && (onServer() || !STATE.obsidian);
 }
 
-function openVault(path, vault) {
+function openVault(path, vault, title) {
   const firma = vault === 'firma';
+  const shared = /^sdilene:/.test(vault || '');
   HubVault.open({
     api,
     path: path || '',
-    vault: firma ? 'firma' : '',
-    title: firma ? 'Firemní Obsidian' : '',
+    vault: firma || shared ? vault : '',
+    title: firma ? 'Firemní Obsidian' : shared ? 'Sdílený Obsidian — ' + (title || vault.slice(8)) : '',
     fileUrl: (p) => `/api/vault-file?path=${encodeURIComponent(p)}` +
-      `${firma ? '&vault=firma' : ''}&t=${encodeURIComponent(TOKEN)}`,
+      (firma || shared ? '&vault=' + encodeURIComponent(vault) : '') +
+      `&t=${encodeURIComponent(TOKEN)}`,
     openLink,
     toast,
-    obsidian: !firma && !onServer() && !!STATE.obsidian,
+    obsidian: !firma && !shared && !onServer() && !!STATE.obsidian,
     openInObsidian: (p) => api('open-path', {kind: 'vault-note', file: p})
       .catch(() => toast('Obsidian se nepodařilo otevřít.')),
   });
@@ -442,10 +444,74 @@ function renderFirma() {
   $('firma-section').hidden = !on;
   if (!on) return;
   $('btn-firma').onclick = () => openVault('', 'firma');
+  renderShared();
   if (!firmaTimer) {
     firmaTimer = setInterval(checkFirma, 3000);
     checkFirma();
   }
+}
+
+/* ── sdílené Obsidiany ─────────────────────────────────────────────────────────
+   Trezory jen pro vybrané lidi (gateway/shared.py). Seznam je živý z brány —
+   co je nové, se do prostoru sváže až po restartu, a panel ho nabídne. */
+let sharedTimer = null;
+
+async function renderShared() {
+  const box = $('shared-section');
+  if (!onServer()) { box.hidden = true; return; }
+  if (!sharedTimer) {
+    sharedTimer = setInterval(() => { if (!document.hidden) renderShared(); }, 60000);
+  }
+  let data;
+  try {
+    const r = await fetch('/gw/sdilene', {credentials: 'same-origin'});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    data = await r.json();
+  } catch (err) {
+    box.hidden = true;                 // starší brána — sekce přijde s aktualizací
+    return;
+  }
+  box.hidden = false;
+  const list = $('shared-list');
+  list.textContent = '';
+  const vaults = data.vaults || [];
+  if (!vaults.length) {
+    const hint = document.createElement('div');
+    hint.className = 'empty shared-hint';
+    hint.textContent = 'Zatím žádný. Řekni Claudovi třeba „udělej sdílený Obsidian Marketing pro mě a Petra“.';
+    list.appendChild(hint);
+  }
+  for (const v of vaults) {
+    const item = document.createElement('button');
+    item.className = 'shared-item' + (v.needs_restart ? ' pending' : '');
+    item.dataset.slug = v.slug;
+    item.innerHTML = '<span class="shared-name"></span><span class="shared-meta"></span>';
+    item.querySelector('.shared-name').textContent = v.name;
+    const who = (v.members || []).map((m) => m.name || m.email).join(', ');
+    item.querySelector('.shared-meta').textContent = v.needs_restart ? 'načte se po restartu prostoru' : who;
+    item.title = 'Členové: ' + who + (v.owner ? '\nZaložil: ' + v.owner : '');
+    item.onclick = () => (v.needs_restart
+      ? restartSpace(`Sdílený Obsidian „${v.name}“ se do prostoru načte po restartu.`)
+      : openVault('', 'sdilene:' + v.slug, v.name));
+    list.appendChild(item);
+  }
+}
+
+async function restartSpace(why) {
+  if (!confirm(why + '\n\nRestartovat prostor teď? Otevřené taby se zavřou, ' +
+               'konverzace zůstanou v seznamu konverzací.')) return;
+  try {
+    const r = await fetch('/gw/restart', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-Hub-Account': '1'}, body: '{}',
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+  } catch (err) {
+    toast('Restart se nepovedl: ' + err.message);
+    return;
+  }
+  toast('Prostor se restartuje…');
+  setTimeout(() => location.reload(), 2500);
 }
 
 async function checkFirma() {
@@ -475,6 +541,7 @@ function showFirmaCard(p, total) {
       <div class="onb-body">
         <div class="firma-target"><span>Kam</span><code></code></div>
         <div class="firma-warn" hidden>Na téhle cestě už poznámka je — nahráním se přepíše.</div>
+        <div class="firma-people" hidden></div>
         <article class="vault-md firma-preview"></article>
       </div>
       <div class="onb-foot">
@@ -485,16 +552,50 @@ function showFirmaCard(p, total) {
       </div>
     </div>`;
   const $$ = (sel) => root.querySelector(sel);
+  // Druh návrhu: firemní Obsidian, nebo sdílený (zápis, založení, členové…).
+  const kind = p.druh || 'firma';
+  const writes = kind === 'firma' || kind === 'sdilene-zapis';
+  const where = p.nazev ? `„${p.nazev}“` : '';
+  const titles = {
+    'firma': 'Nahrát do firemního Obsidianu?',
+    'sdilene-zapis': `Nahrát do sdíleného Obsidianu ${where}?`,
+    'sdilene-zalozit': `Založit sdílený Obsidian ${where}?`,
+    'sdilene-clenove': `Změnit členy sdíleného Obsidianu ${where}?`,
+    'sdilene-odejit': `Odejít ze sdíleného Obsidianu ${where}?`,
+    'sdilene-smazat': `Smazat sdílený Obsidian ${where}?`,
+  };
+  const okLabels = {'sdilene-zalozit': 'Založit', 'sdilene-clenove': 'Změnit',
+                    'sdilene-odejit': 'Odejít', 'sdilene-smazat': 'Smazat'};
+  const names = (list) => (list || []).join(', ');
+  const details = {
+    'sdilene-zapis': p.lide && p.lide.length ? 'Uvidí: ' + names(p.lide) : '',
+    'sdilene-zalozit': 'Pro: ' + names(p.lide),
+    'sdilene-clenove': [p.pridat && p.pridat.length ? 'Přidat: ' + names(p.pridat) : '',
+                        p.odebrat && p.odebrat.length ? 'Odebrat: ' + names(p.odebrat) : '']
+      .filter(Boolean).join('\n'),
+    'sdilene-odejit': 'Přestaneš ho vidět; vrátit tě může jen ten, kdo ho založil.',
+    'sdilene-smazat': 'Zmizí všem členům' + (p.lide && p.lide.length ? ' (' + names(p.lide) + ')' : '') +
+      '. Soubory zůstanou na serveru stranou.',
+  };
+  $$('.onb-title').textContent = titles[kind] || 'Potvrdit návrh?';
   $$('.onb-sub').textContent = 'Claude to připravil v tomhle prostoru' +
-    (total > 1 ? ` · čeká ${total} návrhů` : '') + '. Nahraje se až po potvrzení.';
-  $$('.firma-target code').textContent = p.cil;
+    (total > 1 ? ` · čeká ${total} návrhů` : '') + '. Provede se až po potvrzení.';
+  $$('.firma-target').hidden = !writes;
+  $$('.firma-target code').textContent = p.cil || '';
+  const people = $$('.firma-people');
+  people.textContent = details[kind] || '';
+  people.hidden = !people.textContent;
+  people.classList.toggle('danger', kind === 'sdilene-smazat' || kind === 'sdilene-odejit');
   const paint = () => {
-    $$('.firma-warn').hidden = !p.prepise;
-    $$('.firma-ok').textContent = p.prepise ? 'Přepsat' : 'Nahrát';
+    $$('.firma-warn').hidden = !(writes && p.prepise);
+    $$('.firma-ok').textContent = writes ? (p.prepise ? 'Přepsat' : 'Nahrát') : (okLabels[kind] || 'Potvrdit');
   };
   paint();
-  $$('.firma-preview').innerHTML = HubVault.render(p.text,
-    {resolve: () => '', image: () => '', current: ''}).html;
+  $$('.firma-preview').hidden = !writes;
+  if (writes) {
+    $$('.firma-preview').innerHTML = HubVault.render(p.text || '',
+      {resolve: () => '', image: () => '', current: ''}).html;
+  }
   const buttons = [...root.querySelectorAll('button')];
   const busy = (on) => buttons.forEach((b) => { b.disabled = on; });
   const close = () => {
@@ -539,8 +640,9 @@ function showFirmaCard(p, total) {
       res = {error: err.message};
     }
     if (res.ok) {
-      toast(`Nahráno do firemního Obsidianu: ${res.path}`);
+      toast(res.message || `Nahráno do firemního Obsidianu: ${res.path}`);
       close();
+      if (kind !== 'firma') renderShared();
     } else if (res.exists) {
       // Mezitím tam poznámku nahrál někdo jiný — ať je vidět, že se přepíše.
       p.prepise = true;

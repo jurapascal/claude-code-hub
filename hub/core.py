@@ -581,10 +581,28 @@ def company_vault():
     return os.path.abspath(os.path.expanduser(path)) if path else ""
 
 
+def shared_state():
+    """Sdílené Obsidiany, které má prostor svázané (hub-config od brány)."""
+    out = []
+    for v in CONFIG.get("shared_vaults") or []:
+        if isinstance(v, dict) and v.get("slug") and v.get("path"):
+            out.append({"slug": v["slug"], "name": v.get("name") or v["slug"],
+                        "owner": v.get("owner", ""), "is_owner": bool(v.get("is_owner")),
+                        "members": v.get("members") or []})
+    return out
+
+
 def _vault_root(vault=""):
-    """Kořen trezoru: osobní (BRAIN), s `vault="firma"` firemní ('' když není)."""
+    """Kořen trezoru: osobní (BRAIN), `firma` = firemní, `sdilene:<zkratka>` =
+    sdílený Obsidian svázaný do prostoru ('' když takový není)."""
     if vault == "firma":
         return company_vault()
+    if str(vault).startswith("sdilene:"):
+        slug = str(vault)[len("sdilene:"):]
+        for v in CONFIG.get("shared_vaults") or []:
+            if isinstance(v, dict) and v.get("slug") == slug and v.get("path"):
+                return os.path.abspath(v["path"])
+        return ""
     return os.path.abspath(os.path.expanduser(BRAIN))
 
 
@@ -750,13 +768,21 @@ def firma_pending():
                 data = json.load(fh)
         except (OSError, ValueError):
             continue
-        if not isinstance(data, dict) or not isinstance(data.get("text"), str):
+        if not isinstance(data, dict):
+            continue
+        kind = str(data.get("druh") or "firma")
+        writes = kind in ("firma", "sdilene-zapis")
+        if writes and not isinstance(data.get("text"), str):
             continue
         rel = str(data.get("cil") or "")
-        out.append({"id": pid, "cil": rel, "text": data["text"],
+        where = "firma" if kind == "firma" else "sdilene:" + str(data.get("vault") or "")
+        texts = lambda key: [str(x) for x in data.get(key) or [] if isinstance(x, (str, int))][:50]
+        out.append({"id": pid, "druh": kind, "cil": rel, "text": data.get("text") or "",
+                    "vault": str(data.get("vault") or ""), "nazev": str(data.get("nazev") or ""),
+                    "lide": texts("lide"), "pridat": texts("pridat"), "odebrat": texts("odebrat"),
                     "autor": str(data.get("autor") or ""),
                     "vytvoreno": str(data.get("vytvoreno") or ""),
-                    "prepise": bool(vault_path(rel, vault="firma"))})
+                    "prepise": bool(writes and vault_path(rel, vault=where))})
     return out
 
 

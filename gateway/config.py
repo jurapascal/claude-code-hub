@@ -61,3 +61,7 @@ COMPANY_DIR = os.environ.get("HUB_GW_COMPANY_DIR",
 COMPANY_VAULT = os.environ.get("HUB_GW_COMPANY_VAULT",
                                os.path.join(COMPANY_DIR, "Firemní Brain"))
 COMPANY_LOG = os.path.join(COMPANY_DIR, "nahrano.jsonl")
+# Sdílené Obsidiany pro vybrané lidi (gateway/shared.py): každý ve vlastní složce,
+# registr členů vedle nich.
+SHARED_DIR = os.environ.get("HUB_GW_SHARED_DIR",
+                            os.path.join(os.path.dirname(GATEWAY_DIR), "sdilene"))

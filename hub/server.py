@@ -21,6 +21,7 @@ import json
 import mimetypes
 import os
 import posixpath
+import re
 import secrets
 import string
 import struct
@@ -521,6 +522,7 @@ class Handler(BaseHTTPRequestHandler):
                 "user": os.environ.get("USER") or os.environ.get("USERNAME") or "",
                 "obsidian": core.has_obsidian(),
                 "firma": core.firma_state(),
+                "shared": core.shared_state(),
                 "onboarded": bool(core.CONFIG.get("onboarded")),
                 "config": {"project_dirs": core.CONFIG.get("project_dirs") or [],
                            "brain_dir": core.CONFIG.get("brain_dir") or "",
@@ -550,7 +552,8 @@ class Handler(BaseHTTPRequestHandler):
             })
         # Náhled trezoru Obsidian (vault.js) — jen ke čtení, jen uvnitř trezoru.
         # `vault=firma` je společný firemní Obsidian (na bráně), jinak osobní.
-        which = "firma" if query.get("vault", [""])[0] == "firma" else ""
+        asked = query.get("vault", [""])[0]
+        which = asked if asked == "firma" or re.fullmatch(r"sdilene:[a-z0-9][a-z0-9-]{0,49}", asked) else ""
         if name == "vault-tree":
             return self._json(core.vault_tree(which))
         if name == "vault-note":

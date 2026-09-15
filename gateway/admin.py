@@ -29,12 +29,14 @@ import os
 import sys
 import time
 
-from . import config, isolation, workspace
+from . import config, isolation, shared, workspace
 from .accounts import Accounts
 
 
 def _accounts():
-    return Accounts(config.DB_PATH)
+    accounts = Accounts(config.DB_PATH)
+    shared.ACCOUNTS = accounts          # jména členů sdílených Obsidianů
+    return accounts
 
 
 def _ask_password(given):
@@ -73,6 +75,18 @@ def cmd_list(a, args):
         twofa = "ano" if r.get("twofa") else "ne"
         print(f'{r["email"]:<{w}}  {r["role"]:<5}  {auth:<8}  {twofa:<3}  '
               f'{(r["vault"] or "-"):<18} {stav}')
+
+
+def cmd_sdilene(a, args):
+    """Sdílené Obsidiany: název, složka, zakladatel a členové."""
+    vaults = shared.all_vaults()
+    if not vaults:
+        print("Zatím žádný sdílený Obsidian.")
+        return
+    for v in vaults:
+        print(f'{v["name"]}  ({v["path"]})')
+        print(f'  založil: {v["owner"] or "(účet smazaný — spravuje správce)"}')
+        print("  členové: " + (", ".join(m["email"] for m in v["members"]) or "nikdo"))
 
 
 def cmd_2fa(a, args):
@@ -231,6 +245,7 @@ def cmd_remove(a, args):
     a.remove(args.email)
     if not user:
         return
+    shared.forget_user(user["id"])
     # Prostor smazaného účtu nemá komu běžet — a nikdo by ho už nezastavil.
     for name in _units(user):
         isolation.stop_scope(name)
@@ -336,6 +351,9 @@ def build_parser():
     rm = sub.add_parser("remove", help="smazat účet")
     rm.add_argument("email")
     rm.set_defaults(func=cmd_remove)
+
+    sd = sub.add_parser("sdilene", help="sdílené Obsidiany: kdo je založil a kdo v nich je")
+    sd.set_defaults(func=cmd_sdilene)
 
     tf = sub.add_parser("2fa", help="dvoufázové ověření: stav, nebo reset (ztracený telefon)")
     tf.add_argument("action", choices=("status", "reset"))
