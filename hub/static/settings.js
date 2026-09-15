@@ -86,7 +86,11 @@
       close();
       io.openWizard();
     };
-    root.addEventListener('click', (ev) => { if (ev.target === root) close(); });
+    // Zavřít jen klikem, který na pozadí i začal: výběr textu tažením ven
+    // z okna končí puštěním tlačítka na pozadí a prohlížeč to hlásí jako klik.
+    let downOutside = false;
+    root.addEventListener('pointerdown', (ev) => { downOutside = ev.target === root; });
+    root.addEventListener('click', (ev) => { if (ev.target === root && downOutside) close(); });
     document.body.appendChild(root);
     render();
   }

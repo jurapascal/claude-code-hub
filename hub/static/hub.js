@@ -353,7 +353,11 @@ function editProject(p) {
   arch.textContent = p.archived ? 'Vrátit z archivu' : 'Archivovat';
   const close = () => box.remove();
   q('.ed-cancel').onclick = close;
-  box.addEventListener('click', (ev) => { if (ev.target === box) close(); });
+  // Jen klik, který na pozadí i začal: výběr textu v poli tažením ven z okna
+  // končí na pozadí, prohlížeč to hlásí jako klik — a rozepsané úpravy by zmizely.
+  let downOutside = false;
+  box.addEventListener('pointerdown', (ev) => { downOutside = ev.target === box; });
+  box.addEventListener('click', (ev) => { if (ev.target === box && downOutside) close(); });
   arch.onclick = async () => {
     try {
       await api('project', {action: 'save', path: p.path, archived: !p.archived});
@@ -504,7 +508,11 @@ function showFirmaCard(p, total) {
     if (ev.key === 'Escape') { ev.stopPropagation(); later(); }
   }
   $$('.firma-later').onclick = later;
-  root.addEventListener('click', (ev) => { if (ev.target === root) later(); });
+  // Jen klik, který na pozadí i začal — výběr textu z náhledu tažením ven by
+  // jinak kartu schoval.
+  let downOutside = false;
+  root.addEventListener('pointerdown', (ev) => { downOutside = ev.target === root; });
+  root.addEventListener('click', (ev) => { if (ev.target === root && downOutside) later(); });
   $$('.firma-discard').onclick = async () => {
     busy(true);
     try {
