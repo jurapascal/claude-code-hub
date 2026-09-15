@@ -1138,7 +1138,8 @@
     copy.onclick = async () => {
       try {
         const r = await io.api('report');
-        await io.api('clipboard', {text: r.text, which: 'clipboard'});
+        // Přes io.copy: na serveru by /api/clipboard psal do schránky serveru.
+        await io.copy(r.text);
         io.toast('Hlášení je ve schránce — stačí vložit.');
       } catch (err) { io.toast('Nepovedlo se: ' + err.message); }
     };

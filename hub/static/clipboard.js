@@ -9,6 +9,11 @@
  * přes vlastní server (xclip / wl-clipboard / pbcopy / clip). Odtud se dá
  * obsloužit i PRIMARY.
  *
+ * Hub na serveru (brána) je výjimka: jeho server žádnou schránku nemá, ta je
+ * u prohlížeče toho, kdo se dívá. Čtení a zápis tam jdou přes prohlížeč
+ * (io.read/io.write z hub.js) a Ctrl+V i prostřední tlačítko se nechávají
+ * prohlížeči — nativní vložení přinese text i obrázek bez ptaní na oprávnění.
+ *
  * Myš se chová tak, jak je člověk na Linuxu zvyklý — označím a mám
  * zkopírováno, pravým vložím. Nabídka po pravém kliknutí tu byla, ale jen
  * překážela: vyskočila přesně tam, kam mířil kurzor, a stála mezi zvykem
@@ -25,7 +30,8 @@
 
 (function (global) {
 
-  /* install(term, io) — io: {read, write, attach, notice}. Vrací teardown. */
+  /* install(term, io) — io: {read, write, attach, notice, native}. Vrací
+     teardown. `native()` = schránku drží prohlížeč (hub na serveru). */
   function install(term, io) {
     const root = term.element;
     if (!root) return () => {};
@@ -71,6 +77,7 @@
         ev.stopImmediatePropagation();
         copySelection(false);
       } else if (key === 'v') {
+        if (io.native && io.native()) return;    // vloží prohlížeč sám
         ev.preventDefault();
         ev.stopImmediatePropagation();
         pasteFrom('clipboard');
@@ -93,6 +100,7 @@
 
     function onMouseDown(ev) {
       if (ev.button === 1) {                 // prostřední = vložit z PRIMARY
+        if (io.native && io.native()) return;    // PRIMARY zná jen prohlížeč
         ev.preventDefault();
         ev.stopImmediatePropagation();
         pasteFrom('primary');

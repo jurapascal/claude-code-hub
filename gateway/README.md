@@ -36,6 +36,23 @@ Smazaný účet má složku odloženou jako `users/_smazany-u<id>-<datum>`. Nech
 na místě nejde: SQLite po smazání dá dalšímu účtu stejné číslo a ten by zdědil
 cizí paměť, projekty i přihlášení.
 
+## Nový server
+
+Server se staví skriptem, ne ručně — na čistém Ubuntu 24.04 jako root:
+
+    curl -fsSLO https://raw.githubusercontent.com/jurapascal/claude-code-hub/main/gateway/install.sh
+    bash install.sh --domain test.alba-rosa.cz --email ja@firma.cz --admin jmeno@firma.cz
+
+Skript doinstaluje balíčky, Node a Claude Code (do `/usr` — sandbox jinam
+nevidí), založí uživatele `hub`, povolí bwrapu user namespaces přes AppArmor,
+pustí bránu jako uživatelskou službu, nastaví nginx s certifikátem, firewall,
+fail2ban, swap a bezpečnostní aktualizace. Když doména na server ještě
+nemíří, certifikát přeskočí — stačí nastavit DNS a pustit ho znovu.
+
+Opakovaný běh je bezpečný: co je hotové, nechá být, stáhne novější hub a bránu
+restartuje, jen když se něco změnilo. Účty se pak spravují přes
+`claude-hub-admin` (obal nad `python3 -m gateway.admin` se správnými cestami).
+
 ## Běžící prostory
 
 Každý prostor běží ve vlastní systemd scope `claude-hub-u<id>.scope`. Podle ní

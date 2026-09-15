@@ -23,7 +23,13 @@ async function api(path, body) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    // Server chybu posílá jako {"error": "…"} — do hlášky patří věta, ne JSON.
+    const body = await res.text();
+    let message = body;
+    try { message = JSON.parse(body).error || body; } catch (_) { /* není JSON */ }
+    throw new Error(message);
+  }
   return res.json();
 }
 
@@ -47,14 +53,39 @@ function openLink(url) {
   if (win) win.opener = null;
 }
 
-/* Do schránky toho, kdo se dívá. Na serveru by /api/clipboard psal do schránky
- * serveru; na počítači je naopak spolehlivější server, protože WebKitGTK
- * stránku ke schránce nepustí (viz clipboard.js). */
+/* Hub běží na serveru (brána)? Pak schránka i prohlížeč serveru nejsou toho,
+ * kdo se dívá — co sahá ven, musí jít přes jeho prohlížeč. */
+function onServer() {
+  return !!STATE.config.gateway_user;
+}
+
+/* Do schránky toho, kdo se dívá. Na serveru přes prohlížeč: /api/clipboard by
+ * psal do schránky serveru, kde žádná není. Na počítači je naopak spolehlivější
+ * server, protože WebKitGTK stránku ke schránce nepustí (viz clipboard.js). */
 function copyText(text) {
-  if (STATE.config.gateway_user && navigator.clipboard) {
+  if (!onServer()) return api('clipboard', {text, which: 'clipboard'});
+  if (navigator.clipboard && navigator.clipboard.writeText) {
     return navigator.clipboard.writeText(text);
   }
-  return api('clipboard', {text, which: 'clipboard'});
+  return Promise.reject(new Error('prohlížeč stránku ke schránce nepustil'));
+}
+
+/* Schránka terminálu (clipboard.js). Na serveru jen to, co dá prohlížeč:
+ * PRIMARY stránce nedá vůbec a čtení jen na kliknutí (pravé tlačítko). Ctrl+V
+ * tam clipboard.js nechytá — nativní vložení přinese text i obrázek. */
+async function clipRead(which) {
+  if (!onServer()) return api('clipboard?which=' + which);
+  if (which !== 'clipboard' || !navigator.clipboard || !navigator.clipboard.readText) return {};
+  try {
+    return {text: await navigator.clipboard.readText()};
+  } catch (_) {
+    throw new Error('prohlížeč stránku ke schránce nepustil — vlož přes Ctrl+V');
+  }
+}
+
+function clipWrite(text, which) {
+  if (!onServer()) return api('clipboard', {text, which});
+  return which === 'clipboard' ? copyText(text) : Promise.resolve();
 }
 
 /* ── theme ────────────────────────────────────────────────────────────────── */
@@ -878,10 +909,11 @@ function createTab({kind, path, title, id, agent, model, background}) {
   tab.releaseIME = HubIME.install(term);
   // WebKitGTK nepustí stránku ke schránce, tak se na ni sahá přes náš server.
   tab.releaseClipboard = HubClipboard.install(term, {
-    read: (which) => api('clipboard?which=' + which),
-    write: (text, which) => api('clipboard', {text, which}),
+    read: clipRead,
+    write: clipWrite,
     attach: (path) => typePaths(tab, [path]),
     notice: toast,
+    native: onServer,
   });
   wireFiles(tab);
   // Odkazy z výpisu jako tlačítka — rozlámanou adresu nejde kliknout (links.js).
@@ -917,8 +949,9 @@ function createTab({kind, path, title, id, agent, model, background}) {
         return STATE.model || '';
       },
       // Na schránku bublina sama nedosáhne — obrázek si vyžádá přes server,
-      // stejnou cestou jako terminál.
-      read: (which) => api('clipboard?which=' + which),
+      // stejnou cestou jako terminál. Na serveru brány žádná schránka není:
+      // obrázek tam přijde nativním vložením (paste se souborem).
+      read: (which) => (onServer() ? Promise.resolve({}) : api('clipboard?which=' + which)),
       // Náhled přílohy: soubor podá server, prohlížeč na disk nevidí.
       imageUrl,
       notice: toast,
@@ -1204,10 +1237,10 @@ function wireFiles(tab) {
   // Capture on the pane so we get there before xterm's own textarea handler:
   // it would otherwise paste the file's *name* as text. Plain text pastes are
   // left alone — those xterm does right.
-  // Ctrl+V sem nedojde: clipboard.js ho chytá na keydown a ruší mu výchozí
-  // chování, takže se paste vůbec nespustí — obrázek řeší cestou přes server.
-  // Tenhle posluchač zůstává pro Shift+Insert a všechno ostatní, co paste
-  // doopravdy vyvolá.
+  // Na počítači sem Ctrl+V nedojde: clipboard.js ho chytá na keydown a ruší mu
+  // výchozí chování — obrázek řeší cestou přes server. Tenhle posluchač je tam
+  // pro Shift+Insert a všechno ostatní, co paste doopravdy vyvolá. Na serveru
+  // (brána) jde Ctrl+V právě sem: schránku tam má jen prohlížeč.
   pane.addEventListener('paste', (ev) => {
     const cd = ev.clipboardData;
     if (!cd || !cd.files || !cd.files.length) return;
@@ -1535,6 +1568,7 @@ function hubIO() {
     // půlka notice(). Jedno chybějící jméno zabilo hlášku o zkopírovaném logu.
     toast,
     notice: toast,
+    copy: copyText,
     pickFolder,
     reload,
     refreshState: async () => { STATE = await api('state'); },
