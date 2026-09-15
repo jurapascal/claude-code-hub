@@ -52,6 +52,10 @@ CATALOG = {
         # Bypass mezi režimy (Shift+Tab), ale nestartuje se v něm — zapne ho
         # člověk sám v bublině. Bez toho ho Claude Code do cyklu nepustí.
         "bypass_arg": "--allow-dangerously-skip-permissions",
+        # Pokračování v uložené konverzaci (seznam konverzací v hubu) a kopie
+        # konverzace, která možná ještě běží jinde.
+        "resume_arg": "--resume {id}",
+        "fork_arg": "--fork-session",
         "slash": ["/clear", "/compact", "/context", "/model", "/status",
                   "/resume", "/cost", "/help"],
         "skills": True,      # umí naše ~/.claude/skills
@@ -481,10 +485,15 @@ def bypass_arg(spec):
     return arg if _knows_flag(spec, arg) else ""
 
 
-def launch_args(spec, model="", prompt="", bypass=True):
+def launch_args(spec, model="", prompt="", bypass=True, resume="", fork=False):
     """Argumenty za jméno binárky: bypass v nabídce (když `bypass` a agent ho
-    umí), model a úvodní prompt."""
+    umí), pokračování v konverzaci (`resume`, s `fork` jako kopie), model
+    a úvodní prompt."""
     args = [bypass_arg(spec)] if bypass and bypass_arg(spec) else []
+    if resume and spec.get("resume_arg"):
+        args += [part.replace("{id}", resume) for part in spec["resume_arg"].split(" ") if part]
+        if fork and spec.get("fork_arg"):
+            args.append(spec["fork_arg"])
     model = resolved_model(spec, model)
     if model:
         # `ollama run <model>` je celý příkaz, ne přepínač

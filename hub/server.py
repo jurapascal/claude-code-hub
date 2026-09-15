@@ -29,7 +29,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import account, connect, core, pty_backend, qr, remote, stats
+from . import account, chats, connect, core, pty_backend, qr, remote, stats
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -130,6 +130,8 @@ class Session:
         self.started = time.time()
         # Spustil se agent s možností bypassu? Bez ní ho v tabu zapnout nejde.
         self.bypass = (env or {}).get("HUB_AGENT_BYPASS") == "1"
+        # V které uložené konverzaci tab pokračuje (seznam konverzací).
+        self.resume = (env or {}).get("HUB_AGENT_RESUME", "")
         child = core.child_env()
         child.update(env or {})
         self.pty = pty_backend.spawn(argv, cwd=cwd, env=child,
@@ -243,7 +245,8 @@ class Session:
     def info(self):
         return {"id": self.id, "title": self.title, "kind": self.kind,
                 "path": self.path, "exited": self.exited,
-                "agent": self.agent, "model": self.model, "bypass": self.bypass}
+                "agent": self.agent, "model": self.model, "bypass": self.bypass,
+                "resume": self.resume}
 
 
 class Hub:
@@ -263,8 +266,24 @@ class Hub:
             self._next_id += 1
             return sid
 
-    def open(self, kind, path, title, cols, rows, agent="", model=""):
-        script, cwd, env = self._command_for(kind, path, agent, model)
+    def chat_tabs(self):
+        """Id konverzace -> id tabu, ve kterém právě běží. Seznam konverzací
+        podle toho na tab přepne, místo aby pustil druhého Clauda do téže."""
+        running = {}
+        for s in list(self.sessions.values()):
+            if s.exited or not (s.kind == "project" or s.kind.startswith("slash:")):
+                continue
+            if (s.agent or core.default_agent()) != "claude":
+                continue
+            if s.resume:
+                running.setdefault(s.resume, s.id)
+            transcript = core._tab_transcript(s.id, s.path or core.HOME, s.started)
+            if transcript:
+                running.setdefault(os.path.basename(transcript)[:-6], s.id)
+        return running
+
+    def open(self, kind, path, title, cols, rows, agent="", model="", resume="", fork=False):
+        script, cwd, env = self._command_for(kind, path, agent, model, resume, fork)
         # Agent si model mohl doplnit sám (Ollama bez modelu nespustíš) —
         # ať se to dozví i tab, jinak by chip v bublině hlásil „výchozí".
         model = env.get("HUB_AGENT_MODEL") or model
@@ -278,7 +297,7 @@ class Hub:
         return session
 
     @staticmethod
-    def _command_for(kind, path, agent="", model=""):
+    def _command_for(kind, path, agent="", model="", resume="", fork=False):
         """(příkaz, pracovní složka, prostředí navíc) pro daný druh tabu."""
         if kind == "shell":
             return core.cmd_shell(), (path or core.HOME), {}
@@ -297,7 +316,7 @@ class Hub:
             script, env = core.cmd_agent(path, agent,
                                          slash="/" + kind.split(":", 1)[1])
             return script, path, env
-        script, env = core.cmd_agent(path, agent, model=model)
+        script, env = core.cmd_agent(path, agent, model=model, resume=resume, fork=fork)
         return script, path, env
 
     def close(self, sid, autosave=True):
@@ -459,6 +478,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def _api_inner(self, name, query, payload=None):
         payload = payload or {}
+        if name == "chats":
+            # Seznam konverzací jako v oficiální appce (hub/chats.py) a které
+            # z nich právě běží v tabu — ty se neotevírají podruhé.
+            running = HUB.chat_tabs()
+            return self._json({"chats": [dict(c, tab=running.get(c["id"]))
+                                         for c in chats.list_chats()]})
         if name == "bypass":
             # Potvrzení varování k bypassu, které by se jinak Claude Code ptal
             # v každém novém tabu. Jen výslovně (POST s accept: true).
@@ -1001,7 +1026,9 @@ class Handler(BaseHTTPRequestHandler):
                                    msg.get("title", "shell"),
                                    int(msg.get("cols", 80)), int(msg.get("rows", 24)),
                                    agent=str(msg.get("agent", "") or ""),
-                                   model=str(msg.get("model", "") or ""))
+                                   model=str(msg.get("model", "") or ""),
+                                   resume=str(msg.get("resume", "") or ""),
+                                   fork=msg.get("fork") is True)
             except (pty_backend.PtyUnavailable, core.BashMissing) as exc:
                 core.log_error("tab se nepodařilo otevřít", exc)
                 conn.send_json({"t": "error", "ref": msg.get("ref"), "d": str(exc)})

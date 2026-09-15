@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """Návrh do firemního Obsidianu — pro Claude Code v prostoru na bráně.
 
-    python3 firma.py navrh CÍL [SOUBOR | -]   připraví poznámku ke schválení
-    python3 firma.py seznam                    co čeká na potvrzení
-    python3 firma.py kde                       kde je firemní trezor
+    python3 firma.py navrh CÍL [SOUBOR | -] --potvrzeno   připraví poznámku ke schválení
+    python3 firma.py seznam                                co čeká na potvrzení
+    python3 firma.py kde                                   kde je firemní trezor
 
 Nic nenahrává. Návrh uloží do ~/.firma/ke-schvaleni/ a hub ho uživateli ukáže
 s náhledem a tlačítkem Nahrát. Firemní trezor je v prostoru jen ke čtení
 a zapisuje do něj až brána po tom kliknutí (gateway/workspace.py,
 publish_company).
+
+Dvojí kontrola: bez `--potvrzeno` návrh nevznikne. Claude se má nejdřív
+v chatu zeptat, co a kam nahraje, a přepínač přidat až po výslovném „ano" —
+karta v hubu je pak druhé potvrzení.
 """
 import json
 import os
@@ -60,10 +64,20 @@ def target(rel):
 
 
 def navrh(args):
+    confirmed = "--potvrzeno" in args
+    args = [a for a in args if a != "--potvrzeno"]
     if not args:
-        fail("Použití: firma.py navrh CÍL [SOUBOR | -]")
+        fail("Použití: firma.py navrh CÍL [SOUBOR | -] --potvrzeno")
     rel = target(args[0])
     vault = company_vault()
+    if not confirmed:
+        exists = os.path.exists(os.path.join(vault, *rel.split("/")))
+        print("Ještě nic nevzniklo — nejdřív se zeptej uživatele. Napiš mu v chatu, co "
+              f"přesně do firemního Obsidianu nahraješ (stručné shrnutí obsahu) a kam: {rel}"
+              + (" — a že tím PŘEPÍŠEŠ existující poznámku" if exists else "")
+              + ". Firemní Obsidian uvidí celý tým. Až to výslovně potvrdí, spusť "
+              "příkaz znovu s --potvrzeno.", file=sys.stderr)
+        sys.exit(3)
     source = args[1] if len(args) > 1 else "-"
     try:
         if source == "-":

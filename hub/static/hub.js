@@ -556,6 +556,145 @@ function showFirmaCard(p, total) {
   firmaCard = root;
 }
 
+/* ── konverzace ───────────────────────────────────────────────────────────────
+   Seznam minulých konverzací s Claudem jako v oficiální appce: podle dní,
+   s hledáním. Klik konverzaci otevře (claude --resume) — nebo přepne na tab,
+   ve kterém už běží. Data: /api/chats (hub/chats.py). */
+let CHATS = [];
+let chatsTimer = null;
+const CHATS_PAGE = 60;
+let chatsShown = CHATS_PAGE;
+
+const foldText = (s) => String(s || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+
+function sidebarView(view) {
+  const onChats = view === 'chats';
+  $('projects-view').hidden = onChats;
+  $('chats-view').hidden = !onChats;
+  $('projects-count').hidden = onChats;
+  $('chats-count').hidden = !onChats;
+  for (const b of document.querySelectorAll('.side-tab')) {
+    b.classList.toggle('on', b.dataset.view === (onChats ? 'chats' : 'projects'));
+  }
+  try { localStorage.setItem('hub-side-view', onChats ? 'chats' : 'projects'); } catch (_) {}
+  clearInterval(chatsTimer);
+  chatsTimer = null;
+  if (onChats) {
+    loadChats();
+    chatsTimer = setInterval(() => { if (!document.hidden) loadChats(); }, 20000);
+  }
+}
+
+async function loadChats() {
+  let res;
+  try {
+    res = await api('chats');
+  } catch (err) {
+    const box = $('chats');
+    box.textContent = '';
+    const note = document.createElement('div');
+    note.className = 'empty';
+    note.textContent = 'Konverzace se nenačetly: ' + err.message;
+    box.appendChild(note);
+    return;
+  }
+  CHATS = res.chats || [];
+  renderChats();
+}
+
+function renderChats() {
+  const box = $('chats');
+  const words = foldText($('chats-search').value.trim()).split(/\s+/).filter(Boolean);
+  const list = words.length
+    ? CHATS.filter((c) => {
+      const hay = foldText([c.title, c.prompt, c.project].join(' '));
+      return words.every((w) => hay.includes(w));
+    })
+    : CHATS;
+  $('chats-count').textContent = CHATS.length ? String(CHATS.length) : '';
+  box.textContent = '';
+  if (!list.length) {
+    const note = document.createElement('div');
+    note.className = 'empty';
+    note.textContent = words.length ? '(nic nenalezeno)' : '(zatím žádné konverzace)';
+    box.appendChild(note);
+    return;
+  }
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
+  const groupOf = (t) => (t >= today ? 'Dnes'
+    : t >= today - 86400 ? 'Včera'
+      : t >= today - 6 * 86400 ? 'Posledních 7 dní'
+        : t >= today - 29 * 86400 ? 'Posledních 30 dní'
+          : new Date(t * 1000).toLocaleDateString('cs-CZ', {month: 'long', year: 'numeric'}));
+  let lastGroup = null;
+  for (const c of list.slice(0, chatsShown)) {
+    const group = groupOf(c.updated);
+    if (group !== lastGroup) {
+      lastGroup = group;
+      const head = document.createElement('div');
+      head.className = 'group-head';
+      head.textContent = group;
+      box.appendChild(head);
+    }
+    const item = document.createElement('button');
+    item.className = 'chat-item' + (c.tab ? ' running' : '') + (c.exists ? '' : ' gone');
+    item.dataset.id = c.id;
+    item.innerHTML = '<span class="chat-title"></span><span class="chat-meta"></span>';
+    item.querySelector('.chat-title').textContent = c.title;
+    const at = new Date(c.updated * 1000);
+    const when = c.updated >= today
+      ? at.toLocaleTimeString('cs-CZ', {hour: '2-digit', minute: '2-digit'})
+      : at.toLocaleDateString('cs-CZ', {day: 'numeric', month: 'numeric'});
+    item.querySelector('.chat-meta').textContent =
+      [c.project, when, c.tab ? 'otevřená' : ''].filter(Boolean).join('  ·  ');
+    item.title = [c.prompt && c.prompt !== c.title ? c.prompt : '', c.cwd].filter(Boolean).join('\n\n');
+    item.onclick = () => openChat(c);
+    box.appendChild(item);
+  }
+  if (list.length > chatsShown) {
+    const more = document.createElement('button');
+    more.className = 'linkbtn chats-more';
+    more.textContent = `Zobrazit další (${list.length - chatsShown})`;
+    more.onclick = () => { chatsShown += CHATS_PAGE; renderChats(); };
+    box.appendChild(more);
+  }
+}
+
+function openChat(c) {
+  const running = c.tab && TABS.find((t) => t.id === c.tab);
+  if (running) {
+    activate(running);
+    document.body.classList.remove('drawer-open');
+    return;
+  }
+  if (!c.exists) {
+    toast('Složka téhle konverzace už není: ' + (c.cwd || '?'));
+    return;
+  }
+  // Změněná před chvílí a v žádném tabu hubu neběží: nejspíš je otevřená
+  // jinde (terminál, jiné okno). Dva Claudy v jedné konverzaci by si
+  // přepisovaly historii — otevře se proto její kopie.
+  let fork = false;
+  if (Date.now() / 1000 - c.updated < 180) {
+    if (!confirm(`Konverzace „${c.title}" se změnila před chvílí — nejspíš ještě běží jinde.\n\n` +
+                 'Otevřít její kopii? Původní konverzace zůstane, jak je.')) return;
+    fork = true;
+  }
+  openTab({kind: 'project', path: c.cwd, title: c.title.slice(0, 40), agent: 'claude',
+           resume: c.id, fork});
+  document.body.classList.remove('drawer-open');
+  setTimeout(loadChats, 4000);
+}
+
+function initChats() {
+  for (const b of document.querySelectorAll('.side-tab')) b.onclick = () => sidebarView(b.dataset.view);
+  $('chats-search').addEventListener('input', () => { chatsShown = CHATS_PAGE; renderChats(); });
+  let saved = 'projects';
+  try { saved = localStorage.getItem('hub-side-view') || 'projects'; } catch (_) {}
+  sidebarView(saved);
+}
+
 function renderMemory() {
   const mem = STATE.memory;
   $('memory-section').hidden = !mem.enabled;
@@ -1015,11 +1154,12 @@ function newAgentMenu(ev) {
 }
 
 /* ── tabs ─────────────────────────────────────────────────────────────────── */
-function openTab({kind, path, title, agent, model, mode}) {
-  const tab = createTab({kind, path, title, agent, model, mode});
+function openTab({kind, path, title, agent, model, mode, resume, fork}) {
+  const tab = createTab({kind, path, title, agent, model, mode, resume});
   const dims = measure(tab);
   send({t: 'open', ref: tab.ref, kind, path, title, agent: agent || '',
-        model: model || '', cols: dims.cols, rows: dims.rows});
+        model: model || '', resume: resume || '', fork: !!fork,
+        cols: dims.cols, rows: dims.rows});
   return tab;
 }
 
@@ -1029,7 +1169,7 @@ function openWith(agentId, {path, title}) {
   return openTab({kind: 'project', path, title, agent: agentId});
 }
 
-function createTab({kind, path, title, id, agent, model, background, bypass, mode}) {
+function createTab({kind, path, title, id, agent, model, background, bypass, mode, resume}) {
   const ref = ++refSeq;
   const pane = document.createElement('div');
   pane.className = 'pane';
@@ -1061,7 +1201,9 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
                agent: agent || '', model: model || '', exited: false,
                // Jde v tabu zapnout bypass (agent se spustil s tou možností)?
                // A režim, do kterého se má tab po startu přepnout sám.
-               bypass: !!bypass, wantMode: mode || ''};
+               bypass: !!bypass, wantMode: mode || '',
+               // Ve které uložené konverzaci tab pokračuje (seznam konverzací).
+               resume: resume || ''};
   const toPty = (d) => {
     tab.lastInput = Date.now();          // ozvěna psaní není „agent pracuje"
     if (tab.id) send({t: 'in', id: tab.id, d});
@@ -1651,7 +1793,7 @@ function handle(msg) {
     if (!TABS.some(t => t.id === msg.id)) {
       attachTab(createTab({kind: msg.kind, path: msg.path, title: msg.title,
                            id: msg.id, agent: msg.agent, model: msg.model,
-                           bypass: msg.bypass, background: true}));
+                           bypass: msg.bypass, resume: msg.resume, background: true}));
     }
   } else if (msg.t === 'tab-closed') {
     const tab = TABS.find(t => t.id === msg.id);
@@ -1703,7 +1845,7 @@ function restore(list) {
     if (!tab) {
       tab = createTab({kind: info.kind, path: info.path, title: info.title,
                        id: info.id, agent: info.agent, model: info.model,
-                       bypass: info.bypass, background: true});
+                       bypass: info.bypass, resume: info.resume, background: true});
     }
     tab.bypass = !!info.bypass;
     attachTab(tab);
@@ -1818,6 +1960,7 @@ async function main() {
   $('btn-theme').onclick = () => setTheme(!DARK, true);
   $('btn-settings').onclick = () => HubSettings.open({...hubIO(), state: STATE});
   $('btn-stats').onclick = () => HubStats.open(hubIO());
+  initChats();
   $('btn-new-shell').onclick = () => openTab({kind: 'shell', path: '', title: 'terminál'});
   // Levý klik = výchozí agent, pravý klik nebo delší podržení = výběr.
   // Nabídka se sama otevře i tehdy, když výchozí agent není nainstalovaný.

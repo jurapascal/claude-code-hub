@@ -86,13 +86,27 @@
 
   <aside class="sidebar">
     <div class="section section-head">
-      <span>PROJEKTY</span><span class="section-count" id="projects-count"></span>
+      <span class="side-tabs">
+        <button class="side-tab on" data-view="projects">PROJEKTY</button>
+        <button class="side-tab" data-view="chats">KONVERZACE</button>
+      </span>
+      <span class="section-count" id="projects-count"></span>
+      <span class="section-count" id="chats-count" hidden></span>
     </div>
-    <div class="searchwrap">
-      <svg class="ico search-ico"><use href="#i-search"/></svg>
-      <input id="search" type="search" placeholder="Hledat projekt…" autocomplete="off">
+    <div id="projects-view">
+      <div class="searchwrap">
+        <svg class="ico search-ico"><use href="#i-search"/></svg>
+        <input id="search" type="search" placeholder="Hledat projekt…" autocomplete="off">
+      </div>
+      <div id="projects" class="cards"></div>
     </div>
-    <div id="projects" class="cards"></div>
+    <div id="chats-view" hidden>
+      <div class="searchwrap">
+        <svg class="ico search-ico"><use href="#i-search"/></svg>
+        <input id="chats-search" type="search" placeholder="Hledat konverzaci…" autocomplete="off">
+      </div>
+      <div id="chats" class="chats"></div>
+    </div>
 
     <div id="memory-section" hidden>
       <div class="section">OBSIDIAN PAMĚŤ</div>

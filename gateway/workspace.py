@@ -556,10 +556,14 @@ firemního:
 
 1. Připrav poznámku v Markdownu a vyber pro ni cestu podle struktury, která už
    ve firemním trezoru je (třeba `postupy/fakturace.md`).
-2. Pošli ji ke schválení:
-   `python3 {tool} navrh "postupy/fakturace.md" poznamka.md`
-   (místo souboru jde obsah poslat na standardní vstup: `-`).
-3. Řekni uživateli, že mu hub ukázal kartu s náhledem: poznámka se nahraje, až
+2. **Zeptej se v chatu:** stručně shrň, co do firemního nahraješ, napiš cílovou
+   cestu a jestli tím přepíšeš existující poznámku (podívej se, jestli tam už
+   je). Připomeň, že firemní Obsidian uvidí celý tým. Počkej na výslovné „ano".
+3. Teprve pak pošli poznámku ke schválení:
+   `python3 {tool} navrh "postupy/fakturace.md" poznamka.md --potvrzeno`
+   (místo souboru jde obsah poslat na standardní vstup: `-`). Přepínač
+   `--potvrzeno` nikdy nepřidávej bez souhlasu uživatele v téhle konverzaci.
+4. Řekni uživateli, že mu hub ukázal kartu s náhledem: poznámka se nahraje, až
    ji potvrdí tlačítkem **Nahrát**. Sám ji potvrdit nemůžeš.
 
 Existující firemní poznámku upravíš tak, že pošleš celý nový obsah na stejnou

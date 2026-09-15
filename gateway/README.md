@@ -107,8 +107,12 @@ Vedle osobního trezoru v každém prostoru je jeden společný trezor pro všec
   Claude Code ho má v `permissions.additionalDirectories` a pokyny k němu
   v `~/.claude/CLAUDE.md` (blok mezi `<!-- claude-hub:firma -->`, zbytek
   souboru patří uživateli). V hubu je sekce **Firemní Obsidian** s náhledem.
+- **Dvojí potvrzení:** Claude se nejdřív v chatu zeptá — shrne, co a kam
+  nahraje a jestli něco přepíše — a pokračuje až po výslovném „ano". Nástroj
+  bez přepínače `--potvrzeno` návrh nevytvoří a Claudovi napíše, ať se zeptá.
+  Druhé potvrzení je karta v hubu.
 - **Zápis:** Claude poznámku jen připraví — `python3 tools/firma.py navrh
-  CÍL [SOUBOR | -]` ji uloží do `~/.firma/ke-schvaleni/`. Hub ukáže kartu
+  CÍL [SOUBOR | -] --potvrzeno` ji uloží do `~/.firma/ke-schvaleni/`. Hub ukáže kartu
   s náhledem a cílovou cestou; **Nahrát** pošle prohlížeč na
   `/gw/firma/publish` a zapíše brána (`workspace.publish_company`).
   Existující poznámku přepíše jen tlačítko **Přepsat**.

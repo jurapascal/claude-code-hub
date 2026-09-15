@@ -95,6 +95,31 @@ body { display: flex; flex-direction: column; }
 /* První sekce v panelu nemá nad sebou co odsazovat — hlavička appky stačí. */
 .sidebar > .section:first-child { margin-top: 12px; }
 .section-head { display: flex; align-items: baseline; justify-content: space-between; }
+/* Projekty | Konverzace — přepínač v hlavičce panelu. */
+.side-tabs { display: flex; gap: 12px; }
+.side-tab {
+  background: none; border: none; padding: 0 0 3px; cursor: pointer; font: inherit;
+  color: var(--dim); font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+  border-bottom: 2px solid transparent;
+}
+.side-tab:hover { color: var(--fg-bright); }
+.side-tab.on { color: var(--fg-bright); border-bottom-color: var(--amber); }
+.chats { display: flex; flex-direction: column; }
+.chat-item {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: left; cursor: pointer;
+  margin: 1px 8px; padding: 7px 10px; border: 1px solid transparent; border-radius: var(--radius);
+  background: none; color: inherit; font: inherit;
+}
+.chat-item:hover { background: var(--card-hover); border-color: var(--border); }
+.chat-item:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
+.chat-title {
+  color: var(--fg-bright); font-size: 12.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-meta { color: var(--dim); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-item.running .chat-title::before { content: "● "; color: var(--green); }
+.chat-item.gone { opacity: .55; }
+.chats-more { margin: 6px 12px; align-self: flex-start; }
 .section-count {
   color: var(--dim); font-size: 10px; font-weight: 600; letter-spacing: 0;
 }
@@ -104,7 +129,7 @@ body { display: flex; flex-direction: column; }
   position: absolute; left: 8px; top: 50%; transform: translateY(-50%);
   color: var(--dim); font-size: 13px; pointer-events: none;
 }
-#search {
+#search, #chats-search {
   width: 100%;
   background: var(--bg); color: var(--fg-bright);
   border: 1px solid var(--border); border-radius: var(--radius);
@@ -112,8 +137,9 @@ body { display: flex; flex-direction: column; }
   font: inherit;
   -webkit-user-select: text; user-select: text;
 }
-#search:focus { outline: none; border-color: var(--amber); }
-#search::-webkit-search-cancel-button { filter: grayscale(1) opacity(.6); }
+#search:focus, #chats-search:focus { outline: none; border-color: var(--amber); }
+#search::-webkit-search-cancel-button,
+#chats-search::-webkit-search-cancel-button { filter: grayscale(1) opacity(.6); }
 
 .cards { display: flex; flex-direction: column; }
 

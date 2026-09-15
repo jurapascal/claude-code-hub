@@ -2145,13 +2145,20 @@ def _wrapper_path():
     return here if os.path.isfile(here) else ""
 
 
-def cmd_agent(path, agent_id="", slash="", model=""):
-    """(příkaz pro tab, proměnné prostředí) — tudy se spouští každý agent."""
+# Id konverzace Claude Code (jméno přepisu). Z prohlížeče do příkazu jde jen tohle.
+SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def cmd_agent(path, agent_id="", slash="", model="", resume="", fork=False):
+    """(příkaz pro tab, proměnné prostředí) — tudy se spouští každý agent.
+    `resume` = pokračovat v uložené konverzaci (seznam konverzací), `fork` =
+    jako její kopie."""
     spec = agent_spec(agent_id)
     # Možnost bypassu jen po potvrzeném varování (bypass_accepted) — jinak by
     # se Claude Code při každém startu ptal a Enter by ho ukončil.
     bypass = bool(agents.bypass_arg(spec)) and bypass_accepted()
-    argv = agents.launch_args(spec, model, slash, bypass=bypass)
+    resume = str(resume or "") if SESSION_ID.fullmatch(str(resume or "")) else ""
+    argv = agents.launch_args(spec, model, slash, bypass=bypass, resume=resume, fork=fork)
     wrapper = _wrapper_path()
     if not wrapper:
         # Radši prázdný shell s vysvětlením než spustit někoho jiného.
@@ -2166,6 +2173,8 @@ def cmd_agent(path, agent_id="", slash="", model=""):
     env = agents.env_for(spec, model)
     if bypass:
         env["HUB_AGENT_BYPASS"] = "1"     # tab ví, že bypass v něm jde zapnout
+    if resume and spec.get("resume_arg"):
+        env["HUB_AGENT_RESUME"] = resume  # ve které konverzaci tab pokračuje
     return script, env
 
 
