@@ -1168,6 +1168,22 @@ def source_dir():
     return ""
 
 
+def _latest_tag_git():
+    """Nejvyšší značka z `git ls-remote`, nebo ''. Na limit API GitHubu se
+    nevztahuje — a aktualizace sama jede přes git pull, takže co vidí git,
+    to se i stáhne."""
+    if not GIT:
+        return ""
+    out = run([GIT, "ls-remote", "--tags", "--refs", f"https://github.com/{REPO}.git"],
+              timeout=15)
+    best = ""
+    for line in out.splitlines():
+        tag = line.rsplit("refs/tags/", 1)[1] if "refs/tags/" in line else ""
+        if tag and (not best or _as_tuple(tag) > _as_tuple(best)):
+            best = tag
+    return best
+
+
 def latest_version():
     """(nejnovější vydaná verze, důvod prázdna).
 
@@ -1183,6 +1199,7 @@ def latest_version():
     import urllib.error
     import urllib.request
     reachable = False
+    limited_until = ""
     best = ""
     for url, key in ((f"https://api.github.com/repos/{REPO}/releases/latest", "tag_name"),
                      (f"https://api.github.com/repos/{REPO}/tags", None)):
@@ -1201,13 +1218,28 @@ def latest_version():
             for tag in tags:
                 if tag and (not best or _as_tuple(tag) > _as_tuple(best)):
                     best = str(tag)
-        except urllib.error.HTTPError:
+        except urllib.error.HTTPError as exc:
             reachable = True          # server odpověděl, jen tam nic není
+            # …ledaže odmítl kvůli limitu. Bez přihlášení pustí GitHub 60 dotazů
+            # za hodinu na adresu a za jednou adresou bývá víc lidí i nástrojů —
+            # hub pak tvrdil „Repo zatím nemá žádné vydání", i když vydání bylo.
+            if exc.code in (403, 429) and exc.headers.get("X-RateLimit-Remaining") == "0":
+                limited_until = exc.headers.get("X-RateLimit-Reset") or "?"
             continue
         except Exception:
             continue
+    if not best:
+        best = _latest_tag_git()
     if best:
         return best, ""
+    if limited_until:
+        import time
+        try:
+            when = "po " + time.strftime("%H:%M", time.localtime(int(limited_until)))
+        except ValueError:
+            when = "za hodinu"
+        return "", ("GitHub teď odmítá dotazy — z téhle adresy je vyčerpaný limit "
+                    f"60 za hodinu. Zkus to znovu {when}.")
     return "", ("Repo zatím nemá žádné vydání." if reachable
                 else "Nepodařilo se spojit s GitHubem.")
 
