@@ -1764,6 +1764,8 @@ function showUpdate(latest) {
 }
 
 async function checkForUpdate() {
+  // Na serveru aktualizuje server sám (gateway/update.sh) — není co nabízet.
+  if (onServer()) return;
   const cached = readUpdateCache();
   if (cached) showUpdate(cached.latest);
   if (cached && Date.now() - cached.at < UPDATE_CACHE_MS) return;

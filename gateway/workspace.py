@@ -9,10 +9,11 @@ Každý účet dostane vlastní domovskou složku (`/home/hub/users/u<id>`), a v
 * **`.claude/hub-config.json`**, aby se jeho instance hubu nastavila sama:
   paměť míří do jeho vaultu, projekty do jeho složky. Hub žádné okno neotvírá,
   brána ho pustí s `--no-browser` a mluví s ním přes proxy.
-* **přihlášení Claude Code**. Účet Anthropicu je **jeden, sdílený** (viz
-  README brány) — všechny session ho čtou ze společného souboru. Sdílí se jen
-  ten soubor s tokenem, ne zbytek konfigurace: projekty, historii a MCP má
-  každý svoje.
+* **přihlášení Claude Code**. Na `central` (výchozí) dostane prostor klíč API
+  brány (`ANTHROPIC_API_KEY`, viz session_env) a nikdo se nepřihlašuje; platí
+  se podle spotřeby. Na `own` se člověk přihlásí vlastním účtem. Sdílet jedno
+  osobní přihlášení mezi víc lidí (dřívější `central`) je proti podmínkám
+  Anthropicu, proto to brána už nedělá.
 
 Cesty jdou přebít proměnnými prostředí, aby šel modul otestovat i mimo server.
 """
@@ -21,6 +22,7 @@ import os
 import re
 import time
 
+from . import config
 from .isolation import SCOPE_PREFIX
 
 HUB_HOME = os.environ.get("HUB_GW_HOME", "/home/hub")
@@ -29,9 +31,8 @@ USERS_ROOT = os.environ.get("HUB_GW_USERS", os.path.join(HUB_HOME, "users"))
 # čtení — session do něj nesmí zapisovat.
 REPO_DIR = os.environ.get("HUB_GW_REPO",
                           os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-# Sdílené přihlášení Claude Code: adresář `.claude` účtu, pod kterým brána běží.
-# Do session se přiváže **jen soubor s tokenem**, a to pro čtení i zápis, aby
-# obnovený token platil pro všechny.
+# Sdílené přihlášení Claude Code z dob dřívějšího `central`. Už se nepoužívá —
+# ensure() jen uklízí symlinky, které na něj v domovech zůstaly.
 SHARED_CLAUDE = os.environ.get("HUB_GW_CLAUDE", os.path.join(HUB_HOME, ".claude"))
 SHARED_CRED = os.path.join(SHARED_CLAUDE, ".credentials.json")
 PYTHON = os.environ.get("HUB_GW_PYTHON", "python3")
@@ -98,8 +99,61 @@ def vault_dir(user, home=None):
 
 
 def claude_auth(user):
-    """`central` (sdílené předplatné brány), nebo `own` (vlastní v jeho domově)."""
+    """`central` (klíč API brány), nebo `own` (vlastní přihlášení v jeho domově)."""
     return "own" if (user.get("claude_auth") or "central") == "own" else "central"
+
+
+def api_key():
+    """Klíč API brány, nebo ''. Čte se při každém startu prostoru, takže
+    `claude-hub-admin apikey set` platí od dalšího startu bez restartu brány."""
+    try:
+        with open(config.API_KEY_FILE, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def session_env(user):
+    """Proměnné prostředí navíc pro prostor: klíč API, a to jen na `central`."""
+    key = api_key() if claude_auth(user) == "central" else ""
+    return {"ANTHROPIC_API_KEY": key} if key else {}
+
+
+def _approve_api_key(home, key):
+    """Předschválí klíč v ~/.claude.json prostoru.
+
+    Claude Code se na klíč z prostředí napoprvé ptá („Do you want to use this
+    API key?") a bez odpovědi nepustí dál. Zapíše se to stejně, jak by to udělal
+    on sám: posledních 20 znaků klíče v customApiKeyResponses.approved. Soubor
+    se přepisuje atomicky a jen tehdy, když jde přečíst — rozbitý nechat být je
+    lepší než uživateli smazat nastavení. Volá se před startem hubu, kdy Claude
+    Code v prostoru neběží a do souboru nepíše."""
+    path = os.path.join(home, ".claude.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        data = {}
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    tail = key.strip()[-20:]
+    resp = data.get("customApiKeyResponses")
+    resp = resp if isinstance(resp, dict) else {}
+    approved = [k for k in (resp.get("approved") or []) if isinstance(k, str)]
+    rejected = [k for k in (resp.get("rejected") or []) if isinstance(k, str)]
+    if tail in approved and tail not in rejected:
+        return
+    data["customApiKeyResponses"] = {
+        **resp,
+        "approved": approved if tail in approved else approved + [tail],
+        "rejected": [k for k in rejected if k != tail],
+    }
+    tmp = path + ".hub-tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
 
 
 def _hub_config(user, home):
@@ -146,30 +200,22 @@ def ensure(user):
     with open(os.path.join(claude, "hub-config.json"), "w", encoding="utf-8") as fh:
         json.dump(_hub_config(user, home), fh, ensure_ascii=False, indent=2)
 
-    # Přihlášení Claude Code závisí na volbě prostoru:
-    #  * central — symlink na SDÍLENÝ token brány (přiváže se ke zápisu
-    #    v session_spec). Prostor jede na centrálním předplatném.
-    #  * own — žádný odkaz na sdílené; domov `.claude` je čistě uživatelův,
-    #    přihlásí se vlastním účtem / API klíčem. Když se přepíná z central,
-    #    starý symlink na sdílené se odstraní, ať se nemíchají.
+    # Přihlášení Claude Code (claude_auth):
+    #  * central — klíč API brány přijde do prostředí (session_env); tady se
+    #    jen předschválí, ať se Claude Code neptá.
+    #  * own — člověk se přihlásí sám, nic se nepřidává.
+    # Symlink na sdílené přihlášení z dřívějšího central se ruší v obou
+    # případech: jedno osobní předplatné pro víc lidí je proti podmínkám.
     cred_link = os.path.join(claude, ".credentials.json")
-    if claude_auth(user) == "central":
-        try:
-            if os.path.islink(cred_link) or os.path.exists(cred_link):
-                if os.path.realpath(cred_link) != os.path.realpath(SHARED_CRED):
-                    os.remove(cred_link)
-                    os.symlink(SHARED_CRED, cred_link)
-            else:
-                os.symlink(SHARED_CRED, cred_link)
-        except OSError:
-            pass
-    else:  # own: nechat jen uživatelovo, sdílený symlink pryč
-        try:
-            if os.path.islink(cred_link) and \
-                    os.path.realpath(cred_link) == os.path.realpath(SHARED_CRED):
-                os.remove(cred_link)
-        except OSError:
-            pass
+    try:
+        if os.path.islink(cred_link) and \
+                os.path.realpath(cred_link) == os.path.realpath(SHARED_CRED):
+            os.remove(cred_link)
+    except OSError:
+        pass
+    key = api_key() if claude_auth(user) == "central" else ""
+    if key:
+        _approve_api_key(home, key)
 
     return {"home": home, "vault": vault, "claude": claude,
             "projects": projects}
@@ -186,16 +232,11 @@ def session_spec(user, isolation, mode):
     paths = ensure(user)
     home = paths["home"]
     inner = [PYTHON, os.path.join(REPO_DIR, "claude-hub.py"), "--no-browser"]
-    # REPO_DIR ke čtení (zdroj hubu). Sdílený token se do sandboxu přiváže
-    # (ke čtení i zápisu — obnova) JEN u prostorů na centrálním předplatném;
-    # `own` prostor sdílené přihlášení vůbec nevidí.
+    # REPO_DIR ke čtení (zdroj hubu). Nic víc: klíč API přijde v prostředí
+    # (session_env), žádný soubor mimo domov se do sandboxu nepřivazuje.
     extra_ro = [REPO_DIR]
-    extra_rw = []
-    if claude_auth(user) == "central" and os.path.exists(SHARED_CRED):
-        extra_rw = [SHARED_CRED]
     unit = unit_name(user)
-    argv = isolation.wrap(mode, inner, home, extra_ro=extra_ro,
-                          extra_rw=extra_rw, unit=unit)
+    argv = isolation.wrap(mode, inner, home, extra_ro=extra_ro, unit=unit)
     if argv[:1] != ["systemd-run"]:
         unit = ""                 # bez scope (docker, stroj bez systemd)
     return argv, home, unit

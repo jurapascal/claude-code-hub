@@ -131,6 +131,10 @@ class HubProc:
             # o které se nevědělo). systemd-run by na ní skončil chybou.
             isolation.stop_scope(unit)
         env = dict(os.environ, HOME=home)
+        # Klíč API brány jen tomu, kdo jede na `central` — `own` ho nesmí
+        # zdědit ani z prostředí samotné brány.
+        env.pop("ANTHROPIC_API_KEY", None)
+        env.update(workspace.session_env(self.user))
         # XDG_RUNTIME_DIR musí session dostat, jinak si systemd --user scope
         # nemá kam sáhnout (limity by tiše vypadly).
         env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")

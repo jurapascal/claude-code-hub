@@ -41,8 +41,8 @@ import time
 SCRYPT = dict(n=2 ** 15, r=8, p=1, dklen=32, maxmem=128 * 1024 * 1024)
 TOKEN_BYTES = 32
 ROLES = ("user", "admin")
-# Čím se v daném prostoru ověřuje Claude: `central` = sdílené předplatné brány,
-# `own` = uživatel má v svém (izolovaném) domově vlastní přihlášení / API klíč.
+# Čím se v daném prostoru ověřuje Claude: `central` = klíč API brány (platí se
+# podle spotřeby), `own` = uživatel má v svém domově vlastní přihlášení.
 AUTHS = ("central", "own")
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (

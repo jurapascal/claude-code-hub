@@ -17,9 +17,12 @@ přes `--password` (hodí se do skriptu, ale zůstane v historii shellu).
     python3 -m gateway.admin sessions            # které prostory běží
     python3 -m gateway.admin stop jmeno@firma.cz # zastavit prostor
     python3 -m gateway.admin stop --orphans      # zastavit osiřelé
+    python3 -m gateway.admin apikey set          # klíč API pro prostory na central
+    python3 -m gateway.admin apikey status | remove
 """
 import argparse
 import getpass
+import os
 import sys
 import time
 
@@ -81,9 +84,68 @@ def cmd_vault(a, args):
 
 def cmd_auth(a, args):
     a.set_auth(args.email, args.mode)
-    kde = "centrální předplatné" if args.mode == "central" else "vlastní účet"
+    kde = "klíč API brány" if args.mode == "central" else "vlastní účet"
     print(f"{args.email}: Claude se teď ověřuje přes {kde}."
           " (Projeví se při dalším startu jeho prostoru.)")
+
+
+def _check_key(key):
+    """Ověří klíč u API — seznam modelů nic nestojí. Vrací důvod odmítnutí,
+    nebo ''. Bez spojení se klíč uloží i tak; ověří se až v prostoru."""
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request("https://api.anthropic.com/v1/models", headers={
+        "x-api-key": key, "anthropic-version": "2023-06-01"})
+    try:
+        with urllib.request.urlopen(req, timeout=10):
+            return ""
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return "Anthropic klíč odmítl (neplatný nebo zrušený)."
+        return ""
+    except Exception:
+        print("Klíč se nepodařilo ověřit (bez spojení s API) — ukládám ho i tak.")
+        return ""
+
+
+def cmd_apikey(a, args):
+    """Klíč API pro prostory na `central`. Leží jen u brány (0600, uživatel
+    hub) a do prostoru přijde jako ANTHROPIC_API_KEY při jeho startu."""
+    path = config.API_KEY_FILE
+    if args.action == "status":
+        key = workspace.api_key()
+        central = sum(1 for u in a.list()
+                      if (u.get("claude_auth") or "central") == "central")
+        if not key:
+            print("Klíč API není nastavený — prostory na central se musí přihlásit samy.")
+        else:
+            when = time.strftime("%d. %m. %Y %H:%M",
+                                 time.localtime(os.path.getmtime(path)))
+            print(f"Klíč API je nastavený (…{key[-4:]}, uložen {when}); "
+                  f"používá ho účtů na central: {central}.")
+        return
+    if args.action == "remove":
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        print("Klíč API smazán. Běžící prostory ho mají do svého dalšího startu.")
+        return
+    key = (getpass.getpass("Klíč API (sk-ant-…): ") if sys.stdin.isatty()
+           else sys.stdin.readline()).strip()
+    if not key.startswith("sk-ant-"):
+        raise ValueError("Tohle nevypadá jako klíč API Anthropicu (začíná sk-ant-).")
+    problem = _check_key(key)
+    if problem:
+        raise ValueError(problem)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(key + "\n")
+    os.replace(tmp, path)
+    print(f"Klíč API uložen (…{key[-4:]}). Platí od dalšího startu prostoru; "
+          "běžící zastavíš: stop <e-mail>.")
 
 
 def cmd_disable(a, args):
@@ -170,10 +232,14 @@ def build_parser():
     va.add_argument("vault")
     va.set_defaults(func=cmd_vault)
 
-    au = sub.add_parser("auth", help="Claude: centrální předplatné / vlastní")
+    au = sub.add_parser("auth", help="Claude: klíč API brány (central) / vlastní účet (own)")
     au.add_argument("email")
     au.add_argument("mode", choices=("central", "own"))
     au.set_defaults(func=cmd_auth)
+
+    ak = sub.add_parser("apikey", help="klíč API pro prostory na central")
+    ak.add_argument("action", choices=("set", "status", "remove"))
+    ak.set_defaults(func=cmd_apikey)
 
     di = sub.add_parser("disable", help="zablokovat účet")
     di.add_argument("email")

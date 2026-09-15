@@ -25,3 +25,8 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 30      # měsíc; jinak by se pořád přihla�
 # brány: na 8GB stroj s weby a mailem se vejdou realisticky čtyři.
 MAX_SESSIONS = int(os.environ.get("HUB_GW_MAX_SESSIONS", "4"))
 IDLE_SLEEP = int(os.environ.get("HUB_GW_IDLE_SLEEP", str(30 * 60)))
+
+# Klíč API Anthropicu pro prostory na `central` (claude-hub-admin apikey set).
+# Čte ho jen uživatel hub (0600); do prostoru přijde jako ANTHROPIC_API_KEY.
+API_KEY_FILE = os.environ.get("HUB_GW_API_KEY_FILE",
+                              os.path.join(GATEWAY_DIR, "anthropic-api-key"))

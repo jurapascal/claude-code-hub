@@ -657,6 +657,12 @@ class Handler(BaseHTTPRequestHandler):
             # Síťový dotaz je zvlášť, aby se na něj nečekalo při každém načtení.
             return self._json(core.version_info(check_remote=True))
         if name == "update":
+            if core.on_gateway():
+                # Na serveru aktualizuje server sám (gateway/update.sh). Instalace
+                # do domova prostoru by nic nezměnila, jen by mátla verzí.
+                return self._json({"started": False, "running": False, "result": {
+                    "ok": False,
+                    "detail": "Hub na serveru se aktualizuje sám každou noc."}})
             started = core.start_update()
             return self._json({"started": started, **core.update_state()})
         if name == "log":

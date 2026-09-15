@@ -985,7 +985,34 @@
     return box;
   }
 
+  /* Hub na serveru (brána): zdroj patří serveru a aktualizuje se sám každou noc
+     (gateway/update.sh), když nikdo nepracuje. Tlačítko by jen nainstalovalo
+     kopii do domova prostoru, která nic nemění. */
+  function aktualizaceServer() {
+    const box = section('Aktualizace aplikace',
+      'Hub na serveru se aktualizuje sám každou noc, když nikdo nepracuje. ' +
+      'Nic se tu instalovat nemusí.');
+    const row = el('div', 'set-row');
+    row.appendChild(el('span', 'set-ver', 'Verze na serveru: ' + state.version.version));
+    box.appendChild(row);
+    const status = el('div', 'set-status');
+    status.textContent = 'Zjišťuju, jak dopadla poslední noční aktualizace…';
+    box.appendChild(status);
+    io.api('update-check').then((v) => {
+      const s = (v && v.server) || {};
+      if (!s.checked_at) {
+        status.textContent = 'Noční aktualizace zatím neproběhla.';
+        return;
+      }
+      const when = new Date(s.checked_at * 1000).toLocaleString('cs-CZ');
+      status.className = 'set-status ' + (s.ok === false ? 'warn' : 'ok');
+      status.textContent = `Naposledy ${when}: ${s.detail || ''}`;
+    }).catch(() => { status.textContent = ''; });
+    return box;
+  }
+
   function aktualizace() {
+    if (state.config && state.config.gateway_user) return aktualizaceServer();
     const box = section('Aktualizace aplikace',
       'Stáhne novou verzi hubu a přeinstaluje ji. (Tlačítko ⟳ v hlavičce jen ' +
       'znovu načte projekty — s tímhle nemá nic společného.)');

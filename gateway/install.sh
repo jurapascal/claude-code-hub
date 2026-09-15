@@ -3,8 +3,9 @@
 #
 # Postaví server pro víc lidí od nuly: balíčky, Node a Claude Code, uživatele
 # `hub`, izolaci (bwrap + AppArmor), bránu jako službu, nginx s HTTPS, firewall,
-# fail2ban, swap a automatické bezpečnostní aktualizace. Jde pouštět znovu:
-# co je hotové, nechá být, a zdroj hubu aktualizuje.
+# fail2ban, swap, bezpečnostní aktualizace systému a noční aktualizaci hubu
+# (gateway/update.sh). Jde pouštět znovu: co je hotové, nechá být, a zdroj hubu
+# aktualizuje.
 #
 # Nastavuje totéž, co ručně běželo na prvním serveru (WEDOS, 9/2026), včetně
 # pastí, které to tam stálo:
@@ -28,6 +29,7 @@
 #     --ref      větev nebo značka hubu, výchozí main
 #     --swap     velikost swapu, když žádný není (výchozí 2G)
 #     --no-tls   certifikát neřešit (HTTPS terminuje něco před serverem)
+#     --no-restart  bránu nerestartovat ani po změně (běžící prostory zůstanou)
 #
 # Na čistém serveru bez repa stačí stáhnout jen tenhle skript:
 #     curl -fsSLO https://raw.githubusercontent.com/jurapascal/claude-code-hub/main/gateway/install.sh
@@ -51,6 +53,7 @@ ADMIN=""
 REF="main"
 SWAP="2G"
 TLS=true
+RESTART=true
 
 A="\033[38;5;208m"; G="\033[38;5;114m"; Y="\033[38;5;180m"; D="\033[2m"; R="\033[0m"
 ok()   { echo -e "  ${G}✓${R} $1"; }
@@ -61,7 +64,7 @@ step() { echo ""; echo -e "  ${A}✦${R} $1"; }
 
 usage() {
     echo "Použití: bash install.sh --domain <adresa> [--email <e-mail>] [--admin <e-mail>]"
-    echo "                         [--ref <větev|značka>] [--swap 2G] [--no-tls]"
+    echo "                         [--ref <větev|značka>] [--swap 2G] [--no-tls] [--no-restart]"
     exit "${1:-0}"
 }
 
@@ -89,6 +92,7 @@ parse_args() {
             --ref)    REF="${2:-}"; shift 2 ;;
             --swap)   SWAP="${2:-}"; shift 2 ;;
             --no-tls) TLS=false; shift ;;
+            --no-restart) RESTART=false; shift ;;
             -h|--help) usage 0 ;;
             *) echo "Neznámý parametr: $1" >&2; usage 1 ;;
         esac
@@ -322,7 +326,10 @@ EOF
     quiet as_hub systemctl --user daemon-reload
 
     if as_hub systemctl --user is-active --quiet claude-hub-gateway; then
-        if $changed || $REPO_CHANGED; then
+        if { $changed || $REPO_CHANGED; } && ! $RESTART; then
+            warn "Brána běží se starou verzí (--no-restart). Restartuj ji, až nikdo nepracuje:"
+            echo "      sudo -u $HUB_USER XDG_RUNTIME_DIR=/run/user/$uid systemctl --user restart claude-hub-gateway"
+        elif $changed || $REPO_CHANGED; then
             # Restart zastaví i běžící prostory (i s Claude Code v nich).
             warn "Restartuji bránu kvůli nové verzi — běžící prostory se zastaví:"
             claude-hub-admin sessions 2>/dev/null | sed 's/^/      /' || true
@@ -488,10 +495,58 @@ summary() {
     echo -e "  Adresa pro appku:  ${G}https://$DOMAIN${R}"
     echo "  Účty:              claude-hub-admin add jmeno@firma.cz --name \"Jméno\""
     echo "                     claude-hub-admin list | sessions | passwd <e-mail>"
-    echo "  Přihlášení Claude: claude-hub-admin auth <e-mail> own  → každý svým účtem"
-    echo "                     (výchozí central potřebuje přihlášení: sudo -iu $HUB_USER claude)"
-    echo "  Aktualizace:       tentýž příkaz znovu — stáhne hub a restartuje bránu"
+    echo "  Klíč API:          claude-hub-admin apikey set  → prostory na central se nepřihlašují"
+    echo "                     (claude-hub-admin auth <e-mail> own = vlastní účet Claude)"
+    echo "  Aktualizace:       sama každou noc, když nikdo nepracuje (ručně: claude-hub-update)"
     echo -e "  ${D}Log instalace: $LOG${R}"
+}
+
+# Parametry instalace pro noční aktualizaci — ta pouští install.sh se stejnými.
+write_conf() {
+    install -d -m 755 /etc/claude-hub
+    {
+        echo "# Parametry instalace brány — čte je noční aktualizace (claude-hub-update)."
+        printf 'DOMAIN=%q\nEMAIL=%q\nREPO_DIR=%q\nTLS=%q\n' "$DOMAIN" "$EMAIL" "$REPO_DIR" "$TLS"
+    } >/etc/claude-hub/install.conf
+    chmod 644 /etc/claude-hub/install.conf
+}
+
+setup_updater() {
+    step "Noční aktualizace"
+    # Ze zdroje, aby se updater aktualizoval s ním; skript stažený samotný (curl)
+    # a starší zdroj bez update.sh vezmou kopii vedle sebe.
+    local src="$REPO_DIR/gateway/update.sh"
+    [ -f "$src" ] || src="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/update.sh"
+    if [ ! -f "$src" ]; then
+        warn "update.sh nenalezen — noční aktualizace nenastavena"
+        return 0
+    fi
+    install -m 755 "$src" /usr/local/sbin/claude-hub-update
+    cat >/etc/systemd/system/claude-hub-update.service <<'EOF'
+[Unit]
+Description=Claude Code Hub - nocni aktualizace brany
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/claude-hub-update
+EOF
+    cat >/etc/systemd/system/claude-hub-update.timer <<'EOF'
+[Unit]
+Description=Claude Code Hub - nocni aktualizace brany
+
+[Timer]
+# Několik pokusů za noc: když někdo pracuje, aktualizace počká na další.
+OnCalendar=*-*-* 02,03,04,05:15:00
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target
+EOF
+    quiet systemctl daemon-reload
+    quiet systemctl enable --now claude-hub-update.timer
+    ok "každou noc 2:15–5:15, když nikdo nepracuje (ručně: claude-hub-update)"
 }
 
 main() {
@@ -507,8 +562,10 @@ main() {
     setup_user
     setup_isolation
     fetch_repo
+    write_conf
     install_admin_tool
     setup_service
+    setup_updater
     setup_nginx
     create_admin
     summary

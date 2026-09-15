@@ -50,8 +50,22 @@ fail2ban, swap a bezpečnostní aktualizace. Když doména na server ještě
 nemíří, certifikát přeskočí — stačí nastavit DNS a pustit ho znovu.
 
 Opakovaný běh je bezpečný: co je hotové, nechá být, stáhne novější hub a bránu
-restartuje, jen když se něco změnilo. Účty se pak spravují přes
-`claude-hub-admin` (obal nad `python3 -m gateway.admin` se správnými cestami).
+restartuje, jen když se něco změnilo (`--no-restart` ji nechá běžet). Účty se
+pak spravují přes `claude-hub-admin` (obal nad `python3 -m gateway.admin` se
+správnými cestami).
+
+**Aktualizace jsou noční a automatické.** `claude-hub-update.timer` zkouší
+2:15–5:15, jestli je na GitHubu novější vydání. Když ano a nikdo nepracuje,
+přepne zdroj, pustí `install.sh` se stejnými parametry (`/etc/claude-hub/install.conf`)
+a restartuje bránu; když někdo pracuje, počká na další pokus. Výsledek je
+v `/etc/claude-hub/update.json` a v prostoru v Nastavení → Aktualizace —
+tlačítko Aktualizovat tam není, zdroj patří serveru.
+
+**Claude přes klíč API.** `claude-hub-admin apikey set` uloží klíč (ověří ho
+u Anthropicu) a prostory na `central` ho při startu dostanou jako
+`ANTHROPIC_API_KEY`, předschválený, takže se nikdo nepřihlašuje. Platí se podle
+spotřeby — v Anthropic Console nastav měsíční limit. `auth <e-mail> own` je
+vlastní účet Claude.
 
 ## Běžící prostory
 
@@ -166,5 +180,7 @@ tak věří, je to únosné. Pro lidi zvenku je jediná čistá cesta API klíč
 drží brána a session ho nikdy nedostane do ruky.
 
 Stejně tak: jedno osobní předplatné Claude sdílené víc lidmi je proti
-podmínkám Anthropicu. Brána je proto psaná tak, aby přepnutí na API klíč byla
-změna konfigurace, ne přepis.
+podmínkám Anthropicu — proto `central` od 2.4.4 znamená klíč API brány, ne
+sdílené přihlášení. Klíč přichází do prostoru v prostředí, takže ho kdo
+v prostoru spustí Claude Code, taky přečte. Mezi kolegy únosné; mimo firmu
+dej každému `own`.

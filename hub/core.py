@@ -1128,6 +1128,27 @@ REPO = "jurapascal/claude-code-hub"
 SRC_DIR = os.path.join(CLAUDE_DIR, "hub-src")
 
 
+def on_gateway():
+    """Běží hub v prostoru na serveru (brána)? Zdroj pak nepatří uživateli:
+    aktualizuje ho server sám (gateway/update.sh), ne tlačítko v prostoru."""
+    return bool(CONFIG.get("gateway_user"))
+
+
+# Kam noční aktualizace brány zapisuje, jak dopadla. /etc je v sandboxu vidět
+# ke čtení, takže to prostor přečte, i když na nic jiného mimo domov nedosáhne.
+GATEWAY_UPDATE_STATUS = "/etc/claude-hub/update.json"
+
+
+def gateway_update_status():
+    """Co naposledy udělala noční aktualizace serveru ({} = zatím nic)."""
+    try:
+        with open(GATEWAY_UPDATE_STATUS, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def version():
     """Verze, která je NAINSTALOVANÁ — čte se ze souboru, ne z importu.
 
@@ -1135,6 +1156,11 @@ def version():
     hlásil pořád tu starou: „aktualizováno" a hned pod tím „je dostupná novější".
     """
     path = os.path.join(CLAUDE_DIR, "hub", "__init__.py")
+    if on_gateway():
+        # V prostoru běží hub ze zdroje serveru. Kopie v domově (po dřívějším
+        # tlačítku Aktualizovat) s tím nemá nic společného — hlásila 2.4.2 nad
+        # serverem, který už jel na 2.4.3.
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "__init__.py")
     try:
         with open(path, encoding="utf-8") as fh:
             for line in fh:
@@ -1248,6 +1274,11 @@ def version_info(check_remote=False):
     src = source_dir()
     info = {"version": version(), "src": src, "repo": REPO, "latest": "",
             "update_available": False}
+    if on_gateway():
+        # Na serveru se nic nekontroluje ani nenabízí: aktualizuje server sám.
+        info["managed"] = True
+        info["server"] = gateway_update_status()
+        return info
     if src and GIT:
         info["commit"] = run([GIT, "-C", src, "rev-parse", "--short", "HEAD"])
     if check_remote:
