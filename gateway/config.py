@@ -30,3 +30,8 @@ IDLE_SLEEP = int(os.environ.get("HUB_GW_IDLE_SLEEP", str(30 * 60)))
 # Čte ho jen uživatel hub (0600); do prostoru přijde jako ANTHROPIC_API_KEY.
 API_KEY_FILE = os.environ.get("HUB_GW_API_KEY_FILE",
                               os.path.join(GATEWAY_DIR, "anthropic-api-key"))
+
+# Klient OAuth pro napojení na Google (claude-hub-admin google set). Zakládá se
+# jednou pro všechny; do prostorů přijde jako GOOGLE_OAUTH_CLIENT_ID/SECRET.
+GOOGLE_CLIENT_FILE = os.environ.get("HUB_GW_GOOGLE_CLIENT_FILE",
+                                    os.path.join(GATEWAY_DIR, "google-oauth-client.json"))

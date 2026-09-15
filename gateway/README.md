@@ -67,6 +67,16 @@ u Anthropicu) a prostory na `central` ho při startu dostanou jako
 spotřeby — v Anthropic Console nastav měsíční limit. `auth <e-mail> own` je
 vlastní účet Claude.
 
+**Služby v prostorech.** V Nastavení → Napojení má každý karty Freelo, Canva,
+Ecomail a Google, pod nimi svoje účty (i víc u jedné služby) a u každého
+Přihlásit. Freelo, Canva a Ecomail jsou oficiální MCP servery s OAuth, které se
+zaregistrují samy — nic se nenastavuje. Pro Google jednou založ klienta OAuth
+v Google Cloudu (typ Desktopová aplikace, zapnout API Gmail, Disk, Kalendář,
+Dokumenty, Tabulky, Prezentace, Formuláře, Úkoly, Kontakty a aplikaci
+**zveřejnit** — v testovacím režimu Google přihlášení po 7 dnech zruší) a ulož
+ho: `claude-hub-admin google set`. Google běží přes workspace-mcp na `uv`,
+který doinstaluje `install.sh`.
+
 ## Běžící prostory
 
 Každý prostor běží ve vlastní systemd scope `claude-hub-u<id>.scope`. Podle ní

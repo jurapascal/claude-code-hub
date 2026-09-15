@@ -1917,6 +1917,9 @@ def browser_state():
 MCP_CATALOG = {
     "google-workspace": {
         "label": "Google Workspace",
+        # Pro člověka je Google v Napojení → služby (hub/connect.py), s účty
+        # a přihlášením. Tady zůstává kvůli návodu na klienta OAuth.
+        "service": "google",
         "note": "Gmail, Disk, Dokumenty, Tabulky, Kalendář, Slides, Formuláře, "
                 "Úkoly, Kontakty a Apps Script — čtení i zápis do buněk.",
         "kind": "stdio",
@@ -2266,7 +2269,8 @@ def mcp_list():
     for s in servers:
         counts[s["state"]] = counts.get(s["state"], 0) + 1
     # Co z katalogu ještě chybí — UI z toho dělá tlačítka „Přidat".
-    missing = [k for k in MCP_CATALOG if not any(
+    # Co má kartu mezi službami (hub/connect.py), se tu podruhé nenabízí.
+    missing = [k for k in MCP_CATALOG if not MCP_CATALOG[k].get("service") and not any(
         s["name"] == k or s["name"].startswith(k + " ") for s in servers)]
     return {"ok": True, "servers": servers, "counts": counts,
             "available": missing, "checked": time.time()}

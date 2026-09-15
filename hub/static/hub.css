@@ -635,6 +635,39 @@ body { display: flex; flex-direction: column; }
 .link-copy:hover { background: var(--card-hover); border-color: var(--border); color: var(--fg-bright); }
 .link .ico { width: 14px; height: 14px; flex: none; }
 
+/* ── služby v Napojení: Freelo, Canva, Ecomail, Google (connect.py) ─────── */
+.svc-list { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 18px; }
+.svc-card {
+  padding: 12px 14px; border-radius: var(--radius);
+  background: var(--bg-card); border: 1px solid var(--border);
+}
+.svc-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.svc-head strong { font-size: 14px; color: var(--fg-bright); }
+.svc-note { color: var(--dim); font-size: 12px; }
+.svc-accounts { display: flex; flex-direction: column; margin: 8px 0 6px; }
+.svc-acc { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+.svc-acc-wrap + .svc-acc-wrap { border-top: 1px solid var(--border); }
+.svc-empty { color: var(--dim); font-size: 12px; padding: 2px 0; }
+.svc-missing { margin-top: 6px; }
+.svc-add { margin-top: 4px; }
+.svc-form { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 8px; }
+.svc-form[hidden] { display: none; }
+.svc-form .mcp-field { align-self: stretch; }
+.svc-login {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+  margin: 6px 0; padding: 10px 12px; border-radius: var(--radius);
+  background: color-mix(in srgb, var(--amber) 6%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--amber) 30%, var(--border));
+}
+.svc-step { font-size: 12.5px; color: var(--fg); }
+.svc-paste { display: flex; gap: 6px; align-self: stretch; }
+.svc-paste input {
+  flex: 1; min-width: 0; padding: 6px 8px; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--border);
+  color: var(--fg-bright); font: inherit; font-size: 12.5px;
+}
+.svc-tech { margin-top: 10px; }
+
 /* ── dotaz jako karta ────────────────────────────────────────────────────── */
 /* Když se Claude Code ptá, nemá být na co koukat do terminálu: otázka i volby
    patří do okna. Karta proto leží přes terminál celou plochou — dotaz z čar

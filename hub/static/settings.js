@@ -679,6 +679,305 @@
     return box;
   }
 
+  /* Služby — karta na službu, pod ní účty (hub/connect.py). Pro člověka, který
+     chce „napojit Freelo", ne registrovat MCP server: popisek účtu, Přihlásit,
+     a na serveru vložit adresu, kam přihlášení přesměrovalo. Víc účtů u jedné
+     služby je normální (firma, osobní). */
+  function sluzby() {
+    const wrap = el('div', 'svc-list');
+    wrap.appendChild(el('div', 'set-dim', 'Načítám služby…'));
+    let data = null;
+    let timer = null;
+    const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+
+    async function load(refresh) {
+      clearTimeout(timer);
+      try {
+        data = await io.api('connect' + (refresh ? '?refresh=1' : ''));
+      } catch (err) {
+        wrap.textContent = '';
+        wrap.appendChild(el('div', 'set-warn', 'Služby se nenačetly: ' + err.message));
+        return;
+      }
+      if (!wrap.isConnected && wrap.parentNode === null && data) { /* ještě nevložené */ }
+      // Rozdělané přihlášení se nepřekresluje — člověk by přišel o vložený text.
+      if (!wrap.querySelector('.svc-login')) draw();
+      if (data.checking) timer = setTimeout(() => load(false), 2500);
+    }
+
+    function draw() {
+      wrap.textContent = '';
+      for (const svc of data.services || []) wrap.appendChild(card(svc));
+    }
+
+    function field(parent, label, placeholder, help) {
+      const row = el('label', 'mcp-field');
+      row.appendChild(el('span', null, label));
+      const input = el('input');
+      input.type = 'text';
+      input.placeholder = placeholder || label;
+      input.autocomplete = 'off';
+      row.appendChild(input);
+      if (help) row.appendChild(el('small', null, help));
+      parent.appendChild(row);
+      return input;
+    }
+
+    function card(svc) {
+      const box = el('div', 'svc-card');
+      box.dataset.service = svc.id;
+      const head = el('div', 'svc-head');
+      head.appendChild(el('strong', null, svc.label));
+      head.appendChild(el('span', 'svc-note', svc.note));
+      box.appendChild(head);
+
+      const list = el('div', 'svc-accounts');
+      if (!(svc.accounts || []).length) list.appendChild(el('div', 'svc-empty', 'Zatím žádný účet.'));
+      for (const acc of svc.accounts || []) list.appendChild(accountRow(svc, acc));
+      box.appendChild(list);
+      if (svc.warn) box.appendChild(el('div', 'mcp-warn', svc.warn));
+
+      if (svc.missing) {
+        box.appendChild(el('div', 'set-warn svc-missing', svc.missing));
+        if (svc.setup) {
+          const toggle = el('button', 'btn ghost svc-add', 'Nastavit Google');
+          const form = googleClient(svc);
+          form.hidden = true;
+          toggle.onclick = () => { form.hidden = !form.hidden; };
+          box.appendChild(toggle);
+          box.appendChild(form);
+        }
+        return box;
+      }
+      const add = el('button', 'btn ghost svc-add', '+ Přidat účet');
+      const form = el('div', 'svc-form');
+      form.hidden = true;
+      add.onclick = () => {
+        form.hidden = !form.hidden;
+        add.textContent = form.hidden ? '+ Přidat účet' : 'Zavřít';
+        if (!form.hidden) {
+          addForm(svc, form);
+          const first = form.querySelector('input');
+          if (first) first.focus();
+        }
+      };
+      box.appendChild(add);
+      box.appendChild(form);
+      return box;
+    }
+
+    function accountRow(svc, acc) {
+      const [cls, dot] = MCP_STATES[acc.state] || MCP_STATES.unknown;
+      const wrapRow = el('div', 'svc-acc-wrap');
+      const row = el('div', 'svc-acc');
+      row.appendChild(el('span', 'mcp-dot ' + cls, dot));
+      const col = el('span', 'onb-col');
+      col.appendChild(el('span', null, acc.label));
+      col.appendChild(el('small', null, [acc.status, acc.detail].filter(Boolean).join(' · ')));
+      row.appendChild(col);
+      row.appendChild(el('span', 'spacer'));
+      const slot = el('div', 'svc-slot');
+      if (acc.state !== 'ok' && acc.state !== 'unknown') {
+        const again = el('button', 'btn ghost', 'Přihlásit');
+        again.onclick = async () => {
+          again.disabled = true;
+          try {
+            const r = svc.kind === 'google'
+              ? await io.api('connect', {action: 'add', service: svc.id})
+              : await io.api('connect', {action: 'login', name: acc.name});
+            startLogin(svc, r, slot);
+          } catch (err) {
+            io.toast('Nepovedlo se: ' + err.message);
+            again.disabled = false;
+          }
+        };
+        row.appendChild(again);
+      }
+      const del = el('button', 'set-x', '×');
+      del.title = 'Odebrat účet';
+      del.onclick = async () => {
+        if (!confirm(`Odebrat účet ${acc.label} (${svc.label})?`)) return;
+        try {
+          const r = await io.api('connect', {action: 'remove', service: svc.id, name: acc.name});
+          io.toast(r.detail || 'Odebráno.');
+          load(true);
+        } catch (err) { io.toast('Nepovedlo se: ' + err.message); }
+      };
+      row.appendChild(del);
+      wrapRow.appendChild(row);
+      wrapRow.appendChild(slot);
+      return wrapRow;
+    }
+
+    function addForm(svc, form) {
+      form.textContent = '';
+      const inputs = {};
+      if (svc.kind !== 'google') {
+        inputs.label = field(form, 'Popisek účtu', 'třeba firma nebo osobní',
+          'Podle něj účty poznáš ty i Claude.');
+      }
+      if (svc.field) inputs.account = field(form, svc.field.label, '', svc.field.help);
+      const go = el('button', 'btn primary', svc.kind === 'google' ? 'Přihlásit Google účet' : 'Přihlásit');
+      form.appendChild(go);
+      const slot = el('div', 'svc-slot');
+      form.appendChild(slot);
+      for (const input of Object.values(inputs)) {
+        input.onkeydown = (ev) => { if (ev.key === 'Enter') go.click(); };
+      }
+      go.onclick = async () => {
+        const payload = {action: 'add', service: svc.id};
+        for (const [key, input] of Object.entries(inputs)) {
+          payload[key] = input.value.trim();
+          if (!payload[key]) {
+            io.toast(key === 'label' ? 'Pojmenuj účet, ať se dají poznat.' : 'Vyplň ' + svc.field.label + '.');
+            input.focus();
+            return;
+          }
+        }
+        go.disabled = true;
+        go.textContent = 'Připravuju přihlášení…';
+        try {
+          const r = await io.api('connect', payload);
+          go.hidden = true;
+          for (const input of Object.values(inputs)) input.disabled = true;
+          startLogin(svc, r, slot);
+        } catch (err) {
+          io.toast('Nepovedlo se: ' + err.message);
+          go.disabled = false;
+          go.textContent = svc.kind === 'google' ? 'Přihlásit Google účet' : 'Přihlásit';
+        }
+      };
+    }
+
+    /* Přihlášení: tlačítko na stránku služby a pole na adresu, kam to potom
+       přesměrovalo. Na počítači to většinou doběhne samo (hlídá se stav). */
+    function startLogin(svc, r, slot) {
+      const login = r.login || {};
+      if (login.done) {
+        io.toast(login.message || 'Přihlášeno.');
+        load(true);
+        return;
+      }
+      slot.textContent = '';
+      const p = el('div', 'svc-login');
+      p.appendChild(el('div', 'svc-step', '1. Otevři přihlášení a potvrď přístup.'));
+      const openBtn = el('button', 'btn primary', 'Otevřít přihlášení — ' + svc.label);
+      openBtn.onclick = () => io.open(login.url);
+      p.appendChild(openBtn);
+      p.appendChild(el('div', 'svc-step', data && data.on_server
+        ? '2. Stránka, kam tě to pak pošle, se nenačte — to je v pořádku. Zkopíruj celou adresu z adresního řádku a vlož ji sem:'
+        : '2. Hotovo se ukáže samo. Kdyby ne, vlož sem adresu z adresního řádku stránky, kam tě to poslalo:'));
+      const row = el('div', 'svc-paste');
+      const input = el('input');
+      input.type = 'text';
+      input.placeholder = 'http://localhost…';
+      input.autocomplete = 'off';
+      const done = el('button', 'btn primary', 'Dokončit');
+      row.appendChild(input);
+      row.appendChild(done);
+      p.appendChild(row);
+      const status = el('div', 'set-note svc-status');
+      p.appendChild(status);
+      const cancel = el('button', 'linkbtn', 'Zrušit');
+      p.appendChild(cancel);
+      slot.appendChild(p);
+
+      let stopped = false;
+      const finish = (res) => {
+        stopped = true;
+        io.toast(res.message || 'Napojeno.');
+        slot.textContent = '';
+        load(true);
+      };
+      done.onclick = async () => {
+        const value = input.value.trim();
+        if (!value) { input.focus(); return; }
+        done.disabled = true;
+        status.className = 'set-note svc-status';
+        status.textContent = 'Ověřuju…';
+        try {
+          const res = await io.api('connect', {action: 'finish', id: login.id, url: value});
+          if (res.done && res.ok) { finish(res); return; }
+          status.className = 'set-warn svc-status';
+          status.textContent = res.message || 'Přihlášení se nepovedlo.';
+          if (res.done) stopped = true;
+          else done.disabled = false;
+        } catch (err) {
+          status.className = 'set-warn svc-status';
+          status.textContent = err.message;
+          done.disabled = false;
+        }
+      };
+      input.onkeydown = (ev) => { if (ev.key === 'Enter') done.click(); };
+      cancel.onclick = () => {
+        stopped = true;
+        io.api('connect', {action: 'cancel', id: login.id}).catch(() => {});
+        slot.textContent = '';
+        load(false);
+      };
+      (async () => {
+        while (!stopped) {
+          await wait(1500);
+          if (stopped || !p.isConnected) break;
+          let st;
+          try {
+            st = await io.api('connect', {action: 'status', id: login.id});
+          } catch (_) { continue; }
+          if (stopped) break;
+          if (st.done && st.ok) { finish(st); break; }
+          if (st.done) {
+            stopped = true;
+            status.className = 'set-warn svc-status';
+            status.textContent = st.message || 'Přihlášení se nepovedlo.';
+            done.disabled = true;
+          }
+        }
+      })();
+    }
+
+    // Klient OAuth pro Google na počítači (na serveru ho drží správce brány).
+    function googleClient(svc) {
+      const f = el('div', 'svc-form');
+      const steps = el('ol', 'mcp-steps');
+      for (const step of svc.setup || []) {
+        const li = el('li', 'mcp-step');
+        const head = el('div', 'mcp-step-head');
+        head.appendChild(el('strong', null, step.title));
+        if (step.url) {
+          head.appendChild(el('span', 'spacer'));
+          const go = el('button', 'btn ghost', step.button || 'Otevřít');
+          go.onclick = () => io.open(step.url);
+          head.appendChild(go);
+        }
+        li.appendChild(head);
+        li.appendChild(el('div', 'set-note', step.text));
+        steps.appendChild(li);
+      }
+      f.appendChild(steps);
+      const id = field(f, 'Client ID', '….apps.googleusercontent.com');
+      const secret = field(f, 'Client secret');
+      secret.type = 'password';
+      const save = el('button', 'btn primary', 'Uložit klienta');
+      save.onclick = async () => {
+        save.disabled = true;
+        try {
+          const r = await io.api('connect', {action: 'google-client',
+                                             client_id: id.value, client_secret: secret.value});
+          io.toast(r.detail || 'Uloženo.');
+          load(false);
+        } catch (err) {
+          io.toast('Nepovedlo se: ' + err.message);
+          save.disabled = false;
+        }
+      };
+      f.appendChild(save);
+      return f;
+    }
+
+    load(false);
+    return wrap;
+  }
+
   function napojeni() {
     const box = section('Napojení (MCP) — Claude Code',
       'Služby, do kterých Claude Code vidí — konektory z účtu claude.ai i ' +
@@ -692,6 +991,8 @@
     const btns = el('div', 'onb-btns');
     const check = el('button', 'actionbtn', 'Zkontrolovat znovu');
     btns.appendChild(check);
+    box.appendChild(sluzby());
+    box.appendChild(el('div', 'set-title svc-tech', 'Všechna napojení'));
     box.appendChild(acct);
     box.appendChild(summary);
     box.appendChild(list);

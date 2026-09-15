@@ -134,6 +134,8 @@ class HubProc:
         # Klíč API brány jen tomu, kdo jede na `central` — `own` ho nesmí
         # zdědit ani z prostředí samotné brány.
         env.pop("ANTHROPIC_API_KEY", None)
+        env.pop("GOOGLE_OAUTH_CLIENT_ID", None)
+        env.pop("GOOGLE_OAUTH_CLIENT_SECRET", None)
         env.update(workspace.session_env(self.user))
         # XDG_RUNTIME_DIR musí session dostat, jinak si systemd --user scope
         # nemá kam sáhnout (limity by tiše vypadly).

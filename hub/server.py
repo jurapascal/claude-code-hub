@@ -29,7 +29,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import account, core, pty_backend, qr, remote, stats
+from . import account, connect, core, pty_backend, qr, remote, stats
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -690,6 +690,35 @@ class Handler(BaseHTTPRequestHandler):
                     progress=lambda m: core.job_step("stats", m)))
                 return self._json({"running": True, "step": "počítám…"})
             return self._json({"running": False, **(cached.get("result") or {})})
+        if name == "connect":
+            # Služby pro člověka — Freelo, Canva, Ecomail, Google, i více účtů
+            # (hub/connect.py). Nad technickým katalogem /api/mcp.
+            action = payload.get("action") or ""
+            if action == "add":
+                result = connect.add_account(payload.get("service", ""),
+                                             payload.get("label", ""),
+                                             payload.get("account", ""))
+                return self._json(result, 200 if result.get("ok") else 400)
+            if action == "login":
+                result = connect.login_start(payload.get("name", ""))
+                return self._json(result, 200 if result.get("ok") else 400)
+            if action == "finish":
+                return self._json(connect.login_finish(payload.get("id", ""),
+                                                       payload.get("url", "")))
+            if action == "status":
+                return self._json(connect.login_status(payload.get("id", "")))
+            if action == "cancel":
+                return self._json(connect.login_cancel(payload.get("id", "")))
+            if action == "remove":
+                result = connect.remove_account(payload.get("service", ""),
+                                                payload.get("name", ""))
+                return self._json(result, 200 if result.get("ok") else 400)
+            if action == "google-client":
+                result = connect.save_google_client(payload.get("client_id", ""),
+                                                    payload.get("client_secret", ""))
+                return self._json(result, 200 if result.get("ok") else 400)
+            return self._json(connect.services(
+                bool(query.get("refresh") or payload.get("refresh"))))
         if name == "mcp":
             # Napojení na cizí služby. Zdravotní kontrola oslovuje každý server
             # zvlášť (~10 s), takže stejný postup jako u statistik: spočítat na

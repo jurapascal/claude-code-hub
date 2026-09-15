@@ -19,9 +19,12 @@ přes `--password` (hodí se do skriptu, ale zůstane v historii shellu).
     python3 -m gateway.admin stop --orphans      # zastavit osiřelé
     python3 -m gateway.admin apikey set          # klíč API pro prostory na central
     python3 -m gateway.admin apikey status | remove
+    python3 -m gateway.admin google set          # klient OAuth pro Google (jednou)
+    python3 -m gateway.admin google status | remove
 """
 import argparse
 import getpass
+import json
 import os
 import sys
 import time
@@ -148,6 +151,45 @@ def cmd_apikey(a, args):
           "běžící zastavíš: stop <e-mail>.")
 
 
+def cmd_google(a, args):
+    """Klient OAuth pro napojení na Google (Nastavení → Napojení v prostorech).
+
+    Zakládá se jednou pro všechny v Google Cloudu (typ Desktopová aplikace,
+    aplikace zveřejněná — v testovacím režimu Google přihlášení po 7 dnech
+    zruší). Lidé si pak v prostoru přidávají vlastní Google účty."""
+    path = config.GOOGLE_CLIENT_FILE
+    if args.action == "status":
+        cid, _ = workspace.google_client()
+        if cid:
+            when = time.strftime("%d. %m. %Y %H:%M", time.localtime(os.path.getmtime(path)))
+            print(f"Klient Google: {cid} (uložen {when}).")
+        else:
+            print("Klient Google není nastavený — Google v prostorech čeká na správce.")
+        return
+    if args.action == "remove":
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        print("Klient Google smazán. Napojené účty přestanou fungovat po dalším startu prostoru.")
+        return
+    tty = sys.stdin.isatty()
+    cid = (input("Client ID: ") if tty else sys.stdin.readline()).strip()
+    secret = (getpass.getpass("Client secret: ") if tty else sys.stdin.readline()).strip()
+    if not cid.endswith(".apps.googleusercontent.com"):
+        raise ValueError("Client ID končí na .apps.googleusercontent.com — zkontroluj, co jsi vložil.")
+    if not secret:
+        raise ValueError("Chybí client secret.")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        json.dump({"client_id": cid, "client_secret": secret}, fh)
+    os.replace(tmp, path)
+    print("Klient Google uložen. Platí od dalšího startu prostoru; lidé si pak "
+          "v Nastavení → Napojení přidají svoje Google účty.")
+
+
 def cmd_disable(a, args):
     a.set_disabled(args.email, True)
     print(f"{args.email} zablokován (a odhlášen).")
@@ -240,6 +282,10 @@ def build_parser():
     ak = sub.add_parser("apikey", help="klíč API pro prostory na central")
     ak.add_argument("action", choices=("set", "status", "remove"))
     ak.set_defaults(func=cmd_apikey)
+
+    go = sub.add_parser("google", help="klient OAuth pro napojení na Google")
+    go.add_argument("action", choices=("set", "status", "remove"))
+    go.set_defaults(func=cmd_google)
 
     di = sub.add_parser("disable", help="zablokovat účet")
     di.add_argument("email")

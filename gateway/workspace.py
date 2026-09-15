@@ -113,10 +113,29 @@ def api_key():
         return ""
 
 
+def google_client():
+    """(client_id, client_secret) klienta OAuth pro Google, nebo ('', '')."""
+    try:
+        with open(config.GOOGLE_CLIENT_FILE, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return ((data.get("client_id") or "").strip(),
+                (data.get("client_secret") or "").strip())
+    except (OSError, ValueError, AttributeError):
+        return "", ""
+
+
 def session_env(user):
-    """Proměnné prostředí navíc pro prostor: klíč API, a to jen na `central`."""
+    """Proměnné prostředí navíc pro prostor: klíč API (jen `central`) a klient
+    OAuth pro napojení na Google (všem — účty si každý přidává sám)."""
+    env = {}
     key = api_key() if claude_auth(user) == "central" else ""
-    return {"ANTHROPIC_API_KEY": key} if key else {}
+    if key:
+        env["ANTHROPIC_API_KEY"] = key
+    cid, secret = google_client()
+    if cid and secret:
+        env["GOOGLE_OAUTH_CLIENT_ID"] = cid
+        env["GOOGLE_OAUTH_CLIENT_SECRET"] = secret
+    return env
 
 
 def _approve_api_key(home, key):

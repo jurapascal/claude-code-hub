@@ -27,7 +27,10 @@ async function api(path, body) {
     // Server chybu posílá jako {"error": "…"} — do hlášky patří věta, ne JSON.
     const body = await res.text();
     let message = body;
-    try { message = JSON.parse(body).error || body; } catch (_) { /* není JSON */ }
+    try {
+      const parsed = JSON.parse(body);
+      message = parsed.error || parsed.detail || body;
+    } catch (_) { /* není JSON */ }
     throw new Error(message);
   }
   return res.json();
@@ -1576,6 +1579,8 @@ function hubIO() {
     toast,
     notice: toast,
     copy: copyText,
+    // Odkaz ven — na serveru v prohlížeči toho, kdo se dívá (openLink).
+    open: openLink,
     pickFolder,
     reload,
     refreshState: async () => { STATE = await api('state'); },

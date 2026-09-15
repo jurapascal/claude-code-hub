@@ -153,6 +153,17 @@ install_node_claude() {
         /usr/*) ok "Claude Code $(claude --version 2>/dev/null | head -n1) ($claude)" ;;
         *) die "claude leží v $claude — prostor ho neuvidí (vidí jen /usr). Nainstaluj ho přes npm -g." ;;
     esac
+
+    # uv (uvx) spouští napojení na Google (workspace-mcp). Taky do /usr, jinak
+    # ho prostor neuvidí.
+    local uvx=""
+    command -v uvx >/dev/null 2>&1 && uvx="$(readlink -f "$(command -v uvx)")"
+    case "$uvx" in
+        /usr/*) ;;
+        *) info "uv (napojení na Google)"
+           quiet sh -c 'curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh' ;;
+    esac
+    ok "uv $(uv --version 2>/dev/null | cut -d' ' -f2)"
 }
 
 setup_swap() {
