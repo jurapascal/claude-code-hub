@@ -1504,6 +1504,11 @@ function handle(msg) {
 /* Re-attach after a reload or a dropped connection: the server is the source of
  * truth about which sessions exist. */
 function restore(list) {
+  /* Tab, na kterém člověk je, zůstává. Dřív se po každém znovupřipojení
+     (výpadek sítě, uspaný počítač, proxy brány zavře nečinné spojení) přepnulo
+     na poslední tab a každý tab, který mezitím přibyl, se aktivoval — uprostřed
+     práce to „skočilo" jinam. Na poslední se přepne jen při prvním načtení. */
+  const before = ACTIVE;
   const live = new Set(list.map(s => s.id));
   for (const tab of [...TABS]) {
     if (tab.id && !live.has(tab.id)) closeTab(tab);
@@ -1512,11 +1517,13 @@ function restore(list) {
     let tab = TABS.find(t => t.id === info.id);
     if (!tab) {
       tab = createTab({kind: info.kind, path: info.path, title: info.title,
-                       id: info.id, agent: info.agent, model: info.model});
+                       id: info.id, agent: info.agent, model: info.model,
+                       background: true});
     }
     attachTab(tab);
   }
-  if (TABS.length) activate(TABS[TABS.length - 1]);
+  const keep = before && TABS.includes(before) ? before : TABS[TABS.length - 1];
+  if (keep && keep !== ACTIVE) activate(keep);
 }
 
 /* Připojit tab k session na serveru. Server pošle celý výpis znovu, takže se

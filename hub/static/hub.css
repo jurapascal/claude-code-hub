@@ -473,6 +473,9 @@ body { display: flex; flex-direction: column; }
 .composer.on .composer-peek { display: none; }
 /* Rozbalená bublina si dotaz obsluhuje sama — dvakrát tytéž volby nemají smysl. */
 .composer.on .composer-answer { display: none; }
+/* Bublina na kód z přihlášení: jen pole, odeslání a Esc — model, režim ani
+   příloha k přihlašování nepatří (composer.js, setCodePrompt). */
+.composer.code .composer-chip:not([data-act=esc]) { display: none; }
 
 /* Přílohy nad textem. Cesta k souboru je to jediné, co si Claude Code odnese,
    jenže z ní nikdo nepozná, co vlastně přiložil — tak je nad polem vidět

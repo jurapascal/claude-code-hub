@@ -57,6 +57,14 @@
   // Delší panel je spíš výpis než hláška — tomu ať zůstane terminál.
   const NOTE_MAX = 8;
 
+  /* Přihlášení (/login, první start bez účtu): Claude Code ukáže odkaz a pod
+     ním čeká na kód z přihlašovací stránky. Není to prompt ani dialog s
+     volbami — jen řádek na vložení, a bez bubliny by kód nebylo kam dát. */
+  const LOGIN_CODE = /Paste (the )?code here/i;
+  // Hláška, po které Claude Code čeká jen na Enter: po přihlášení („continue")
+  // i po neplatném kódu („retry" — jinak by se z chyby nedalo myší ven).
+  const CONTINUE = /Press Enter to (continue|retry)/i;
+
   /* Dialog, který volby nečísluje — stojí prostě pod sebou a vybranou označuje
      jedině šipka („Yes, I trust this folder" hned po startu). Že jde o nabídku
      a ne o výpis, řekne až nápověda s Enterem: samotná šipka na začátku řádku
@@ -503,6 +511,8 @@
     let draft = '';
     let hiddenByUser = false;
     let shown = false;
+    let codePrompt = false;  // Claude Code čeká na kód z přihlášení (LOGIN_CODE)
+    let normalPlaceholder = '';
     /* Bublina se ukáže, když je dole klidný prompt — jenže tím, že se ukáže,
        terminál zkrátí; agent překreslí TUI a prompt může zmizet. Pak by se
        schovala, terminál povyroste, prompt je zpátky, a takhle dokola. Po
@@ -542,10 +552,13 @@
       // odeslal zvlášť. Jednořádkový jde rovnou — bez uvozovacích sekvencí.
       toPty(body.includes('\n') ? '\x1b[200~' + body + '\x1b[201~' : body);
       setTimeout(() => toPty('\r'), 180);
-      // Dvakrát po sobě to samé je v seznamu jen k horšímu.
-      if (history[history.length - 1] !== body) history.push(body);
-      if (history.length > HIST_MAX) history.splice(0, history.length - HIST_MAX);
-      saveHistory();
+      // Kód z přihlášení do historie nepatří — platí jednou a je to heslo.
+      if (!codePrompt) {
+        // Dvakrát po sobě to samé je v seznamu jen k horšímu.
+        if (history[history.length - 1] !== body) history.push(body);
+        if (history.length > HIST_MAX) history.splice(0, history.length - HIST_MAX);
+        saveHistory();
+      }
       histAt = -1;
       draft = '';
     }
@@ -876,6 +889,11 @@
                      {label: '↓', title: 'O položku níž', run: () => press('\x1b[B')},
                      {label: 'Vybrat (Enter)', run: () => press('\r')},
                      {label: 'Zrušit (Esc)', ghost: true, run: () => press('\x1b')});
+      } else if (!rows.length && lines.length && CONTINUE.test(text)) {
+        // Čeká se jen na Enter (po přihlášení a podobně) — tlačítko do lišty,
+        // ať se nemusí hledat terminál pod ní.
+        buttons.push({label: /retry/i.test(text) ? 'Zkusit znovu (Enter)' : 'Pokračovat (Enter)',
+                      run: () => press('\r')});
       }
 
       // Překreslovat se má jen při změně: jinak by tlačítko zmizelo pod prstem
@@ -925,7 +943,7 @@
       answer.hidden = !buttons.length;
       answerOpts.textContent = '';
       if (buttons.length) {
-        answerQ.textContent = 'Výběr:';
+        answerQ.textContent = picker ? 'Výběr:' : '';
         for (const b of buttons) {
           const btn = el('button', 'composer-answer-btn' +
                                    (b.sel ? ' sel' : '') + (b.ghost ? ' ghost' : ''),
@@ -1155,8 +1173,10 @@
       // U cizího agenta se nepočítá, kolik řádků patří jeho vstupnímu poli —
       // to je měřené na Claudeovi. own = 0 znamená „nepřekrývat nic",
       // takže se terminál zkrátí přesně o výšku bubliny.
-      const own = AG.full ? (lastLines ? ownRows(lastLines) : 0) : 0;
-      if (AG.full && !own) return;
+      // Kód z přihlášení: výzva se nepřekrývá (řádek „Paste code here" má
+      // zůstat vidět), terminál se zkrátí o celou bublinu jako u cizího agenta.
+      const own = AG.full && !codePrompt ? (lastLines ? ownRows(lastLines) : 0) : 0;
+      if (AG.full && !own && !codePrompt) return;
       // Přeměřovat při každém překreslení by znamenalo vynutit si přepočet
       // rozvržení stránky uprostřed výpisu. Sáhne se na to, jen když se něco
       // změnilo — jinak stačí porovnat čísla řádků.
@@ -1199,6 +1219,20 @@
 
     /* ── viditelnost ──────────────────────────────────────────────────────── */
 
+    /* Bublina na kód z přihlášení: jen pole a odeslání s popiskem, co do něj
+       patří. Model, režim ani příloha k přihlašování nepatří (hub.css). */
+    function setCodePrompt(on) {
+      codePrompt = on;
+      root.classList.toggle('code', on);
+      if (on) {
+        normalPlaceholder = input.placeholder;
+        input.placeholder = 'Vlož kód z přihlašovací stránky a odešli (Enter)';
+      } else if (normalPlaceholder) {
+        input.placeholder = normalPlaceholder;
+      }
+      dirty = true;
+    }
+
     function looksIdle() {
       if (tab.exited) return false;
       const buf = term.buffer.active;
@@ -1211,6 +1245,12 @@
         return true;
       }
       const lines = visibleBottom(term, PROBE_ROWS);
+      const code = lines.some(l => LOGIN_CODE.test(l));
+      if (code !== codePrompt) setCodePrompt(code);
+      if (code) {
+        lastLines = lines;
+        return true;
+      }
       if (lines.some(l => DIALOG.test(l))) return false;
       if (!lines.some(l => PROMPT.test(l)) || !lines.some(l => HINT.test(l))) {
         return false;
