@@ -554,7 +554,7 @@
       const path = imageOf(name);
       return path ? io.fileUrl(path) : '';
     };
-    q('.onb-title').textContent = io.title || ('Obsidian — ' + (tree.name || 'trezor'));
+    q('.onb-title').textContent = io.title || ('Osobní Obsidian — ' + (tree.name || 'trezor'));
     q('.onb-sub').textContent = tree.exists === false ? 'trezor nenalezen' : plural(notes.length);
     renderList();
     if (!notes.length) {
