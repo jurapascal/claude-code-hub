@@ -405,6 +405,19 @@ write_site() {
     proxy="$(cat <<EOF
     client_max_body_size 25m;
 
+    # Veřejné stránky o aplikaci a ochraně soukromí — Google je chce, aby šlo
+    # zveřejnit přihlášení OAuth. Bez přihlášení brány, rovnou ze zdroje.
+    location = /o-aplikaci {
+        default_type text/html;
+        charset utf-8;
+        alias $REPO_DIR/gateway/public/o-aplikaci.html;
+    }
+    location = /ochrana-soukromi {
+        default_type text/html;
+        charset utf-8;
+        alias $REPO_DIR/gateway/public/ochrana-soukromi.html;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:$PORT;
         proxy_http_version 1.1;
@@ -416,7 +429,7 @@ write_site() {
         # Terminál i taby jedou přes websocket; bez upgradu a dlouhého
         # timeoutu by se po minutě ticha odpojily.
         proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection \$connection_upgrade;
+        proxy_set_header Connection \$hub_connection_upgrade;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
     }
@@ -459,10 +472,20 @@ EOF
 setup_nginx() {
     step "nginx a HTTPS ($DOMAIN)"
     # shellcheck disable=SC2016  # proměnné nginx, ne shellu — musí zůstat doslova
-    echo 'map $http_upgrade $connection_upgrade { default upgrade; "" close; }' \
+    # Vlastní jméno proměnné: `$connection_upgrade` mívají i konfigurace jiných
+    # webů na stejném serveru a dvě definice téže proměnné nginx odmítne.
+    echo 'map $http_upgrade $hub_connection_upgrade { default upgrade; "" close; }' \
         >/etc/nginx/conf.d/hub-upgrade.conf
+    # Nová konfigurace, která neprojde kontrolou, by v souboru zůstala a nginx
+    # by padl až při dalším restartu — proto záloha a návrat.
+    local site=/etc/nginx/sites-available/claude-hub
+    [ -f "$site" ] && cp -a "$site" "$site.bak"
     write_site
-    quiet nginx -t
+    if ! nginx -t >>"$LOG" 2>&1; then
+        [ -f "$site.bak" ] && mv -f "$site.bak" "$site"
+        die "Konfigurace nginx neprošla kontrolou — vrácena předchozí (podrobnosti v $LOG)."
+    fi
+    rm -f "$site.bak"
     quiet systemctl enable nginx
     quiet systemctl reload-or-restart nginx
 

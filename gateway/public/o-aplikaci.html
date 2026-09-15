@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code Hub — o aplikaci</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; font: 16px/1.6 system-ui, "Segoe UI", Ubuntu, sans-serif; background: #faf8f5; color: #262320; }
+  main { max-width: 720px; margin: 0 auto; padding: 48px 20px 64px; }
+  h1 { font-size: 28px; margin: 0 0 8px; }
+  h2 { font-size: 19px; margin: 32px 0 8px; }
+  p, li { color: #3a3633; }
+  a { color: #b85c1c; }
+  .lead { font-size: 18px; color: #5a5450; margin-bottom: 24px; }
+  footer { margin-top: 48px; font-size: 14px; color: #7a736e; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1c1a19; color: #ece7e2; }
+    p, li { color: #d6d0ca; }
+    .lead, footer { color: #a39b95; }
+    a { color: #e0843c; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Claude Code Hub</h1>
+  <p class="lead">Pracovní prostředí pro tým: každý člen má na serveru
+  test.alba-rosa.cz vlastní izolovaný prostor, ve kterém pracuje s asistentem
+  Claude Code — s projekty, poznámkami a službami, které si sám napojí.</p>
+
+  <h2>Co aplikace dělá</h2>
+  <ul>
+    <li>Přihlášení do prostoru mají jen pozvaní členové týmu; účty zakládá správce.</li>
+    <li>V prostoru běží Claude Code a jeho terminál, soukromá paměť a projekty uživatele.</li>
+    <li>Uživatel si může napojit vlastní účty služeb — Freelo, Canva, Ecomail
+      a Google (Gmail, Disk, Kalendář, Dokumenty, Tabulky, Prezentace, Formuláře,
+      Úkoly, Kontakty). Claude s nimi pracuje jen tehdy, když ho o to uživatel
+      sám požádá.</li>
+    <li>Napojení jsou soukromá: jiní uživatelé k nim ani k datům z nich nemají přístup.</li>
+  </ul>
+
+  <h2>Ochrana soukromí</h2>
+  <p>Jak aplikace zachází s daty z účtu Google a jak přístup zrušit, popisují
+  <a href="/ochrana-soukromi">zásady ochrany soukromí</a>.</p>
+
+  <h2>Kontakt</h2>
+  <p>Otázky k aplikaci a k datům: <a href="mailto:boucnik.jiri@gmail.com">boucnik.jiri@gmail.com</a></p>
+
+  <h2 lang="en">In English</h2>
+  <p lang="en">Claude Code Hub is an internal workspace for a small team. Each
+  invited member gets an isolated workspace on test.alba-rosa.cz running the
+  Claude Code assistant, and may connect their own Google, Freelo, Canva and
+  Ecomail accounts. Data is used only for tasks the user requests. See the
+  <a href="/ochrana-soukromi">privacy policy</a>.</p>
+
+  <footer>Claude Code Hub · <a href="/ochrana-soukromi">Zásady ochrany soukromí</a></footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code Hub — zásady ochrany soukromí</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; font: 16px/1.6 system-ui, "Segoe UI", Ubuntu, sans-serif; background: #faf8f5; color: #262320; }
+  main { max-width: 720px; margin: 0 auto; padding: 48px 20px 64px; }
+  h1 { font-size: 28px; margin: 0 0 8px; }
+  h2 { font-size: 19px; margin: 32px 0 8px; }
+  p, li { color: #3a3633; }
+  a { color: #b85c1c; }
+  .lead { color: #5a5450; }
+  footer { margin-top: 48px; font-size: 14px; color: #7a736e; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1c1a19; color: #ece7e2; }
+    p, li { color: #d6d0ca; }
+    .lead, footer { color: #a39b95; }
+    a { color: #e0843c; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Zásady ochrany soukromí</h1>
+  <p class="lead">Claude Code Hub · platné od 15. 9. 2026</p>
+
+  <h2>O jakou aplikaci jde</h2>
+  <p>Claude Code Hub je interní pracovní prostředí pro tým na serveru
+  test.alba-rosa.cz. Každý pozvaný člen má vlastní izolovaný prostor, ve kterém
+  pracuje s asistentem Claude Code. Více v <a href="/o-aplikaci">popisu aplikace</a>.</p>
+
+  <h2>Jaká data z účtu Google aplikace získává</h2>
+  <p>Jen tehdy, když uživatel sám napojí svůj účet Google a na přihlašovací
+  obrazovce Googlu výslovně souhlasí. Aplikace pak smí v rozsahu potvrzených
+  oprávnění pracovat s jeho Gmailem, Diskem, Kalendářem, Dokumenty, Tabulkami,
+  Prezentacemi, Formuláři, Úkoly a Kontakty, a zná e-mailovou adresu a jméno
+  účtu, aby napojené účty rozlišila.</p>
+
+  <h2>K čemu se data používají</h2>
+  <ul>
+    <li>Výhradně k úkolům, které uživatel sám zadá asistentovi Claude Code ve svém
+      prostoru — například „najdi e-mail od…“ nebo „přidej schůzku do kalendáře“.</li>
+    <li>Data neprodáváme, nepředáváme k reklamě, nepoužíváme k profilování
+      a nepoužíváme je k vývoji ani trénování obecných modelů umělé inteligence.</li>
+    <li>Obsah, se kterým má Claude na pokyn uživatele pracovat, se posílá ke
+      zpracování službě Claude společnosti Anthropic, která asistenta provozuje.
+      Jiným třetím stranám se data nepředávají.</li>
+  </ul>
+
+  <h2>Kde a jak dlouho jsou data uložená</h2>
+  <ul>
+    <li>Přístupové tokeny k účtu Google jsou uložené jen v izolovaném prostoru
+      uživatele na serveru; jiní uživatelé k nim přístup nemají.</li>
+    <li>Obsah z účtu Google (e-maily, soubory, události) se ukládá jen tehdy,
+      když o to uživatel výslovně požádá — jinak se čte jen pro daný úkol.</li>
+    <li>Tokeny i uložené údaje zůstávají, dokud uživatel účet neodpojí nebo dokud
+      není jeho prostor zrušen.</li>
+  </ul>
+
+  <h2>Jak přístup zrušit a data smazat</h2>
+  <ul>
+    <li>V aplikaci: Nastavení → Napojení → Google → u účtu tlačítko ×. Tím se
+      token v prostoru smaže.</li>
+    <li>V účtu Google: <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>
+      → Claude Code Hub → Odebrat přístup.</li>
+    <li>Smazání celého prostoru i s uloženými údaji: napište na kontakt níže.</li>
+  </ul>
+
+  <h2>Pravidla Google</h2>
+  <p>Využití a přenos informací získaných z rozhraní Google API do jakékoli jiné
+  aplikace se řídí zásadami
+  <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
+  včetně požadavků Limited Use.</p>
+
+  <h2>Kontakt</h2>
+  <p><a href="mailto:boucnik.jiri@gmail.com">boucnik.jiri@gmail.com</a></p>
+
+  <h2 lang="en">Summary in English</h2>
+  <p lang="en">Claude Code Hub accesses a user's Google data (Gmail, Drive,
+  Calendar, Docs, Sheets, Slides, Forms, Tasks, Contacts) only after the user
+  connects their account and consents. The data is used solely to perform tasks
+  the user asks the Claude Code assistant to do in their own workspace; content
+  needed for such a task is processed by Anthropic's Claude service. We do not
+  sell data, use it for advertising, or use it to train general AI models.
+  OAuth tokens are stored only in the user's isolated workspace. Users can
+  disconnect in Settings → Connections or at myaccount.google.com/permissions.
+  Claude Code Hub's use and transfer of information received from Google APIs
+  adheres to the Google API Services User Data Policy, including the Limited Use
+  requirements. Contact: boucnik.jiri@gmail.com.</p>
+
+  <footer>Claude Code Hub · <a href="/o-aplikaci">O aplikaci</a></footer>
+</main>
+</body>
+</html>
