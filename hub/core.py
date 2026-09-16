@@ -1023,6 +1023,12 @@ def vault_graph(vault=""):
 # (/gw/firma/publish) — do firemního trezoru prostor sám zapsat nemůže.
 FIRMA_PENDING = os.path.join(HOME, ".firma", "ke-schvaleni")
 _FIRMA_ID = re.compile(r"\d{8}-\d{6}-[0-9a-f]{6}")
+# Co vypadá jako přihlašovací údaj: z firemního tabu se to nenahraje tiše.
+_SECRET = re.compile(
+    r"sk-ant-[A-Za-z0-9_-]{8,}|AIza[0-9A-Za-z_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}"
+    r"|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    r"|(?i:heslo|password|passwd|api[ _-]?key|secret|token|refresh[ _-]?token)"
+    r"\s*[:=]\s*\S{6,}")
 
 
 def firma_state():
@@ -1060,7 +1066,12 @@ def firma_pending():
         rel = str(data.get("cil") or "")
         where = "firma" if kind == "firma" else "sdilene:" + str(data.get("vault") or "")
         texts = lambda key: [str(x) for x in data.get(key) or [] if isinstance(x, (str, int))][:50]
-        out.append({"id": pid, "druh": kind, "cil": rel, "text": data.get("text") or "",
+        # Z firemního tabu se nahrává bez karty — ale co vypadá jako heslo nebo
+        # klíč, se tiše nenahraje: hub se na to zeptá kartou.
+        auto = bool(data.get("auto")) and kind == "firma"
+        citlive = auto and bool(_SECRET.search(str(data.get("text") or "")))
+        out.append({"id": pid, "druh": kind, "auto": auto and not citlive, "citlive": citlive,
+                    "cil": rel, "text": data.get("text") or "",
                     "vault": str(data.get("vault") or ""), "nazev": str(data.get("nazev") or ""),
                     "lide": texts("lide"), "pridat": texts("pridat"), "odebrat": texts("odebrat"),
                     "autor": str(data.get("autor") or ""),
@@ -2458,7 +2469,29 @@ def _wrapper_path():
 SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
-def cmd_agent(path, agent_id="", slash="", model="", resume="", fork=False):
+# Pokyn pro firemní tab. Souhlas se zápisem dal uživatel tím, že tab otevřel —
+# platí ale jen na to, o co si v té konverzaci řekne: osobní poznámky, přístupy
+# ani nastavení napojení do společného trezoru nepatří.
+FIRMA_TAB_PROMPT = """Jsi ve firemním tabu Claude Code Hubu (HUB_VAULT=firma).
+
+- Pracuješ nad **firemním Obsidianem** celého týmu: čti z něj a nové poznámky do
+  něj posílej příkazem `python3 {tool} navrh "cesta/nazev.md" - ` (obsah na
+  standardní vstup). V tomhle tabu se poznámka nahraje rovnou, bez karty.
+- Nahrávej **jen to, o co uživatel v téhle konverzaci požádal**. Nikdy tam sám
+  od sebe nekopíruj jeho osobní poznámky z osobního Obsidianu.
+- Do firemního Obsidianu **nikdy** nedávej hesla, klíče, tokeny, přístupy ani
+  nastavení napojení (MCP, Google, účty) — ani když o to uživatel požádá
+  mimochodem; nejdřív se zeptej a napiš, proč to tam nepatří.
+- Osobní Obsidian uživatele je jeho — pro práci s ním má vedle tab „osobní"."""
+
+
+def firma_tab_prompt():
+    tool = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "tools", "firma.py")
+    return FIRMA_TAB_PROMPT.format(tool=tool)
+
+
+def cmd_agent(path, agent_id="", slash="", model="", resume="", fork=False, vault=""):
     """(příkaz pro tab, proměnné prostředí) — tudy se spouští každý agent.
     `resume` = pokračovat v uložené konverzaci (seznam konverzací), `fork` =
     jako její kopie."""
@@ -2468,6 +2501,12 @@ def cmd_agent(path, agent_id="", slash="", model="", resume="", fork=False):
     bypass = bool(agents.bypass_arg(spec)) and bypass_accepted()
     resume = str(resume or "") if SESSION_ID.fullmatch(str(resume or "")) else ""
     argv = agents.launch_args(spec, model, slash, bypass=bypass, resume=resume, fork=fork)
+    # Firemní tab: agent dostane pokyn pro tohle sezení a nástroj firma.py podle
+    # HUB_VAULT pozná, že se nahrává rovnou.
+    firma = vault == "firma" and bool(company_vault())
+    if firma and spec.get("system_arg"):
+        argv += [part.replace("{text}", firma_tab_prompt())
+                 for part in spec["system_arg"].split(" ") if part]
     wrapper = _wrapper_path()
     if not wrapper:
         # Radši prázdný shell s vysvětlením než spustit někoho jiného.
@@ -2484,6 +2523,8 @@ def cmd_agent(path, agent_id="", slash="", model="", resume="", fork=False):
         env["HUB_AGENT_BYPASS"] = "1"     # tab ví, že bypass v něm jde zapnout
     if resume and spec.get("resume_arg"):
         env["HUB_AGENT_RESUME"] = resume  # ve které konverzaci tab pokračuje
+    if firma:
+        env["HUB_VAULT"] = "firma"
     return script, env
 
 

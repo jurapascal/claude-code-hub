@@ -438,10 +438,13 @@ function openVault(path, vault, title) {
 let firmaTimer = null;
 let firmaCard = null;
 const firmaLater = new Set();          // „Později": do obnovení stránky se neukáže
+const firmaWarned = new Set();         // o zadrženém návrhu stačí říct jednou
+let firmaBusy = false;                 // nahrávání z firemního tabu běží
 
 function renderFirma() {
   const on = !!(STATE.firma && STATE.firma.vault);
   $('firma-section').hidden = !on;
+  // Tlačítka v liště („osobní" a „firemní") řeší renderNewTabButtons.
   if (!on) return;
   $('btn-firma').onclick = () => openVault('', 'firma');
   renderShared();
@@ -523,7 +526,41 @@ async function checkFirma() {
     return;                            // starší hub v prostoru — po restartu to umí
   }
   const waiting = (res.pending || []).filter((p) => !firmaLater.has(p.id));
+  // Z firemního tabu se nahrává rovnou. Co vypadá jako přihlašovací údaj, hub
+  // tiše nenahraje — ukáže kartu a jednou to i napíše.
+  const rovnou = waiting.find((p) => p.auto);
+  if (rovnou) return publishFirma(rovnou);
+  const citlive = waiting.find((p) => p.citlive && !firmaWarned.has(p.id));
+  if (citlive) {
+    firmaWarned.add(citlive.id);
+    toast('Vypadá to na přihlašovací údaje — do firemního se to nahraje až po potvrzení.');
+  }
   if (waiting.length && !firmaCard) showFirmaCard(waiting[0], waiting.length);
+}
+
+/* Nahrání bez karty (firemní tab). Zapisuje pořád brána a jen s cookie
+   z tohohle prohlížeče — hub v prostoru do firemního trezoru nemůže. */
+async function publishFirma(p) {
+  if (firmaBusy) return;
+  firmaBusy = true;
+  let res = {};
+  try {
+    const r = await fetch('/gw/firma/publish', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-Hub-Firma': '1'},
+      body: JSON.stringify({id: p.id, prepsat: !!p.prepise}),
+    });
+    res = await r.json().catch(() => ({error: `HTTP ${r.status}`}));
+  } catch (err) {
+    res = {error: err.message};
+  }
+  firmaBusy = false;
+  if (res.ok) {
+    return toast((res.message || `Nahráno do firemního Obsidianu: ${res.path}`) +
+                 (p.prepise ? ' (přepsáno)' : ''));
+  }
+  // Když to neprojde, ať to nezmizí potichu — ukáže se karta jako jindy.
+  toast('Nahrát do firemního se nepodařilo: ' + (res.error || 'neznámá chyba'));
 }
 
 function showFirmaCard(p, total) {
@@ -1181,13 +1218,17 @@ function renderNewTabButtons() {
   const btn = $('btn-new-agent');
   btn.hidden = cfg.agent === false || cfg.claude === false;
   $('btn-new-shell').hidden = cfg.shell === false;
-  // Tlačítko se jmenuje po tom, koho doopravdy spustí.
+  // Tlačítko se jmenuje po tom, koho doopravdy spustí. Kde je firemní Obsidian,
+  // jsou tlačítka dvě — osobní a firemní — ať je vidět, nad čím Claude pojede.
+  const firma = !!(STATE.firma && STATE.firma.vault);
+  $('btn-new-firma').hidden = !firma;
   const a = agentById(STATE.default_agent) || agentList(true)[0];
   const label = btn.querySelector('span');
   if (a && label) {
-    label.textContent = a.label;
-    btn.title = agentList(true).length > 1
-      ? 'Otevřít agenta (šipka dolů = výběr)' : 'Otevřít ' + a.label;
+    label.textContent = firma ? a.label + ' osobní' : a.label;
+    btn.title = firma ? 'Otevřít ' + a.label + ' nad osobním Obsidianem'
+      : (agentList(true).length > 1
+        ? 'Otevřít agenta (šipka dolů = výběr)' : 'Otevřít ' + a.label);
   }
 }
 
@@ -1256,12 +1297,12 @@ function newAgentMenu(ev) {
 }
 
 /* ── tabs ─────────────────────────────────────────────────────────────────── */
-function openTab({kind, path, title, agent, model, mode, resume, fork}) {
+function openTab({kind, path, title, agent, model, mode, resume, fork, vault}) {
   const tab = createTab({kind, path, title, agent, model, mode, resume});
   const dims = measure(tab);
   send({t: 'open', ref: tab.ref, kind, path, title, agent: agent || '',
         model: model || '', resume: resume || '', fork: !!fork,
-        cols: dims.cols, rows: dims.rows});
+        vault: vault || '', cols: dims.cols, rows: dims.rows});
   return tab;
 }
 
@@ -2075,6 +2116,11 @@ async function main() {
     openTab({kind: 'project', path: STATE.home, title: a.label, agent: a.id});
   };
   $('btn-new-agent').oncontextmenu = (ev) => { ev.preventDefault(); newAgentMenu(ev); };
+  // Firemní tab: Claude v něm pracuje nad firemním Obsidianem a zapisuje do něj
+  // rovnou — souhlas dal uživatel tím, že tab otevřel.
+  $('btn-new-firma').onclick = () =>
+    openTab({kind: 'project', path: STATE.home, title: 'Claude Code firemní',
+             agent: 'claude', vault: 'firma'});
   $('btn-brain').onclick = () => (vaultPreview() ? openVault() : openExternal('', 'brain'));
   $('modal-close').onclick = closePicker;
   $('modal-cancel').onclick = closePicker;

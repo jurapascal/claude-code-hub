@@ -64,7 +64,10 @@ def target(rel):
 
 
 def navrh(args):
-    confirmed = "--potvrzeno" in args
+    # Firemní tab v hubu (HUB_VAULT=firma): souhlas dal uživatel tím, že ho
+    # otevřel — poznámka se nahraje rovnou, bez ptaní a bez karty.
+    auto = os.environ.get("HUB_VAULT", "") == "firma"
+    confirmed = auto or "--potvrzeno" in args
     args = [a for a in args if a != "--potvrzeno"]
     if not args:
         fail("Použití: firma.py navrh CÍL [SOUBOR | -] --potvrzeno")
@@ -97,14 +100,21 @@ def navrh(args):
     who = (config().get("gateway_user") or {}).get("email", "")
     data = {"cil": rel, "text": text, "autor": who,
             "vytvoreno": time.strftime("%Y-%m-%d %H:%M:%S")}
+    if auto:
+        data["auto"] = True
     # Nejdřív dočasný soubor: hub čte jen hotové .json, rozepsaný návrh nevidí.
     tmp = os.path.join(PENDING, pid + ".tmp")
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(data, fh, ensure_ascii=False)
     os.replace(tmp, os.path.join(PENDING, pid + ".json"))
     print(f"Návrh je připravený: {rel}" + (" (přepíše existující poznámku)" if exists else ""))
-    print("Hub teď uživateli ukázal kartu s náhledem. Do firemního Obsidianu se "
-          "poznámka nahraje, až ji potvrdí tlačítkem Nahrát.")
+    if auto:
+        print("Firemní tab: hub ji nahraje rovnou a napíše to dole v okně. "
+              "Nahrávej jen to, o co uživatel požádal — osobní poznámky, hesla, "
+              "klíče ani nastavení napojení do firemního Obsidianu nepatří.")
+    else:
+        print("Hub teď uživateli ukázal kartu s náhledem. Do firemního Obsidianu se "
+              "poznámka nahraje, až ji potvrdí tlačítkem Nahrát.")
 
 
 def seznam():

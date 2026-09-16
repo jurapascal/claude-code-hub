@@ -52,6 +52,8 @@ CATALOG = {
         # Bypass mezi režimy (Shift+Tab), ale nestartuje se v něm — zapne ho
         # člověk sám v bublině. Bez toho ho Claude Code do cyklu nepustí.
         "bypass_arg": "--allow-dangerously-skip-permissions",
+        # Pokyn jen pro tohle sezení — hub jím říká, nad kterým Obsidianem tab jede.
+        "system_arg": "--append-system-prompt {text}",
         # Pokračování v uložené konverzaci (seznam konverzací v hubu) a kopie
         # konverzace, která možná ještě běží jinde.
         "resume_arg": "--resume {id}",

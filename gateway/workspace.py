@@ -558,8 +558,17 @@ Vedle osobního trezoru tohohle uživatele je společný **firemní Obsidian**
 celého týmu: `{config.COMPANY_VAULT}`. Je jen ke čtení — firemní postupy,
 kontakty a know-how hledej a čti tam.
 
-Zapisovat do něj přímo nejde. Když tě uživatel požádá, ať něco nahraješ do
-firemního:
+Zapisovat do něj přímo nejde, jde to jen nástrojem níž. Jak to funguje, závisí
+na tom, ve kterém tabu hubu běžíš — poznáš to podle proměnné `HUB_VAULT`:
+
+**Firemní tab (`HUB_VAULT=firma`).** Uživatel ho otevřel proto, aby se pracovalo
+nad firemním Obsidianem, a tím dal souhlas se zápisem. Poznámku připrav a rovnou
+pošli: `python3 {tool} navrh "postupy/fakturace.md" - ` (obsah na standardní
+vstup, jde i soubor místo `-`). Hub ji nahraje hned a napíše to dole v okně —
+na nic se neptej a nečekej na kartu.
+
+**Osobní tab (bez `HUB_VAULT`).** Tam je firemní Obsidian jen ke čtení a zápis
+se potvrzuje:
 
 1. Připrav poznámku v Markdownu a vyber pro ni cestu podle struktury, která už
    ve firemním trezoru je (třeba `postupy/fakturace.md`).
@@ -567,15 +576,21 @@ firemního:
    cestu a jestli tím přepíšeš existující poznámku (podívej se, jestli tam už
    je). Připomeň, že firemní Obsidian uvidí celý tým. Počkej na výslovné „ano".
 3. Teprve pak pošli poznámku ke schválení:
-   `python3 {tool} navrh "postupy/fakturace.md" poznamka.md --potvrzeno`
-   (místo souboru jde obsah poslat na standardní vstup: `-`). Přepínač
-   `--potvrzeno` nikdy nepřidávej bez souhlasu uživatele v téhle konverzaci.
+   `python3 {tool} navrh "postupy/fakturace.md" poznamka.md --potvrzeno`.
+   Přepínač `--potvrzeno` nikdy nepřidávej bez souhlasu uživatele v téhle
+   konverzaci.
 4. Řekni uživateli, že mu hub ukázal kartu s náhledem: poznámka se nahraje, až
    ji potvrdí tlačítkem **Nahrát**. Sám ji potvrdit nemůžeš.
 
 Existující firemní poznámku upravíš tak, že pošleš celý nový obsah na stejnou
-cestu — karta upozorní, že se přepíše. Hesla, klíče a osobní údaje do
-firemního nepatří, pokud o to uživatel výslovně nežádá.
+cestu — hub upozorní, že se přepíše.
+
+**Co do firemního Obsidianu nikdy nepatří (ani ve firemním tabu):** hesla,
+klíče, tokeny, přístupy a nastavení napojení (MCP, Google, účty) a osobní
+poznámky uživatele z jeho osobního trezoru. Nahrávej vždy jen to, o co si
+v téhle konverzaci řekl; když by z úkolu vyplývalo něco osobního, nejdřív se
+zeptej. Hub navíc poznámku, která vypadá jako přihlašovací údaj, sám nenahraje
+a zeptá se kartou.
 {FIRMA_MARK[1]}
 """
 

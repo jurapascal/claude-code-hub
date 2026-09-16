@@ -94,7 +94,10 @@ dělá jednu aplikaci:
   a **Sdílené**. Poznámky jde v hubu i psát: editor se živým náhledem jako
   v Obsidianu ([[odkazy]] s našeptáváním, ==zvýraznění==, #štítky, úkoly) a graf
   poznámek s barvami a nastavením jako v originále. Vložené obrázky jsou vidět
-  i při psaní. Osobní se ukládá samo a jde v něm poznámku **přejmenovat**
+  i při psaní. Na serveru jsou v liště dva taby — **Claude Code osobní**
+  a **Claude Code firemní**; ve firemním Claude čte z firemního Obsidianu
+  a zapisuje do něj rovnou, bez ptaní (osobní poznámky, hesla a napojení tam
+  ale nepatří a hub je sám nenahraje). Osobní se ukládá samo a jde v něm poznámku **přejmenovat**
   (odkazy se opraví samy) i **smazat** (do koše `.trash` v trezoru); do
   firemního a sdílených se změna potvrzuje kartou. Bez vaultu se sekce
   vůbec nezobrazí.

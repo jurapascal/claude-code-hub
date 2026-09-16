@@ -107,10 +107,22 @@ Vedle osobního trezoru v každém prostoru je jeden společný trezor pro všec
   Claude Code ho má v `permissions.additionalDirectories` a pokyny k němu
   v `~/.claude/CLAUDE.md` (blok mezi `<!-- claude-hub:firma -->`, zbytek
   souboru patří uživateli). V hubu je sekce **Firemní Obsidian** s náhledem.
-- **Dvojí potvrzení:** Claude se nejdřív v chatu zeptá — shrne, co a kam
-  nahraje a jestli něco přepíše — a pokračuje až po výslovném „ano". Nástroj
-  bez přepínače `--potvrzeno` návrh nevytvoří a Claudovi napíše, ať se zeptá.
-  Druhé potvrzení je karta v hubu.
+- **Dva taby:** v liště hubu je **Claude Code osobní** a **Claude Code firemní**
+  (druhý jen tam, kde firemní trezor je). Firemní tab se pouští
+  s `HUB_VAULT=firma` a pokynem jen pro to sezení
+  (`--append-system-prompt`, `core.firma_tab_prompt`): Claude v něm čte
+  z firemního trezoru a zápis posílá rovnou — `tools/firma.py` v tomhle režimu
+  nechce `--potvrzeno`, označí návrh `auto` a hub ho hned nahraje přes
+  `/gw/firma/publish` bez karty, jen s hláškou dole v okně. Osobní tab zůstává
+  jako dřív.
+- **Dvojí potvrzení (osobní tab):** Claude se nejdřív v chatu zeptá — shrne, co
+  a kam nahraje a jestli něco přepíše — a pokračuje až po výslovném „ano".
+  Nástroj bez přepínače `--potvrzeno` návrh nevytvoří a Claudovi napíše, ať se
+  zeptá. Druhé potvrzení je karta v hubu.
+- **Co se ani ve firemním tabu nenahraje samo:** text, který vypadá jako heslo,
+  klíč nebo token (`core._SECRET`), hub tiše nenahraje — ukáže kartu a řekne
+  proč. Pokyn pro firemní tab navíc Claudovi zakazuje nosit do společného
+  trezoru osobní poznámky uživatele a nastavení napojení (MCP, Google, účty).
 - **Zápis:** Claude poznámku jen připraví — `python3 tools/firma.py navrh
   CÍL [SOUBOR | -] --potvrzeno` ji uloží do `~/.firma/ke-schvaleni/`. Hub ukáže kartu
   s náhledem a cílovou cestou; **Nahrát** pošle prohlížeč na

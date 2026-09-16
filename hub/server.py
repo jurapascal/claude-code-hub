@@ -283,8 +283,9 @@ class Hub:
                 running.setdefault(os.path.basename(transcript)[:-6], s.id)
         return running
 
-    def open(self, kind, path, title, cols, rows, agent="", model="", resume="", fork=False):
-        script, cwd, env = self._command_for(kind, path, agent, model, resume, fork)
+    def open(self, kind, path, title, cols, rows, agent="", model="", resume="", fork=False,
+             vault=""):
+        script, cwd, env = self._command_for(kind, path, agent, model, resume, fork, vault)
         # Agent si model mohl doplnit sám (Ollama bez modelu nespustíš) —
         # ať se to dozví i tab, jinak by chip v bublině hlásil „výchozí".
         model = env.get("HUB_AGENT_MODEL") or model
@@ -298,7 +299,7 @@ class Hub:
         return session
 
     @staticmethod
-    def _command_for(kind, path, agent="", model="", resume="", fork=False):
+    def _command_for(kind, path, agent="", model="", resume="", fork=False, vault=""):
         """(příkaz, pracovní složka, prostředí navíc) pro daný druh tabu."""
         if kind == "shell":
             return core.cmd_shell(), (path or core.HOME), {}
@@ -317,7 +318,8 @@ class Hub:
             script, env = core.cmd_agent(path, agent,
                                          slash="/" + kind.split(":", 1)[1])
             return script, path, env
-        script, env = core.cmd_agent(path, agent, model=model, resume=resume, fork=fork)
+        script, env = core.cmd_agent(path, agent, model=model, resume=resume, fork=fork,
+                                     vault=vault)
         return script, path, env
 
     def close(self, sid, autosave=True):
@@ -1046,7 +1048,8 @@ class Handler(BaseHTTPRequestHandler):
                                    agent=str(msg.get("agent", "") or ""),
                                    model=str(msg.get("model", "") or ""),
                                    resume=str(msg.get("resume", "") or ""),
-                                   fork=msg.get("fork") is True)
+                                   fork=msg.get("fork") is True,
+                                   vault=str(msg.get("vault", "") or ""))
             except (pty_backend.PtyUnavailable, core.BashMissing) as exc:
                 core.log_error("tab se nepodařilo otevřít", exc)
                 conn.send_json({"t": "error", "ref": msg.get("ref"), "d": str(exc)})
