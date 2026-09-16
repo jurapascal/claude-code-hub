@@ -39,7 +39,7 @@ if sys.platform == "win32":
         except (AttributeError, ValueError, OSError):
             pass
 
-from hub import account, core, pty_backend, server, window  # noqa: E402
+from hub import account, core, pocitac, predplatne, pty_backend, server, window  # noqa: E402
 
 
 MCP_MARKS = {"ok": "+", "auth": "!", "fail": "-", "local": ".",
@@ -249,7 +249,12 @@ def main():
             while True:
                 time.sleep(3600)
         target = url
-        if core.CONFIG.get("server_mode"):
+        # Kdo ještě neodpověděl, jestli má Claude ze serveru sahat i na tenhle
+        # počítač, nebo komu v prostoru Claude nemá na čem jet (bez klíče API a
+        # bez předplatného), projde jednou přes hub na počítači — ten to
+        # vyřeší a pak přejde na server sám (server.js, go).
+        if core.CONFIG.get("server_mode") and core.CONFIG.get("pocitac_asked") \
+                and not predplatne.should_offer():
             target = server_start_url(url) or url
         host, proc, blocking = window.open_window(target, prefer)
         core.log(f"okno: {host}")
@@ -263,6 +268,7 @@ def main():
         core.log(f"CHYBA: {exc!r}")
         raise
     finally:
+        pocitac.stop()
         server.stop_remote()
         server.HUB.shutdown()
         httpd.shutdown()

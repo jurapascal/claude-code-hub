@@ -85,6 +85,14 @@ dělá jednu aplikaci:
   nebo se přihlásit ke svému prostoru na serveru s bránou. Adresa se ověří,
   přihlásíš se e-mailem a heslem a appka se příště otevře rovnou tam — se
   vším, co v prostoru máš. Podrobně níž.
+- **Bez klíče API** — Claude v prostoru jede na vlastním předplatném Claude
+  každého člověka. Appka ho propojí sama při prvním vstupu do prostoru,
+  v prohlížeči stačí kliknout na Authorize.
+- **Claude ze serveru na počítači** — Claude v prostoru na serveru sahá i na
+  počítač, ze kterého se k prostoru přihlásíš: čte a hledá soubory, zapisuje,
+  spouští příkazy a kopíruje soubory mezi počítačem a serverem. Zapíná se na
+  počítači (vypnuto / jen čtení / plný přístup) a běží, dokud je appka
+  otevřená. Podrobně v [Claude ze serveru na tvém počítači](#claude-ze-serveru-na-tvém-počítači).
 - **Telefon** — hub se dá přes Tailscale otevřít i z mobilu (Android i iPhone):
   QR kód v nastavení, ikona na ploše, šuplík místo panelu a řádek kláves,
   ze kterého jde poslat Esc, Tab i šipky. Podrobně níž.
@@ -401,6 +409,77 @@ Jak to drží pohromadě:
 - Z příkazové řádky: `claude-hub.py --server=adresa` zapne otevírání na
   serveru, `--local` ho vypne.
 
+### Claude v prostoru na tvém předplatném
+
+Claude v prostoru nepotřebuje klíč API. Když ho brána nemá (nebo ho správce
+tvému účtu nedal), propojí appka na počítači prostor s **tvým vlastním
+předplatným Claude** (Pro, Max, Team, Enterprise) sama, při prvním vstupu do
+prostoru:
+
+1. Appka spustí `claude setup-token` a v prohlížeči se otevře stránka Claude.
+2. Klikneš na **Authorize**. Nic víc — žádné kopírování, žádné nastavení.
+3. Token (platí rok, jen na používání Clauda) jde rovnou bráně a Claude
+   v prostoru na něm jede od dalšího startu prostoru; když v prostoru nikdo
+   nepracuje, restartuje se hned.
+
+Když se prohlížeč neotevře, karta ukáže odkaz a pole na kód ze stránky.
+Stav je v ⚙ → Účet na počítači i v prostoru (*Claude v prostoru jede na tvém
+předplatném · platí do …*), tamtéž *Připojit znovu* a *Odpojit*. Kdo appku na
+počítači nemá, přihlásí se v tabu Claude Code v prostoru sám.
+
+- **Token se na počítači neukládá** — appka ho jen předá. U brány leží podle
+  čísla účtu (`0600`) a do prostoru přijde jen tomu, komu patří, jako
+  `CLAUDE_CODE_OAUTH_TOKEN`. V prostoru hub předvyplní, že je Claude Code
+  nastavený, jinak by se i s tokenem ptal na motiv a přihlášení.
+- **Předplatné má přednost** před klíčem API: kdo si ho připojil, jede na něm.
+- **Jedno předplatné = jeden člověk.** Sdílet ho mezi víc lidí je proti
+  podmínkám Anthropicu; brána ho proto váže na účet, který ho připojil. Firma
+  s Claude Team dá každému jeho místo.
+
+### Claude ze serveru na tvém počítači
+
+Claude v prostoru běží na serveru — ale projekty, dokumenty a programy máš
+často pořád na počítači. Appka proto umí most: Claude v prostoru dostane
+nástroje `mcp__pocitac__*` a přes ně sáhne i na počítač, ze kterého se
+k prostoru přihlašuješ.
+
+| nástroj | co udělá na počítači | přístup |
+|---|---|---|
+| `pocitace` | které počítače jsou připojené, systém, domovská složka | jen čtení |
+| `slozka`, `precist`, `hledat` | výpis složky, čtení souboru po řádcích, hledání podle jména i obsahu | jen čtení |
+| `stahnout` | zkopíruje soubor (i binární, do 15 MB) z počítače na server | jen čtení |
+| `zapsat`, `upravit` | zápis souboru, nahrazení přesného textu | plný |
+| `spustit` | příkaz v bashi (na Windows Git Bash, jinak cmd), limit až 10 minut | plný |
+| `nahrat` | zkopíruje soubor ze serveru na počítač | plný |
+
+**Zapnutí.** Před prvním přechodem do prostoru se appka jednou zeptá, kolik
+Claude ze serveru smí — **Vypnuto**, **Jen čtení**, nebo **Plný přístup**.
+Změnit to jde kdykoli na počítači v ⚙ → Účet; tam je vidět i stav spojení a co
+Claude ze serveru naposledy dělal. V prostoru ukazuje připojený počítač štítek
+v hlavičce a ⚙ → Účet → *Tvůj počítač*; tlačítko *Změnit na tomhle počítači*
+vrátí okno na chvíli do appky, kde se volba změní, a pak zpátky.
+
+Jak to drží pohromadě:
+
+- **Spojení staví počítač.** Hub na počítači se tokenem zařízení ptá brány
+  dlouhými dotazy po HTTPS (`/gw/pocitac/poll`), jestli pro něj Claude nemá
+  úkol, provede ho a výsledek pošle zpátky. Žádný port se neotevírá, žádný
+  tunel — projde to každou sítí, kudy projde přihlášení k serveru.
+- **Běží, jen když běží appka.** Zavřené okno nebo uspaný počítač = Claude
+  v prostoru dostane „počítač není připojený".
+- **Rozhoduje počítač.** Úroveň přístupu se ověřuje na počítači u každého
+  úkolu znovu. Prostor na serveru ji změnit neumí (POST na `/api` hubu na
+  počítači musí přijít z jeho vlastní stránky).
+- **Přihlášení appky a Claude Code** (`hub-config.json`, `.credentials.json`)
+  Claude ze serveru přečíst ani změnit nesmí. S **plným přístupem** ale může
+  spouštět příkazy, a těm se to zakázat nedá — plný přístup znamená totéž, co
+  Claude Code spuštěný na tom počítači.
+- **Víc počítačů naráz** jde; Claude se pak zeptá, na kterém pracovat.
+- Každý úkol se zapíše do `~/.claude/hub.log` (`počítač: run 'npm test' — ok`).
+
+Na počítač tak dosáhne i ten, kdo spravuje server. Zapínej to jen u serveru,
+kterému věříš.
+
 ## Playwright MCP (volitelné)
 
 Prohlížeč pro Claude Code — otevře stránku, klikne, přečte konzoli, udělá screenshot.
@@ -629,6 +708,12 @@ hub/static/composer.js    bublina místo vstupního řádku (text, model, slash 
 hub/static/stats.js       statistiky používání
 hub/account.py            účet na serveru: ověření adresy, přihlášení, předání okna bráně
 hub/static/server.js      přihlášení na server, přechod okna do prostoru a zpět, obrazovka při startu
+hub/pocitac.py            Claude ze serveru na počítači: most k bráně a provádění úkolů (soubory, příkazy)
+hub/predplatne.py         Claude v prostoru na vlastním předplatném: claude setup-token → brána; příprava Claude Code v prostoru
+hub/static/predplatne.js  karta s propojením předplatného, stav v Nastavení → Účet
+gateway/safefs.py         zápis brány do domovů bez následování odkazů (O_NOFOLLOW, dir_fd)
+hub/static/pocitac.js     volba přístupu, dotaz před prvním vstupem do prostoru, štítek počítače v prostoru
+tools/pocitac_mcp.py      MCP server v prostoru — nástroje mcp__pocitac__* pro Claude Code
 hub/remote.py             přístup z telefonu: stav Tailscalu, `tailscale serve`, párovací adresa
 hub/qr.py                 QR kód jako SVG, jen ze standardní knihovny (bez závislostí)
 hub/static/mobile.js      chování na telefonu: šuplík, dlouhý stisk, klávesnice, service worker

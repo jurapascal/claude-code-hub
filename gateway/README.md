@@ -66,6 +66,21 @@ tlačítko Aktualizovat tam není, zdroj patří serveru.
 `ANTHROPIC_API_KEY`, předschválený, takže se nikdo nepřihlašuje. Platí se podle
 spotřeby — v Anthropic Console nastav měsíční limit.
 
+**Claude bez klíče API — na předplatném.** Klíč API není potřeba: kdo nemá
+klíč ani přihlášení, tomu appka na počítači při vstupu do prostoru sama připojí
+**jeho vlastní předplatné** (`claude setup-token` u něj na počítači, v prohlížeči
+jen Authorize) a pošle token na `/gw/claude`. Brána ho uloží do
+`claude-predplatne/<id účtu>.json` (0600) a prostoru ho dá jako
+`CLAUDE_CODE_OAUTH_TOKEN` — s přednost před klíčem API. Nečinný prostor
+restartuje hned, jinak hub nabídne restart. Přehled a ruční správa:
+
+    claude-hub-admin predplatne status              # kdo jede na čem, kdy token vyprší
+    claude-hub-admin predplatne set jmeno@firma.cz  # vložit token ručně (ze setup-token)
+    claude-hub-admin predplatne remove jmeno@firma.cz
+
+Jedno předplatné patří jednomu člověku; sdílet ho mezi účty nejde (podmínky
+Anthropicu).
+
 `apikey set --user <e-mail>` dá jednomu účtu **vlastní klíč**: má pak v Console
 svůj strop, ve spotřebě je poznat a kdo si klíč v prostoru přečte z prostředí,
 přečte jen ten svůj. Kdo vlastní nemá, jede na společném; `apikey status`
@@ -191,6 +206,30 @@ registr kdo je založil a kdo v nich je `/home/hub/sdilene/.sdilene.json`
 - `claude-hub-admin sdilene` vypíše trezory, zakladatele a členy. Smazání
   účtu ho ze všech trezorů odebere.
 
+## Most na počítač uživatele
+
+Claude v prostoru sahá i na počítač, ze kterého se k prostoru přihlásil — podrobně
+pro uživatele v [README](../README.md#claude-ze-serveru-na-tvém-počítači). Na
+bráně k tomu patří `gateway/pocitac.py` a tři adresy (tabulka níž):
+
+- **Počítač se ptá sám.** Hub na počítači s tokenem zařízení drží dlouhý dotaz
+  `/gw/pocitac/poll`; brána mu vrátí úkoly, jakmile nějaké jsou. Nic se na
+  počítač nepřipojuje zvenku. `/gw/info` hlásí `features: ["pocitac"]`, podle
+  toho appka pozná, že brána most umí.
+- **Prostor volá mimo nginx.** Brána dá prostoru při startu do prostředí
+  `HUB_POCITAC_URL` (loopback brány) a `HUB_POCITAC_TOKEN` (nový s každým
+  startem). Hub v prostoru zaregistruje Claude Code MCP server
+  `tools/pocitac_mcp.py` (`claude mcp add pocitac -s user`) a ten posílá úkoly
+  na `/gw/pocitac/volani`. Požadavek s `X-Real-IP` (tedy přes nginx) dostane
+  404 — žeton zvenku nic neotevře. Cizí prostor žeton nezná: každý má svoje
+  prostředí.
+- **Brána obsah jen přepravuje.** Fronty a čekání drží v paměti; co smí,
+  rozhoduje počítač u každého úkolu (vypnuto / jen čtení / plný přístup).
+  Brána přístup zná jen kvůli srozumitelné odpovědi dřív, než úkol odejde.
+- **Limity:** soubor do 15 MB (nginx má `client_max_body_size 25m`, base64
+  přidá třetinu), příkaz nejvýš 10 minut, 32 čekajících úkolů na počítač.
+- V `docker` izolaci most nefunguje — kontejner na loopback brány nedosáhne.
+
 ## Běžící prostory
 
 Každý prostor běží ve vlastní systemd scope pojmenované podle e-mailu —
@@ -244,6 +283,12 @@ proxuje do instance hubu toho uživatele.
 | `POST /gw/handoff` | token → jednorázový kód do adresy okna (60 s) | `Authorization: Bearer` |
 | `GET /login?handoff=kód` | okno dostane cookie s **tímtéž** tokenem | kód |
 | `GET /logout` | zneplatní token z cookie | cookie |
+| `POST /gw/pocitac/poll` | počítač čeká na úkoly od Clauda z prostoru (až 25 s), `bye` = odpojit | `Authorization: Bearer` |
+| `POST /gw/pocitac/vysledek` | počítač vrací výsledek úkolu | `Authorization: Bearer` |
+| `POST /gw/pocitac/volani` | MCP server v prostoru posílá úkol počítači; jen přímo na loopback, přes nginx 404 | `X-Hub-Pocitac` (žeton prostoru) |
+| `GET /gw/pocitac` | připojené počítače — štítek v hlavičce prostoru | cookie |
+| `GET /gw/claude` | na čem Claude v prostoru jede (předplatné / klíč API / přihlášení / nic) a jestli čeká na restart | `Authorization: Bearer` nebo cookie |
+| `POST /gw/claude` | připojit (`token`) nebo odpojit (`remove`) vlastní předplatné | `Authorization: Bearer`, z prohlížeče cookie + `X-Hub-Account` |
 
 Appka i prohlížeč můžou být otevřené naráz — obě okna jsou jen pohled do
 jednoho hubu. Výpis tabů jde do všech, tab otevřený, přejmenovaný nebo zavřený
@@ -256,6 +301,25 @@ Předání při každém spuštění nevyrábí nový token: cookie okna nese to
 Databáze tak nenarůstá s každým startem a *Odhlásit se* v okně odhlásí i appku —
 příště se opravdu zeptá. Brána z doby před `/gw/info` se pozná podle toho, jak
 `/gw/me` odmítne cizí token, takže novější appka se přihlásí i k ní.
+
+## Zápis do domovů
+
+Domov patří session — kdo v prostoru pracuje, může v něm místo souboru nechat
+symbolický odkaz kamkoli na server. Brána přitom do domovů zapisuje bez
+sandboxu (nastavení hubu, pokyny v `CLAUDE.md`, `settings.json`, přejmenování
+domova). Do 2.13 to šlo obyčejným `open()`, a odkaz
+`~/.claude/settings.json.hub-tmp` → `/home/hub/users/.domovy.json` s připraveným
+`settings.json` stačil, aby brána přepsala registr domovů a session po restartu
+dostala **cizí domov** (ověřeno na kódu 2.13.0).
+
+Od 2.14 jde všechno přes `gateway/safefs.py`: složky se otevírají po jedné
+s `O_NOFOLLOW` a soubory relativně k nim (`dir_fd`), zápis přes dočasný soubor
+s náhodným jménem (`O_EXCL`) a `rename`. Odkaz se nikdy nenásleduje — při čtení
+se bere jako chybějící soubor (obsah cizího souboru se do domova nezkopíruje),
+při zápisu se nahradí; složka `~/.claude`, která je odkazem, se odloží stranou
+a založí se skutečná. `~/.claude.json` brána už vůbec nepíše — klíč API
+a dokončené nastavení Claude Code předvyplní hub uvnitř sandboxu
+(`hub/predplatne.py`).
 
 ## Izolace není volitelná
 

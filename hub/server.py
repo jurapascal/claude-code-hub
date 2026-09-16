@@ -30,7 +30,8 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import account, chats, connect, core, pty_backend, qr, remote, stats
+from . import (account, chats, connect, core, pocitac, predplatne, pty_backend, qr,
+               remote, stats)
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -443,6 +444,11 @@ class Handler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed.query)
         if not parsed.path.startswith("/api/") or not self._authorised(query):
             return self._send(403, b"Neplatny token.")
+        # Změny jen ze stránky hubu. Stránka prostoru na serveru token hubu na
+        # počítači zná (`#local=`, cesta zpátky) — bez tohohle by si server
+        # mohl sám zapnout třeba přístup Clauda na tenhle počítač.
+        if not self._origin_ok():
+            return self._send(403, b"Cizi puvod.")
         length = int(self.headers.get("Content-Length") or 0)
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -538,6 +544,11 @@ class Handler(BaseHTTPRequestHandler):
                            "gw_email": (core.CONFIG.get("gw_user") or {}).get("email", ""),
                            "gw_logged_in": bool(core.CONFIG.get("gw_token")),
                            "server_mode": bool(core.CONFIG.get("server_mode")),
+                           # Claude ze serveru na tomhle počítači (hub/pocitac.py).
+                           "pocitac_access": pocitac.access_level(),
+                           "pocitac_asked": bool(core.CONFIG.get("pocitac_asked")),
+                           # Claude v prostoru na vlastním předplatném (hub/predplatne.py).
+                           "predplatne_skip": bool(core.CONFIG.get("predplatne_skip")),
                            # Vyplněné jen na instanci běžící na bráně — podle
                            # toho nastavení pozná, že je na serveru.
                            "gateway_user": core.CONFIG.get("gateway_user") or None},
@@ -690,7 +701,9 @@ class Handler(BaseHTTPRequestHandler):
                     payload.get("server", ""), payload.get("ticket", ""),
                     payload.get("code", "")))
             if action == "logout":
-                return self._json(account.logout())
+                res = account.logout()
+                pocitac.wake()
+                return self._json(res)
             if action in ("handoff", "connect"):
                 # `connect` = přejít na server a pamatovat si to: appka se
                 # příště otevře rovnou tam. Zapíše se, až když předání vyšlo —
@@ -704,6 +717,36 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             return self._json(account.status(
                 timeout=5 if payload.get("quick") else account.TIMEOUT))
+        if name == "predplatne":
+            # Claude v prostoru na vlastním předplatném: propojení přes
+            # `claude setup-token` na tomhle počítači a stav u brány.
+            if core.on_gateway():
+                return self._json({"error": "Předplatné se připojuje z appky na počítači."}, 400)
+            action = payload.get("action") or ""
+            if action == "start":
+                return self._json(predplatne.start())
+            if action == "code":
+                return self._json(predplatne.send_code(payload.get("code")))
+            if action == "cancel":
+                return self._json(predplatne.cancel())
+            if action == "skip":
+                predplatne.skip(True)
+                return self._json({"ok": True})
+            if action == "disconnect":
+                return self._json(predplatne.disconnect())
+            if query.get("quick"):
+                return self._json({"connect": dict(predplatne.STATE)})
+            return self._json(predplatne.status())
+        if name == "pocitac":
+            # Claude ze serveru na tomhle počítači: stav mostu a volba přístupu.
+            if "access" in payload:
+                if core.on_gateway():
+                    return self._json({"error": "Tohle se nastavuje v appce na počítači."}, 400)
+                try:
+                    return self._json(pocitac.set_access(payload.get("access")))
+                except ValueError as exc:
+                    return self._json({"error": str(exc)}, 400)
+            return self._json(pocitac.status())
         if name == "remote":
             # Telefon: stav, párovací QR a zapnutí/vypnutí druhého listeneru.
             action = (payload or {}).get("action", "")
@@ -1128,6 +1171,12 @@ class HubHTTPServer(ThreadingHTTPServer):
 
 def start():
     """Start the server on a random loopback port. Returns (server, url)."""
+    # V prostoru na serveru: připravit Claude Code na přihlášení z prostředí
+    # dřív, než stránka stihne otevřít první tab.
+    try:
+        predplatne.prepare_space()
+    except Exception as exc:
+        core.log_error("prostor: příprava Claude Code selhala", exc)
     token = secrets.token_urlsafe(24)
     httpd = HubHTTPServer(token)
     port = httpd.server_address[1]
@@ -1135,6 +1184,9 @@ def start():
     threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.2},
                      daemon=True).start()
     threading.Thread(target=watch_autosave, daemon=True).start()
+    # Most na počítač: na počítači čeká na úkoly od Clauda ze serveru (když je
+    # zapnutý), v prostoru na serveru napojí Claude Code jeho MCP server.
+    pocitac.start()
     return httpd, f"http://127.0.0.1:{port}/?t={urllib.parse.quote(token)}"
 
 

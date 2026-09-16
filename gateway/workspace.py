@@ -10,25 +10,33 @@ Každý účet dostane vlastní domovskou složku pojmenovanou podle e-mailu
 * **`.claude/hub-config.json`**, aby se jeho instance hubu nastavila sama:
   paměť míří do jeho vaultu, projekty do jeho složky. Hub žádné okno neotvírá,
   brána ho pustí s `--no-browser` a mluví s ním přes proxy.
-* **přihlášení Claude Code**. Na `central` (výchozí) dostane prostor klíč API
-  (`ANTHROPIC_API_KEY`, viz session_env) a nikdo se nepřihlašuje; platí se podle
-  spotřeby. Klíč je buď vlastní klíč toho účtu, nebo společný klíč brány, když
-  svůj nemá (viz api_key). Na `own` se člověk přihlásí vlastním účtem. Sdílet
-  jedno osobní přihlášení mezi víc lidí (dřívější `central`) je proti podmínkám
-  Anthropicu, proto to brána už nedělá.
+* **přihlášení Claude Code** (session_env). Přednost má **vlastní předplatné**
+  toho člověka: appka na počítači ho připojí sama (`claude setup-token`, token
+  na rok, viz predplatne) a prostor ho dostane jako `CLAUDE_CODE_OAUTH_TOKEN`.
+  Bez něj na `central` (výchozí) klíč API (`ANTHROPIC_API_KEY`) — vlastní klíč
+  účtu, nebo společný klíč brány (viz api_key); platí se podle spotřeby. Když
+  není ani klíč, přihlásí se člověk v prostoru sám (`/login`). Sdílet jedno
+  předplatné mezi víc lidí je proti podmínkám Anthropicu, proto token patří
+  vždycky jen účtu, který ho připojil.
+
+Do domova brána zapisuje jen přes `safefs` — domov patří session a ta v něm
+může nechat odkaz kamkoli na server (viz safefs).
 
 Cesty jdou přebít proměnnými prostředí, aby šel modul otestovat i mimo server.
 """
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 import re
-import shutil
+import secrets
+import stat
 import threading
 import time
 
 from . import config
+from . import safefs
 from . import shared
 from .isolation import SCOPE_PREFIX
 
@@ -164,9 +172,8 @@ def _home_names(user):
 
 def _owner_email(path):
     try:
-        with open(os.path.join(path, ".claude", "hub-config.json"), encoding="utf-8") as fh:
-            owner = json.load(fh).get("gateway_user") or {}
-        return str(owner.get("email") or "").strip().lower()
+        owner = json.loads(safefs.read_text(path, ".claude/hub-config.json") or "{}")
+        return str((owner.get("gateway_user") or {}).get("email") or "").strip().lower()
     except (OSError, ValueError, AttributeError):
         return ""
 
@@ -275,42 +282,37 @@ def rewrite_paths(home, old, new):
             if os.path.islink(full):
                 changed += _retarget(full, old, new)
                 continue
-            try:
-                if os.path.getsize(full) > _MAX_REWRITE:
-                    continue
-                with open(full, "rb") as fh:
-                    data = fh.read()
-            except OSError:
+            rel = os.path.relpath(full, home)
+            st = safefs.lstat(home, rel)
+            if not st or not stat.S_ISREG(st.st_mode) or st.st_size > _MAX_REWRITE:
                 continue
-            if b"\0" in data[:8192]:
-                continue                  # binární soubor
+            data = safefs.read_bytes(home, rel, _MAX_REWRITE)
+            if data is None or b"\0" in data[:8192]:
+                continue                  # zmizel, odkaz, nebo binární soubor
             fixed = slug_re.sub(new_slug.encode(), path_re.sub(new.encode(), data))
             if fixed == data:
                 continue
-            tmp = full + ".hub-tmp"
             try:
-                with open(tmp, "wb") as fh:
-                    fh.write(fixed)
-                shutil.copymode(full, tmp)
-                os.replace(tmp, full)
+                safefs.write_bytes(home, rel, fixed, mode=stat.S_IMODE(st.st_mode), heal=False)
                 changed += 1
             except OSError:
-                try:
-                    os.remove(tmp)
-                except OSError:
-                    pass
+                pass
     # Složky projektů Claude Code nesou cestu ve jméně — bez přejmenování by
     # přišel o historii konverzací i paměť projektu.
-    projects = os.path.join(home, ".claude", "projects")
     try:
-        entries = os.listdir(projects)
+        pfd = safefs.open_dir(home, [".claude", "projects"])
     except OSError:
-        entries = []
-    for entry in entries:
-        if entry == old_slug or entry.startswith(old_slug + "-"):
-            dst = os.path.join(projects, new_slug + entry[len(old_slug):])
-            if not os.path.lexists(dst):
-                os.rename(os.path.join(projects, entry), dst)
+        return changed
+    try:
+        for entry in os.listdir(pfd):
+            if entry == old_slug or entry.startswith(old_slug + "-"):
+                dst = new_slug + entry[len(old_slug):]
+                try:
+                    os.lstat(dst, dir_fd=pfd)
+                except FileNotFoundError:
+                    os.rename(entry, dst, src_dir_fd=pfd, dst_dir_fd=pfd)
+    finally:
+        os.close(pfd)
     return changed
 
 
@@ -382,6 +384,82 @@ def api_key(user=None):
     return ""
 
 
+# ── vlastní předplatné Claude ────────────────────────────────────────────────
+# Token z `claude setup-token` (platí rok, jen na používání Clauda). Připojuje ho
+# appka na počítači toho člověka, případně správce (`claude-hub-admin
+# predplatne set`). Leží u brány podle čísla účtu, 0600 ve složce 0700 — do
+# prostoru přijde jen tomu, komu patří, jako CLAUDE_CODE_OAUTH_TOKEN.
+OAUTH_TOKEN_RE = re.compile(r"sk-ant-oat01-[A-Za-z0-9_-]{20,400}")
+TOKEN_DAYS = 365
+
+
+def _predplatne_path(user):
+    return os.path.join(config.CLAUDE_TOKENS_DIR, "%d.json" % int(user["id"]))
+
+
+def predplatne(user):
+    """{"token", "created", "label"} připojeného předplatného, nebo None."""
+    try:
+        with open(_predplatne_path(user), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not OAUTH_TOKEN_RE.fullmatch(str(data.get("token") or "")):
+        return None
+    return data
+
+
+def save_predplatne(user, token, label=""):
+    token = str(token or "").strip()
+    if not OAUTH_TOKEN_RE.fullmatch(token):
+        raise ValueError("Tohle nevypadá jako token předplatného Claude (sk-ant-oat01-…).")
+    os.makedirs(config.CLAUDE_TOKENS_DIR, mode=0o700, exist_ok=True)
+    os.chmod(config.CLAUDE_TOKENS_DIR, 0o700)
+    path = _predplatne_path(user)
+    tmp = f"{path}.{secrets.token_hex(4)}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump({"token": token, "created": int(time.time()),
+                   "label": str(label or "")[:80]}, fh)
+    os.replace(tmp, path)
+
+
+def remove_predplatne(user):
+    try:
+        os.remove(_predplatne_path(user))
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def auth_mark(user):
+    """Otisk přihlášení, se kterým by prostor nastartoval teď — podle něj se
+    pozná, že běžící prostor potřebuje restart (připojené předplatné)."""
+    env = session_env(user)
+    raw = env.get("CLAUDE_CODE_OAUTH_TOKEN") or env.get("ANTHROPIC_API_KEY") or ""
+    return hashlib.sha256(raw.encode()).hexdigest()[:16] if raw else ""
+
+
+def claude_state(user):
+    """Na čem Claude v prostoru jede — pro appku i nastavení v prostoru.
+
+    `mode`: predplatne (vlastní předplatné přes bránu), api (klíč API),
+    ucet (přihlásil se v prostoru sám), zadne (musí se přihlásit)."""
+    sub = predplatne(user)
+    if sub:
+        created = int(sub.get("created") or 0)
+        expires = created + TOKEN_DAYS * 86400 if created else 0
+        return {"mode": "predplatne", "since": created, "expires": expires,
+                "label": sub.get("label") or "",
+                "expiring": bool(expires) and expires - time.time() < 30 * 86400}
+    if claude_auth(user) == "central" and api_key(user):
+        return {"mode": "api"}
+    home = home_for(user)
+    if os.path.isdir(home) and safefs.is_file(home, ".claude/.credentials.json"):
+        return {"mode": "ucet"}
+    return {"mode": "zadne"}
+
+
 def google_client():
     """(client_id, client_secret) klienta OAuth pro Google, nebo ('', '')."""
     try:
@@ -394,61 +472,23 @@ def google_client():
 
 
 def session_env(user):
-    """Proměnné prostředí navíc pro prostor: klíč API (jen `central`) a klient
-    OAuth pro napojení na Google (všem — účty si každý přidává sám)."""
+    """Proměnné prostředí navíc pro prostor: přihlášení Clauda a klient OAuth
+    pro napojení na Google (všem — účty si každý přidává sám).
+
+    Přihlášení: vlastní předplatné má přednost před klíčem API — kdo si ho
+    připojil, chce jet na něm. Klíč API jen na `central`."""
     env = {}
+    sub = predplatne(user)
     key = api_key(user) if claude_auth(user) == "central" else ""
-    if key:
+    if sub:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = sub["token"]
+    elif key:
         env["ANTHROPIC_API_KEY"] = key
     cid, secret = google_client()
     if cid and secret:
         env["GOOGLE_OAUTH_CLIENT_ID"] = cid
         env["GOOGLE_OAUTH_CLIENT_SECRET"] = secret
     return env
-
-
-def _approve_api_key(home, key):
-    """Předschválí klíč v ~/.claude.json prostoru.
-
-    Claude Code se na klíč z prostředí napoprvé ptá („Do you want to use this
-    API key?") a bez odpovědi nepustí dál. Zapíše se to stejně, jak by to udělal
-    on sám: posledních 20 znaků klíče v customApiKeyResponses.approved. Soubor
-    se přepisuje atomicky a jen tehdy, když jde přečíst — rozbitý nechat být je
-    lepší než uživateli smazat nastavení. Volá se před startem hubu, kdy Claude
-    Code v prostoru neběží a do souboru nepíše."""
-    path = os.path.join(home, ".claude.json")
-    try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except FileNotFoundError:
-        data = {}
-    except (OSError, ValueError):
-        return
-    if not isinstance(data, dict):
-        return
-    tail = key.strip()[-20:]
-    resp = data.get("customApiKeyResponses")
-    resp = resp if isinstance(resp, dict) else {}
-    approved = [k for k in (resp.get("approved") or []) if isinstance(k, str)]
-    rejected = [k for k in (resp.get("rejected") or []) if isinstance(k, str)]
-    # Zbytek dřívějšího přihlášení vlastním účtem: token je pryč, ale údaje
-    # o účtu zůstaly. Claude Code by podle nich ukazoval cizí e-mail a modelu
-    # ho podával jako uživatelův (Claude s ním pak zkoušel i Google).
-    stale = "oauthAccount" in data and not os.path.exists(
-        os.path.join(home, ".claude", ".credentials.json"))
-    if tail in approved and tail not in rejected and not stale:
-        return
-    if stale:
-        data.pop("oauthAccount", None)
-    data["customApiKeyResponses"] = {
-        **resp,
-        "approved": approved if tail in approved else approved + [tail],
-        "rejected": [k for k in rejected if k != tail],
-    }
-    tmp = path + ".hub-tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
 
 
 def _hub_config(user, home):
@@ -486,47 +526,45 @@ def ensure(user):
     claude = os.path.join(home, ".claude")
     projects = os.path.join(home, "projects")
 
-    for d in (home, os.path.join(vault, "memory"), os.path.join(vault, "skills"),
-              os.path.join(vault, ".obsidian"), claude, projects):
-        os.makedirs(d, exist_ok=True)
-
-    index = os.path.join(vault, "memory", "MEMORY.md")
-    if not os.path.isfile(index):
-        with open(index, "w", encoding="utf-8") as fh:
-            fh.write(EMPTY_MEMORY)
+    # Domov zakládá brána ve složce, kam session nevidí — tady odkaz být nemůže.
+    os.makedirs(home, exist_ok=True)
+    # Všechno uvnitř už patří session: jen přes safefs (odkazy se nenásledují).
+    vault_rel = os.path.relpath(vault, home)
+    for rel in (os.path.join(vault_rel, "memory"), os.path.join(vault_rel, "skills"),
+                os.path.join(vault_rel, ".obsidian"), "projects"):
+        safefs.makedirs(home, rel)
+    safefs.create_text(home, os.path.join(vault_rel, "memory", "MEMORY.md"), EMPTY_MEMORY)
 
     # hub-config.json přepisujeme vždy: e-mail/jméno/vault se mohly změnit ve
     # správě účtů a hub si je čte odsud. Ostatní stav (projekty, MCP) si hub
-    # drží jinde, tohle mu jen řekne, kde má paměť a projekty.
-    with open(os.path.join(claude, "hub-config.json"), "w", encoding="utf-8") as fh:
-        json.dump(_hub_config(user, home), fh, ensure_ascii=False, indent=2)
+    # drží jinde, tohle mu jen řekne, kde má paměť a projekty. Když je ~/.claude
+    # odkaz, odloží se stranou — hub bez vlastní konfigurace nenastartuje.
+    safefs.write_text(home, ".claude/hub-config.json",
+                      json.dumps(_hub_config(user, home), ensure_ascii=False, indent=2))
 
-    # Přihlášení Claude Code (claude_auth):
-    #  * central — klíč API brány přijde do prostředí (session_env); tady se
-    #    jen předschválí, ať se Claude Code neptá.
-    #  * own — člověk se přihlásí sám, nic se nepřidává.
-    # Symlink na sdílené přihlášení z dřívějšího central se ruší v obou
-    # případech: jedno osobní předplatné pro víc lidí je proti podmínkám.
-    cred_link = os.path.join(claude, ".credentials.json")
+    # Přihlášení Claude Code přichází v prostředí (session_env) a předschválí
+    # ho hub v prostoru sám (hub/predplatne.py) — do ~/.claude.json brána
+    # nesahá. Symlink na sdílené přihlášení z dřívějšího central se ruší:
+    # jedno osobní předplatné pro víc lidí je proti podmínkám.
     try:
-        if os.path.islink(cred_link) and \
-                os.path.realpath(cred_link) == os.path.realpath(SHARED_CRED):
-            os.remove(cred_link)
+        cfd = safefs.open_dir(home, [".claude"])
+        try:
+            if os.readlink(".credentials.json", dir_fd=cfd) == SHARED_CRED:
+                os.unlink(".credentials.json", dir_fd=cfd)
+        finally:
+            os.close(cfd)
     except OSError:
         pass
-    key = api_key(user) if claude_auth(user) == "central" else ""
-    if key:
-        _approve_api_key(home, key)
 
     # Firemní Obsidian: trezor, pokyny pro Clauda a přístup ke čtení. Bez něj
     # prostor nastartuje taky — jen o firemním nebude vědět.
     try:
         ensure_company_vault()
-        _company_claude_md(claude)
+        _company_claude_md(home)
         mine = shared.vaults_for(user)
-        _company_settings(claude, [v["path"] for v in mine])
-        _shared_claude_md(claude, mine)
-    except OSError:
+        _company_settings(home, [v["path"] for v in mine])
+        _shared_claude_md(home, mine)
+    except (OSError, ValueError):
         pass
 
     return {"home": home, "vault": vault, "claude": claude,
@@ -647,17 +685,14 @@ a zeptá se kartou.
 """
 
 
-def _company_claude_md(claude_dir):
+def _company_claude_md(home):
     """Pokyny k firemnímu Obsidianu v ~/.claude/CLAUDE.md prostoru. Mezi
     značkami se vždy přepíšou, zbytek souboru patří uživateli a zůstane."""
-    path = os.path.join(claude_dir, "CLAUDE.md")
-    try:
-        with open(path, encoding="utf-8") as fh:
-            text = fh.read()
-    except FileNotFoundError:
-        text = ""
-    except (OSError, ValueError):
-        return
+    text = safefs.read_text(home, ".claude/CLAUDE.md")
+    if text is None:
+        if safefs.is_file(home, ".claude/CLAUDE.md"):
+            return                       # nečitelný (velký, jiné kódování) — nechat být
+        text = ""                        # chybí, nebo je to odkaz — nahradí se
     block = _company_block()
     start, end = text.find(FIRMA_MARK[0]), text.find(FIRMA_MARK[1])
     if start >= 0 and end > start:
@@ -665,24 +700,24 @@ def _company_claude_md(claude_dir):
     else:
         new = (text.rstrip("\n") + "\n\n" if text.strip() else "") + block
     if new != text:
-        tmp = path + ".hub-tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            fh.write(new)
-        os.replace(tmp, path)
+        safefs.write_text(home, ".claude/CLAUDE.md", new)
 
 
-def _company_settings(claude_dir, extra=()):
+def _company_settings(home, extra=()):
     """Firemní trezor (a sdílené Obsidiany z `extra`) mezi složkami, které Claude
     Code smí číst bez ptaní (permissions.additionalDirectories). Nečitelné
     nastavení se nepřepisuje."""
-    path = os.path.join(claude_dir, "settings.json")
-    try:
-        with open(path, encoding="utf-8-sig") as fh:
-            data = json.load(fh)
-    except FileNotFoundError:
-        data = {}
-    except (OSError, ValueError):
-        return
+    rel = ".claude/settings.json"
+    if not safefs.lstat(home, rel) or not safefs.is_file(home, rel):
+        data = {}                        # chybí, nebo je to odkaz — nahradí se
+    else:
+        raw = safefs.read_text(home, rel, encoding="utf-8-sig")
+        try:
+            data = json.loads(raw) if raw is not None else None
+        except ValueError:
+            data = None
+        if data is None:
+            return
     if not isinstance(data, dict):
         return
     perms = data.get("permissions", {})
@@ -696,11 +731,7 @@ def _company_settings(claude_dir, extra=()):
         return
     perms["additionalDirectories"] = dirs + missing
     data["permissions"] = perms
-    tmp = path + ".hub-tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
-        fh.write("\n")
-    os.replace(tmp, path)
+    safefs.write_text(home, rel, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
 def company_rel(rel):
@@ -797,17 +828,14 @@ hub restart nabídne v panelu Sdílené Obsidiany.
 """
 
 
-def _shared_claude_md(claude_dir, mine):
+def _shared_claude_md(home, mine):
     """Pokyny ke sdíleným Obsidianům v ~/.claude/CLAUDE.md — mezi značkami se
     přepíšou, zbytek souboru zůstane."""
-    path = os.path.join(claude_dir, "CLAUDE.md")
-    try:
-        with open(path, encoding="utf-8") as fh:
-            text = fh.read()
-    except FileNotFoundError:
+    text = safefs.read_text(home, ".claude/CLAUDE.md")
+    if text is None:
+        if safefs.is_file(home, ".claude/CLAUDE.md"):
+            return
         text = ""
-    except (OSError, ValueError):
-        return
     block = _shared_block(mine)
     start, end = text.find(SHARED_MARK[0]), text.find(SHARED_MARK[1])
     if start >= 0 and end > start:
@@ -815,10 +843,7 @@ def _shared_claude_md(claude_dir, mine):
     else:
         new = (text.rstrip("\n") + "\n\n" if text.strip() else "") + block
     if new != text:
-        tmp = path + ".hub-tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            fh.write(new)
-        os.replace(tmp, path)
+        safefs.write_text(home, ".claude/CLAUDE.md", new)
 
 
 def apply_proposal(user, pid, overwrite=False):

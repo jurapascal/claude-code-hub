@@ -32,7 +32,44 @@ Když se zapne, platí navíc:
 Za tenhle kus zodpovídá Tailscale: kdo není v tailnetu, nemá se kam připojit.
 Token je druhá vrstva pro případ, že by se do tailnetu dostal někdo cizí.
 
+## Claude ze serveru na počítači
+
+Když je appka přihlášená k serveru (bráně), může Claude z prostoru na serveru
+sahat na tenhle počítač (`hub/pocitac.py`). To je vědomě díra ven, takže:
+
+| | |
+|---|---|
+| **Vypnuto, dokud se nezapne** | volí se na počítači: vypnuto / jen čtení / plný přístup. Dokud je vypnuto, hub se na úkoly vůbec neptá. |
+| **Spojení staví počítač** | dlouhé dotazy po HTTPS s tokenem zařízení; na počítači se neotevírá žádný port |
+| **Úroveň se ověřuje u každého úkolu** | podle toho, co je v `hub-config.json` teď, ne podle toho, co tvrdí brána |
+| **Server ji změnit neumí** | stránka prostoru zná adresu i token hubu na počítači (`#local=`, cesta zpátky). POST na `/api` proto musí mít `Origin` stránky hubu — z prostoru neprojde. |
+| **Přihlášení appky a Claude Code se nečte** | `hub-config.json` (token zařízení) a `.credentials.json` odmítne čtení, hledání, stažení i zápis. S tokenem zařízení by si Claude v prostoru sám potvrdil, co potvrzuje člověk (firemní Obsidian). |
+| **Každý úkol do logu** | `hub.log` a posledních pár v ⚙ → Účet |
+
+Co to **neřeší**: s plným přístupem Claude spouští příkazy, a příkaz si
+soubor s přihlášením přečte i tak. Plný přístup je proto stejná důvěra jako
+Claude Code spuštěný přímo na tom počítači — a na počítač tak dosáhne i ten,
+kdo spravuje server. Appka to říká u volby.
+
 ## Co revize našla a co se s tím udělalo
+
+### Cizí domov přes symbolický odkaz na bráně (opraveno ve 2.14)
+
+Brána zapisovala do domova uživatele (`settings.json`, `CLAUDE.md`,
+`.claude.json`, `hub-config.json`) obyčejným `open()` přes pomocný
+`….hub-tmp`. Session v prostoru si mohla ten soubor předem nahradit odkazem na
+registr domovů `/home/hub/users/.domovy.json` a do `settings.json` napsat
+`{"jmeno-kolegy": <své číslo účtu>}`. Brána pak registr přepsala a po restartu
+prostoru dostala session domov kolegy — jeho Obsidian, projekty i přihlášení.
+Odkazem šlo i přečíst cizí `CLAUDE.md` nebo `settings.json`. Ověřeno na kódu
+2.13.0.
+
+Oprava: `gateway/safefs.py` — složky po jedné s `O_NOFOLLOW`, soubory přes
+`dir_fd`, zápis přes náhodný dočasný soubor s `O_EXCL` a `rename`, čtení bez
+následování odkazů a bez blokování na pojmenované rouře. `~/.claude.json`
+předvyplňuje hub uvnitř sandboxu, ne brána. Útoky (odkaz na `*.hub-tmp`,
+na `CLAUDE.md`, celé `~/.claude` jako odkaz, roura místo `hub-config.json`,
+přejmenování domova) jsou vyzkoušené a neprojdou.
 
 ### Spuštění cizího příkazu přes jméno složky (opraveno)
 

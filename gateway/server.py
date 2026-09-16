@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from hub import __version__, qr
 
-from . import config, isolation, shared, totp, workspace
+from . import config, isolation, pocitac, shared, totp, workspace
 from .accounts import Accounts
 
 HTML = "text/html; charset=utf-8"
@@ -205,6 +205,12 @@ class HubProc:
         self.conns = 0
         # Sdílené Obsidiany svázané při startu — nové se ukážou až po restartu.
         self.shared = []
+        # Žeton, kterým se prostor u brány prokazuje, když Claude sahá na
+        # počítač uživatele (gateway/pocitac.py). Nový s každým startem.
+        self.pocitac_token = ""
+        # S jakým přihlášením Clauda prostor nastartoval (workspace.auth_mark) —
+        # připojené předplatné se do běžícího prostoru dostane až restartem.
+        self.auth_mark = ""
         self._checked = 0.0
         self._alive = False
         self._lock = threading.Lock()
@@ -228,9 +234,17 @@ class HubProc:
         # Klíč API brány jen tomu, kdo jede na `central` — `own` ho nesmí
         # zdědit ani z prostředí samotné brány.
         env.pop("ANTHROPIC_API_KEY", None)
+        env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
         env.pop("GOOGLE_OAUTH_CLIENT_ID", None)
         env.pop("GOOGLE_OAUTH_CLIENT_SECRET", None)
         env.update(workspace.session_env(self.user))
+        self.auth_mark = workspace.auth_mark(self.user)
+        # Most na počítač uživatele: MCP server v prostoru (tools/pocitac_mcp.py)
+        # volá bránu přímo na loopbacku, ne přes nginx — a tenhle žeton říká,
+        # čí prostor volá. Jiné prostory ho nevidí (každý má svoje prostředí).
+        self.pocitac_token = secrets.token_urlsafe(32)
+        env["HUB_POCITAC_URL"] = _loopback_url()
+        env["HUB_POCITAC_TOKEN"] = self.pocitac_token
         # XDG_RUNTIME_DIR musí session dostat, jinak si systemd --user scope
         # nemá kam sáhnout (limity by tiše vypadly).
         env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
@@ -382,6 +396,18 @@ class HubManager:
             # mimo zámek, ať mezitím nečekají požadavky ostatních.
             for proc in to_stop:
                 proc.stop()
+
+    def user_for_pocitac(self, token):
+        """Čí běžící prostor se tímhle žetonem prokazuje, nebo None."""
+        if not token:
+            return None
+        with self._lock:
+            procs = list(self.procs.values())
+        for proc in procs:
+            if proc.pocitac_token and secrets.compare_digest(proc.pocitac_token, token) \
+                    and proc.alive():
+                return proc.user
+        return None
 
     def restart(self, user):
         """Zastaví prostor uživatele; další požadavek ho spustí znovu — i s nově
@@ -628,6 +654,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._gw_me()
             if route == "/gw/handoff":
                 return self._gw_handoff(method)
+            # Most na počítač: počítač se ptá tokenem zařízení, prostor volá
+            # svým žetonem. Ani jedno nejde přes cookie a nic z toho se neproxuje.
+            if route == "/gw/pocitac/poll":
+                return self._pocitac_poll(method)
+            if route == "/gw/pocitac/vysledek":
+                return self._pocitac_reply(method)
+            if route == "/gw/pocitac/volani":
+                return self._pocitac_call(method)
+            # Přihlášení Clauda v prostoru: appka tokenem zařízení, prostor
+            # (prohlížeč) cookie — obojí řeší _gw_claude.
+            if route == "/gw/claude":
+                return self._gw_claude(method)
 
             user = self._user()
 
@@ -651,6 +689,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._gw_shared(user)
             if route == "/gw/restart":
                 return self._gw_restart(method, user)
+            if route == "/gw/pocitac":
+                # Které počítače jsou k prostoru připojené — štítek v hlavičce.
+                return self._json({"computers": self.server.pocitac.list(user["id"])})
 
             # Přihlášený → všechno ostatní jde do jeho instance hubu.
             return self._proxy(method, user)
@@ -901,6 +942,9 @@ class Handler(BaseHTTPRequestHandler):
         """
         return self._json({"app": "claude-code-hub", "kind": "gateway",
                            "version": __version__,
+                           # Co brána umí navíc — appka podle toho pozná, jestli
+                           # se má ptát třeba na most na počítač.
+                           "features": ["pocitac", "predplatne"],
                            "host": self._public_host()})
 
     def _gw_me(self):
@@ -922,6 +966,105 @@ class Handler(BaseHTTPRequestHandler):
         host = self._public_host()
         return self._json({"code": code, "ttl": HANDOFF_TTL,
                            "url": f"{scheme}://{host}/login?handoff={code}"})
+
+    # ---- Claude na vlastním předplatném ----
+    def _gw_claude(self, method):
+        """Na čem Claude v prostoru jede; připojení a odpojení předplatného.
+
+        Appka na počítači se prokazuje tokenem zařízení (token předplatného
+        vyrobí `claude setup-token` u člověka na počítači a pošle ho sem).
+        Z prohlížeče jen s cookie, ze stránky brány a s hlavičkou — Claude
+        v prostoru cookie nemá, takže si předplatné nepřepíše.
+        """
+        bearer = self._bearer_token()
+        user = self._bearer() if bearer else self._user()
+        if not user:
+            return self._json({"error": "Nepřihlášeno."}, 401)
+        if method == "POST":
+            if not bearer and not self._account_post_ok():
+                return self._json({"error": "Jen z nastavení hubu."}, 403)
+            form = self._read_form()
+            try:
+                if form.get("remove") is True:
+                    workspace.remove_predplatne(user)
+                else:
+                    label = self.headers.get("User-Agent", "")[:60] if not bearer else \
+                        str(form.get("label") or "")
+                    workspace.save_predplatne(user, form.get("token"), label)
+            except ValueError as exc:
+                return self._json({"error": str(exc)}, 400)
+            # Běžící prostor má přihlášení ze svého startu. Když v něm nikdo
+            # nepracuje, zastaví se hned a další otevření ho pustí už s novým.
+            if self.hubs:
+                self.hubs.stop_idle(user["id"])
+        state = workspace.claude_state(user)
+        proc = self.hubs.procs.get(user["id"]) if self.hubs else None
+        state["running"] = bool(proc and proc.alive())
+        state["needs_restart"] = bool(state["running"] and
+                                      proc.auth_mark != workspace.auth_mark(user))
+        return self._json(state)
+
+    # ---- most na počítač uživatele (gateway/pocitac.py) ----
+    def _pocitac_poll(self, method):
+        """Počítač čeká na úkoly. Drží se až POLL_WAIT sekund."""
+        if method != "POST":
+            return self._json({"error": "Jen POST."}, 405)
+        user = self._bearer()
+        if not user:
+            return self._json({"error": "Neplatný token."}, 401)
+        form = self._read_form()
+        info = form.get("computer") if isinstance(form.get("computer"), dict) else {}
+        broker = self.server.pocitac
+        if form.get("bye") is True:
+            return self._json({"ok": broker.bye(user["id"], info.get("id"))})
+        try:
+            wait = float(form.get("wait", pocitac.POLL_WAIT))
+        except (TypeError, ValueError):
+            wait = pocitac.POLL_WAIT
+        try:
+            tasks = broker.poll(user["id"], info, wait)
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, 400)
+        try:
+            return self._json({"tasks": tasks})
+        except OSError:
+            # Počítač mezitím spojení zavřel — úkoly nesmí propadnout.
+            broker.requeue(user["id"], info.get("id"), tasks)
+            raise
+
+    def _pocitac_reply(self, method):
+        if method != "POST":
+            return self._json({"error": "Jen POST."}, 405)
+        user = self._bearer()
+        if not user:
+            return self._json({"error": "Neplatný token."}, 401)
+        form = self._read_form()
+        result = {"ok": form.get("ok") is True, "result": form.get("result"),
+                  "error": str(form.get("error") or "")[:2000]}
+        ok = self.server.pocitac.reply(user["id"], form.get("computer"), form.get("id"), result)
+        return self._json({"ok": ok})
+
+    def _pocitac_call(self, method):
+        """Úkol od Clauda z prostoru pro počítač jeho uživatele.
+
+        Volá se jen z prostoru přímo na loopback brány. Přes nginx ne: ten
+        vždycky přidá X-Real-IP, takže žeton, kdyby unikl, zvenku nic neotevře.
+        """
+        if self.headers.get("X-Real-IP") or self.headers.get("X-Forwarded-For"):
+            return self._send(404, b"404")
+        if method != "POST":
+            return self._json({"error": "Jen POST."}, 405)
+        user = self.hubs.user_for_pocitac(self.headers.get("X-Hub-Pocitac", "")) \
+            if self.hubs else None
+        if not user:
+            return self._json({"ok": False, "error": "Neplatný žeton prostoru."}, 401)
+        form = self._read_form()
+        op = str(form.get("op") or "")
+        broker = self.server.pocitac
+        if op == "list":
+            return self._json({"ok": True, "computers": broker.list(user["id"])})
+        return self._json(broker.call(user["id"], op, form.get("args"),
+                                      str(form.get("computer") or "")))
 
     def _logout(self):
         token = self._cookies().get(config.SESSION_COOKIE, "")
@@ -1143,6 +1286,15 @@ class Gateway(ThreadingHTTPServer):
         self.accounts = accounts
         self.hubs = hubs
         self.assume_https = assume_https
+        self.pocitac = pocitac.Broker()
+
+
+def _loopback_url():
+    """Kudy prostor na tomhle stroji dosáhne na bránu — mimo nginx."""
+    host = config.HOST if config.HOST not in ("", "0.0.0.0", "::") else "127.0.0.1"
+    if ":" in host:
+        host = f"[{host}]"
+    return f"http://{host}:{config.PORT}"
 
 
 def stop_orphans():

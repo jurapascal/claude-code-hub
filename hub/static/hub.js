@@ -930,6 +930,13 @@ function renderPlace() {
   badge.title = u ? `Prostor na serveru · ${u.name || u.email}` : '';
   badge.onclick = u
     ? () => HubSettings.open({...hubIO(), state: STATE, tab: 'ucet'}) : null;
+  // Počítač, na který Claude z prostoru dosáhne (hub/pocitac.py).
+  if (u) HubPocitac.chip(hubIO());
+  // Připojené předplatné, které běžící prostor ještě nemá — jednou za načtení.
+  if (u && !renderPlace.noticed) {
+    renderPlace.noticed = true;
+    HubPredplatne.notice(hubIO());
+  }
 }
 
 /* Uvítání. Není to jen ozdoba — je to jediná obrazovka, kterou člověk vidí,
@@ -2178,7 +2185,7 @@ async function applyReturn() {
   history.replaceState(null, '', location.pathname + '?' + params.toString());
   if (mode === 'local') await api('account', {action: 'local'}).catch(() => {});
   else if (mode === 'logout') await api('account', {action: 'logout'}).catch(() => {});
-  else return '';
+  else if (mode !== 'pocitac' && mode !== 'predplatne') return '';   // jen volba, pak zpátky
   return mode;
 }
 
@@ -2197,6 +2204,16 @@ async function startScreen(returned) {
 
   if (returned === 'local') {
     toast('Pracuješ na tomhle počítači. Na server se vrátíš v Nastavení → Účet.');
+    return onLocal();
+  }
+  if (returned === 'pocitac' || returned === 'predplatne') {
+    // Z prostoru přes „Zapnout na tomhle počítači" / „Použít moje předplatné":
+    // vyřídit tady a hned zpátky.
+    if (returned === 'pocitac') await HubPocitac.ask(hubIO(), {back: true});
+    else await HubPredplatne.connect(hubIO());
+    const res = await HubServer.go(hubIO()).catch((e) => ({error: e.message}));
+    if (res.ok) return;
+    toast('Do prostoru se teď vrátit nepovedlo: ' + (res.error || 'neznámá chyba'));
     return onLocal();
   }
   if (returned === 'logout') {

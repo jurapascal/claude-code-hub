@@ -9,7 +9,9 @@
  *  - `go()`      okno přejde do prostoru na serveru a appka si to zapamatuje.
  *  - `gate()`    obrazovka při startu, když se na server nedalo rovnou přejít
  *                (neodpovídá, přihlášení vypršelo).
- *  - `backTo()`  z hubu na serveru zpátky na počítač.
+ *  - `backTo()`  z hubu na serveru zpátky na počítač (`mode`: local, logout,
+ *                pocitac = jen změnit přístup Clauda na počítač a vrátit se,
+ *                predplatne = propojit Clauda s předplatným a vrátit se).
  *
  * Cesta zpátky: při přechodu na server se do adresy přidá `#local=<adresa
  * hubu na počítači>`. Fragment prohlížeč serveru neposílá, takže token hubu na
@@ -73,6 +75,17 @@
 
   /* ── na počítači: přejít na server ───────────────────────────────────────── */
   async function go(io) {
+    // Jednou, před prvním vstupem do prostoru: smí Claude ze serveru sahat
+    // i na tenhle počítač? Bez odpovědi by o tom člověk nevěděl.
+    const cfg = io.state && io.state.config;
+    if (global.HubPocitac && cfg && !cfg.gateway_user && !cfg.pocitac_asked) {
+      await global.HubPocitac.ask(io);
+    }
+    // Claude v prostoru bez klíče API a bez přihlášení: propojit ho s
+    // předplatným rovnou tady, v prohlížeči stačí kliknout na Authorize.
+    if (global.HubPredplatne && cfg && !cfg.gateway_user) {
+      await global.HubPredplatne.ensure(io);
+    }
     const res = await io.api('account', {action: 'connect'});
     if (!res.url) return res;                 // {error, kind}
     const here = new URL(location.href);

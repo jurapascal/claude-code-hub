@@ -25,6 +25,9 @@ přes `--password` (hodí se do skriptu, ale zůstane v historii shellu).
     python3 -m gateway.admin skills install      # firemní skilly do trezoru
     python3 -m gateway.admin skills status | update
     python3 -m gateway.admin google set          # klient OAuth pro Google (jednou)
+    python3 -m gateway.admin predplatne status   # kdo jede na vlastním předplatném Claude
+    python3 -m gateway.admin predplatne set jmeno@firma.cz    # token z `claude setup-token`
+    python3 -m gateway.admin predplatne remove jmeno@firma.cz
     python3 -m gateway.admin google status | remove
 """
 import argparse
@@ -404,6 +407,38 @@ def cmd_google(a, args):
           "v Nastavení → Napojení přidají svoje Google účty.")
 
 
+def cmd_predplatne(a, args):
+    """Vlastní předplatné Claude v prostorech. Běžně ho připojí appka na počítači
+    sama (`claude setup-token` u člověka); tohle je pro přehled a pro případ,
+    kdy appku nemá — token si vyrobí kdekoli a správce ho vloží."""
+    if args.action == "status":
+        rows = [_user_or_die(a, args.email)] if args.email else a.list()
+        names = {"predplatne": "vlastní předplatné", "api": "klíč API",
+                 "ucet": "přihlášený v prostoru", "zadne": "nepřihlášený"}
+        for u in rows:
+            st = workspace.claude_state(u)
+            extra = ""
+            if st["mode"] == "predplatne" and st.get("expires"):
+                extra = " (platí do " + time.strftime("%d. %m. %Y", time.localtime(st["expires"])) + \
+                    (", brzy vyprší — připojit znovu" if st.get("expiring") else "") + ")"
+            print(f"  {u['email']:<32} {names[st['mode']]}{extra}")
+        return
+    if not args.email:
+        raise ValueError("Zadej e-mail účtu.")
+    user = _user_or_die(a, args.email)
+    if args.action == "remove":
+        gone = workspace.remove_predplatne(user)
+        print(f"{args.email}: " + ("předplatné odpojeno." if gone else "předplatné připojené neměl.")
+              + " Běžící prostor ho má do dalšího startu (stop <e-mail>).")
+        return
+    token = (getpass.getpass("Token z `claude setup-token` (sk-ant-oat01-…): ")
+             if sys.stdin.isatty() else sys.stdin.readline()).strip()
+    workspace.save_predplatne(user, token, "claude-hub-admin")
+    print(f"{args.email}: Claude v prostoru pojede na tomhle předplatném od dalšího startu"
+          " prostoru (stop <e-mail> ho uspíší). Token platí rok. Jedno předplatné"
+          " patří jednomu člověku — nesdílej ho mezi účty.")
+
+
 def cmd_disable(a, args):
     a.set_disabled(args.email, True)
     print(f"{args.email} zablokován (a odhlášen).")
@@ -525,6 +560,11 @@ def build_parser():
     go = sub.add_parser("google", help="klient OAuth pro napojení na Google")
     go.add_argument("action", choices=("set", "status", "remove"))
     go.set_defaults(func=cmd_google)
+
+    pp = sub.add_parser("predplatne", help="Claude na vlastním předplatném (token setup-token)")
+    pp.add_argument("action", choices=("status", "set", "remove"))
+    pp.add_argument("email", nargs="?", default="", help="e-mail účtu")
+    pp.set_defaults(func=cmd_predplatne)
 
     di = sub.add_parser("disable", help="zablokovat účet")
     di.add_argument("email")

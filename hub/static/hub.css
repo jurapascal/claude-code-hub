@@ -62,6 +62,20 @@ body { display: flex; flex-direction: column; }
   border-radius: 5px; padding: 1px 5px 2px; line-height: 1;
 }
 .topbar-badge.on-server { cursor: pointer; }
+/* Počítač, na který Claude z prostoru dosáhne (pocitac.js). */
+.topbar-pc {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 14rem;
+  font: inherit; font-size: 11.5px; color: var(--fg); cursor: pointer;
+  background: none; border: 1px solid var(--border); border-radius: 999px;
+  padding: 2px 9px 2px 7px; line-height: 1.3;
+}
+.topbar-pc span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-pc .ico { color: var(--green); font-size: 13px; }
+.topbar-pc:hover { background: var(--bg-card); }
+.topbar-pc.busy { border-color: var(--green); }
+.topbar-pc.busy .ico { animation: pc-pulse 1.1s ease-in-out infinite; }
+@keyframes pc-pulse { 50% { opacity: .35; } }
+@media (max-width: 720px) { .topbar-pc span { display: none; } }
 .topbar-actions { display: flex; gap: 2px; }
 
 .iconbtn {
@@ -1683,3 +1697,43 @@ body { display: flex; flex-direction: column; }
 .srv-gate .onb-box { width: min(520px, 100%); }
 .srv-gate .onb-body { min-height: 9rem; }
 .onb-gap { height: 18px; }
+
+/* ── Claude ze serveru na počítači (pocitac.js) ──────────────────────────── */
+.pc-tiles { margin: 4px 0 10px; }
+/* Tři volby vedle sebe — výchozích 15rem na dlaždici by je v kartě zalomilo. */
+.pc-tiles .onb-tile:has(.onb-tile-s) { flex: 1 1 10rem; }
+.pc-state { font-size: 12.5px; line-height: 1.55; color: var(--fg); margin: 2px 0 10px; }
+.pc-recent-t { font-size: 12px; margin: 12px 0 4px; }
+.pc-row {
+  display: flex; align-items: baseline; gap: 8px; font-size: 12px;
+  padding: 3px 0; color: var(--fg); min-width: 0;
+}
+.pc-mark { color: var(--green); font-weight: 700; flex: none; }
+.pc-row.bad .pc-mark { color: var(--red); }
+.pc-op { color: var(--dim); flex: none; }
+.pc-what {
+  font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--fg-bright);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1;
+}
+.pc-when { color: var(--dim); flex: none; }
+.pc-comp { display: flex; flex-direction: column; gap: 1px; font-size: 12.5px; margin: 0 0 10px; }
+.pc-ask .onb-box { width: min(620px, 100%); }
+.pc-ask .onb-mark .ico { width: 30px; height: 30px; }
+.pc-trust { margin-bottom: 0; }
+
+/* ── Claude na vlastním předplatném (predplatne.js) ──────────────────────── */
+.pd-card .onb-box { width: min(560px, 100%); }
+.pd-line { font-size: 13px; line-height: 1.5; margin: 4px 0 12px; color: var(--dim); }
+.pd-line.busy::before {
+  content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 8px;
+  border: 2px solid var(--amber); border-right-color: transparent; border-radius: 50%;
+  vertical-align: -1px; animation: pd-spin .8s linear infinite;
+}
+.pd-line.ok { color: var(--green); font-weight: 600; }
+.pd-line.err { color: var(--red); }
+@keyframes pd-spin { to { transform: rotate(360deg); } }
+.pd-help { font-size: 12.5px; color: var(--dim); margin: 0 0 10px; }
+.pd-help summary { cursor: pointer; }
+.pd-help-body { padding-top: 8px; }
+.pd-code { max-width: 14rem; }
+

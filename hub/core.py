@@ -58,6 +58,15 @@ DEFAULTS = {
     # Zapíná se, až když přihlášení i předání okna vyšlo — sama adresa nic
     # nepřepíná, kdo si ji jen zkusil, o hub na počítači nepřijde.
     "server_mode": False,
+    # Claude z prostoru na serveru na tomhle počítači (hub/pocitac.py):
+    # "" vypnuto, "cteni" jen čtení, "vse" i zápis a příkazy. `pocitac_asked`
+    # = člověk už volbu jednou viděl; `pocitac_id` rozlišuje stroje u brány.
+    "pocitac_access": "",
+    "pocitac_asked": False,
+    "pocitac_id": "",
+    # Claude v prostoru na vlastním předplatném (hub/predplatne.py): true = člověk
+    # automatické propojení před vstupem do prostoru odmítl, už se samo neptá.
+    "predplatne_skip": False,
 }
 
 

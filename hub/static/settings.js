@@ -589,6 +589,8 @@
           'Otevřeno v prohlížeči. Na počítači se mezi ním a serverem ' +
           'přepíná v appce Claude Code Hub.'));
       }
+      body.appendChild(HubPredplatne.serverBlock(io));
+      body.appendChild(HubPocitac.serverBlock(io));
       body.appendChild(zabezpeceni());
     }
 
@@ -772,6 +774,8 @@
         'Appka si pamatuje, kde jsi pracoval naposledy. Ze serveru se sem ' +
         'vrátíš v jeho nastavení: Účet → Pracovat na tomto počítači. Heslo ' +
         'a záložní kódy změníš tamtéž, v Nastavení → Účet v prostoru na serveru.'));
+      body.appendChild(HubPredplatne.panel(io));
+      body.appendChild(HubPocitac.panel(io));
     }
 
     function draw(data) {

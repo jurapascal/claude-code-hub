@@ -56,6 +56,12 @@ API_KEY_FILE = os.environ.get("HUB_GW_API_KEY_FILE",
 API_KEYS_DIR = os.environ.get("HUB_GW_API_KEYS_DIR",
                               os.path.join(GATEWAY_DIR, "api-keys"))
 
+# Vlastní předplatné Claude po účtech (token z `claude setup-token`, připojuje ho
+# appka na počítači nebo `claude-hub-admin predplatne set`). Soubor podle čísla
+# účtu, 0600 ve složce 0700; do prostoru přijde jako CLAUDE_CODE_OAUTH_TOKEN.
+CLAUDE_TOKENS_DIR = os.environ.get("HUB_GW_CLAUDE_TOKENS_DIR",
+                                   os.path.join(GATEWAY_DIR, "claude-predplatne"))
+
 # Klient OAuth pro napojení na Google (claude-hub-admin google set). Zakládá se
 # jednou pro všechny; do prostorů přijde jako GOOGLE_OAUTH_CLIENT_ID/SECRET.
 GOOGLE_CLIENT_FILE = os.environ.get("HUB_GW_GOOGLE_CLIENT_FILE",
