@@ -281,7 +281,10 @@
           'Claude Code Hub na počítači (Nastavení → Účet → Claude ze serveru na tomhle ' +
           'počítači) a funguje, dokud je appka otevřená.'));
       }
-      if (global.HubServer && global.HubServer.localBack()) {
+      if (global.HubServer && global.HubServer.localBack() &&
+          !global.HubServer.appAtLeast('2.14.1')) {
+        body.appendChild(global.HubServer.oldAppNote());
+      } else if (global.HubServer && global.HubServer.localBack()) {
         const row = el('div', 'set-row');
         const b = el('button', 'btn ghost',
           list.length ? 'Změnit na tomhle počítači' : 'Zapnout na tomhle počítači');

@@ -281,7 +281,10 @@
     box.appendChild(el('div', 'set-title', 'Claude'));
     const body = el('div', 'set-note', 'Zjišťuji…');
     box.appendChild(body);
-    const fromApp = !!(global.HubServer && global.HubServer.localBack());
+    // Z appky, která propojení umí — starší by návrat na počítač tiše přeskočila.
+    const fromApp = !!(global.HubServer && global.HubServer.localBack() &&
+                       global.HubServer.appAtLeast('2.14.1'));
+    const oldApp = !!(global.HubServer && global.HubServer.localBack()) && !fromApp;
 
     function draw(st) {
       body.textContent = '';
@@ -293,7 +296,8 @@
           (st.expiring ? 'Brzy vyprší — připoj ho znovu z appky na počítači. ' : '') +
           'Platí do ' + date(st.expires) + '.'));
       }
-      if (st.mode === 'zadne' && !fromApp) {
+      if (oldApp && st.mode !== 'ucet') body.appendChild(global.HubServer.oldAppNote());
+      if (st.mode === 'zadne' && !fromApp && !oldApp) {
         body.appendChild(el('div', 'set-note',
           'Otevři prostor v appce Claude Code Hub na počítači — propojí ho s tvým předplatným ' +
           'sama. Nebo v tabu Claude Code zvol přihlášení účtem Claude.'));

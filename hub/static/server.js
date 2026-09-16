@@ -23,6 +23,10 @@
 (function (global) {
 
   const LOCAL_KEY = 'hub.localBack';
+  // Verze appky na počítači, která okno do prostoru poslala (`#…&app=`).
+  // Prostor je vždycky nový, appka u člověka může být starší — a co nezná,
+  // to po návratu na počítač tiše přeskočí a okno problikne zpátky.
+  const APP_KEY = 'hub.appVersion';
 
   function el(tag, cls, text) {
     const node = document.createElement(tag);
@@ -54,12 +58,49 @@
       if (u.protocol !== 'http:' ||
           !['127.0.0.1', 'localhost'].includes(u.hostname)) return;
       sessionStorage.setItem(LOCAL_KEY, u.toString());
+      const app = /&app=([0-9.]{1,20})(?:&|$)/.exec(location.hash);
+      // Appka před 2.14.1 verzi neposílala — prázdná = starší.
+      sessionStorage.setItem(APP_KEY, app ? app[1] : '');
     } catch (_) { /* bez sessionStorage cesta zpátky prostě nebude */ }
     history.replaceState(null, '', location.pathname + location.search);
   }
 
   function localBack() {
     try { return sessionStorage.getItem(LOCAL_KEY) || ''; } catch (_) { return ''; }
+  }
+
+  /* Umí appka na počítači, ze které okno přišlo, aspoň verzi `min`? */
+  function appAtLeast(min) {
+    let have = '';
+    try { have = sessionStorage.getItem(APP_KEY) || ''; } catch (_) { return false; }
+    const num = (v) => String(v).split('.').map((n) => parseInt(n, 10) || 0);
+    const a = num(have), b = num(min);
+    if (!have) return false;
+    for (let i = 0; i < 3; i++) {
+      if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);
+    }
+    return true;
+  }
+
+  /* Blok „nejdřív aktualizuj appku" pro nastavení v prostoru. */
+  function oldAppNote() {
+    const box = document.createElement('div');
+    const note = document.createElement('div');
+    note.className = 'set-warn';
+    note.textContent = '! Appka Claude Code Hub na tomhle počítači je starší a tohle ještě neumí.';
+    const how = document.createElement('div');
+    how.className = 'set-note';
+    how.textContent = 'Aktualizuj ji: tlačítkem se vrátíš na počítač, tam Nastavení → ' +
+      'Aktualizace → Aktualizovat. Pak appku zavři a otevři znovu.';
+    const row = document.createElement('div');
+    row.className = 'set-row';
+    const b = document.createElement('button');
+    b.className = 'btn primary';
+    b.textContent = 'Na počítač aktualizovat appku';
+    b.onclick = () => backTo('local');
+    row.appendChild(b);
+    box.append(note, how, row);
+    return box;
   }
 
   /* `mode`: 'local' = zůstat na počítači, 'logout' = odhlásit appku. */
@@ -94,7 +135,9 @@
     // Odchod je záměr, ne zavírání okna: taby na počítači běží dál a nemá se
     // ptát „opravdu odejít?" ani ukládat postup (viz hub.js, beforeunload).
     global.HUB_LEAVING = true;
-    location.href = res.url + '#local=' + encodeURIComponent(here.toString());
+    const version = (io.state && io.state.version && io.state.version.version) || '';
+    location.href = res.url + '#local=' + encodeURIComponent(here.toString()) +
+      '&app=' + encodeURIComponent(version);
     return {ok: true};
   }
 
@@ -424,6 +467,6 @@
   }
 
   global.HubServer = {captureLocal, localBack, backTo, go, panel, gate,
-                      isAppWindow, hostOf};
+                      isAppWindow, hostOf, appAtLeast, oldAppNote};
 
 })(window);

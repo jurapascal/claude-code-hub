@@ -212,7 +212,10 @@ def server_start_url(local_url):
         core.log(f"server: {res.get('error')} — otevírám hub na počítači", "warn")
         return None
     core.log(f"server: otevírám prostor na {account.normalize(core.CONFIG.get('gw_server'))}")
-    return res["url"] + "#local=" + urllib.parse.quote(local_url, safe="")
+    # `app=` = verze téhle appky: prostor podle ní pozná, co appka umí (server.js).
+    from hub import __version__
+    return (res["url"] + "#local=" + urllib.parse.quote(local_url, safe="")
+            + "&app=" + urllib.parse.quote(__version__))
 
 
 def main():
