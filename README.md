@@ -649,6 +649,25 @@ Klíč si zapíše Claude Code do `~/.claude.json` — hub ho nikam neukládá a
 se nedostane. Instalačka ho vezme i z proměnné `CLOCKIFY_API_KEY`, takže projde
 i běh s `--yes`.
 
+#### Stopky v panelu (Start/Stop)
+
+V panelu vpravo je pod rychlými akcemi sekce **STOPKY**: vybereš projekt, dáš
+**Start** a u tabu běží čas. Po **Stopu** je záznam rovnou v Clockify.
+
+Jede to **mimo agenta** — rychlé akce vedle jsou slash příkazy, které píše Claude
+do terminálu, tohle je obyčejné tlačítko na backend. Nic se neposílá do modelu,
+takže čas jde měřit i v tabu, kde zrovna nic neběží.
+
+- Projekt se u složky vybere **jednou** a hub si ho pamatuje (`clockify_map`
+  v `hub-config.json`), podruhé stačí Start.
+- Přihlašovací údaje se berou z `~/.claude/clockify/config.json` — ze **stejného**
+  souboru, jaký používá automat `~/.claude/hooks/clockify-log.py`. Když soubor
+  chybí, sekce se vůbec neukáže.
+- Popis („na čem děláš") je nepovinný a záznam pověsí pod úkol z `taskName`,
+  takže ruční i automatické měření končí na stejném místě.
+- Clockify dovolí jen jedny běžící stopky: Start u druhého projektu ty první
+  sám zastaví.
+
 ## Přihlášení vlastním účtem
 
 Aplikace **žádné přihlašovací údaje neobsahuje ani nesdílí** — každý si pustí Claude Code

@@ -160,6 +160,10 @@
   <aside class="actionbar" id="actionbar" hidden>
     <div class="barlabel">RYCHLÉ AKCE</div>
     <div id="actions"></div>
+    <!-- Stopky jsou vlastní sekce: jedou mimo agenta, tak se ukazují i v tabu,
+         kde rychlé akce nedávají smysl. -->
+    <div class="barlabel" id="clockify-label" hidden>STOPKY</div>
+    <div id="clockify" hidden></div>
   </aside>
 
 </div>
@@ -203,6 +207,7 @@
 <script src="/server.js"></script>
 <script src="/pocitac.js"></script>
 <script src="/predplatne.js"></script>
+<script src="/clockify.js"></script>
 <script src="/onboarding.js"></script>
 <script src="/composer.js"></script>
 <script src="/links.js"></script>

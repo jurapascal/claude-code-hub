@@ -887,6 +887,30 @@ function showsActions(tab) {
   return !!(a && a.skills) && $('actions').childElementCount > 0;
 }
 
+/* Panel se skládá ze dvou nezávislých částí: rychlé akce potřebují agenta se
+   skilly, stopky jen otevřenou složku. Ukáže se, když je aspoň jedna z nich.
+   Stopky se načítají ze sítě, takže po dokreslení ohlásí `clockify-drawn`
+   a viditelnost se dopočítá znovu — jinak by panel zůstal schovaný. */
+function syncActionbar(tab) {
+  const path = tab && tab.kind === 'project' ? (tab.path || '') : '';
+  if (path && window.HubClockify) HubClockify.panel(hubIO(), path);
+  else $('clockify').hidden = true;
+  showActionbar(tab);
+}
+
+/* Jen viditelnost, nic nenačítá — tohle volá i `clockify-drawn`, takže kdyby
+   sáhlo zpátky na panel(), točilo by se to pořád dokola. */
+function showActionbar(tab) {
+  const acts = showsActions(tab);
+  $('actions').hidden = !acts;
+  $('actionbar').querySelector('.barlabel').hidden = !acts;
+  const clock = !$('clockify').hidden;
+  $('clockify-label').hidden = !clock;
+  $('actionbar').hidden = !(acts || clock);
+}
+
+document.addEventListener('clockify-drawn', () => showActionbar(ACTIVE));
+
 function renderActions() {
   const box = $('actions');
   box.textContent = '';
@@ -900,7 +924,7 @@ function renderActions() {
     el.onclick = () => runSlash(a.cmd);
     box.appendChild(el);
   }
-  $('actionbar').hidden = !showsActions(ACTIVE);
+  showActionbar(ACTIVE);
 }
 
 function renderFooter() {
@@ -1497,7 +1521,7 @@ function activate(tab) {
     t.pane.classList.toggle('active', t === tab);
   }
   $('welcome').hidden = TABS.length > 0;
-  $('actionbar').hidden = !showsActions(tab);
+  syncActionbar(tab);
   if (tab) {
     refit(tab);
     claimSize(tab);
@@ -1603,7 +1627,7 @@ function closeTab(tab, {remote = false} = {}) {
   if (ACTIVE === tab) ACTIVE = null;
   const next = TABS[TABS.length - 1];
   if (next) activate(next);
-  else { $('welcome').hidden = false; $('actionbar').hidden = true; }
+  else { $('welcome').hidden = false; $('clockify').hidden = true; $('actionbar').hidden = true; }
 }
 
 function startRename(tab) {

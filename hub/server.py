@@ -30,8 +30,8 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import (account, chats, connect, core, pocitac, predplatne, pty_backend, qr,
-               remote, stats)
+from . import (account, chats, clockify, connect, core, pocitac, predplatne, pty_backend,
+               qr, remote, stats)
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -731,6 +731,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             return self._json(account.status(
                 timeout=5 if payload.get("quick") else account.TIMEOUT))
+        if name == "clockify":
+            # Ruční stopky u projektu (hub/clockify.py). Běží mimo agenta —
+            # člověk klikne Start, po Stopu je čas v Clockify.
+            payload = payload or {}
+            path = payload.get("path") or query.get("path", [""])[0] or ""
+            action = payload.get("action") or ""
+            if action == "start":
+                return self._json(clockify.start(
+                    path, payload.get("project") or "", payload.get("description") or ""))
+            if action == "stop":
+                return self._json(clockify.stop(path))
+            if action == "choose":
+                return self._json(clockify.choose(path, payload.get("project") or ""))
+            return self._json(clockify.status(path))
         if name == "predplatne":
             # Claude v prostoru na vlastním předplatném: propojení přes
             # `claude setup-token` na tomhle počítači a stav u brány.

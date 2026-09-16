@@ -1750,3 +1750,40 @@ body { display: flex; flex-direction: column; }
 .pd-help-body { padding-top: 8px; }
 .pd-code { max-width: 14rem; }
 
+
+/* ── stopky do Clockify ──────────────────────────────────────────────────────
+   Vlastní sekce v panelu rychlých akcí. Na rozdíl od nich nejede přes agenta:
+   Start/Stop jde rovnou na backend, takže se čas měří i v tichém tabu. */
+.clk-pick, .clk-note {
+  width: 100%; margin: 4px 0; padding: 8px 9px;
+  background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--fg-bright); font: inherit; font-size: 12px;
+}
+.clk-note::placeholder { color: var(--fg-dim); }
+.clk-pick:focus, .clk-note:focus { outline: none; border-color: var(--amber); }
+
+.clk-start { justify-content: center; }
+/* Běžící měření má mít jinou barvu než ostatní tlačítka — ať je na první
+   pohled vidět, že se někde točí čas, i když je okno na jiném projektu. */
+.clk-stop {
+  justify-content: center;
+  border-color: var(--amber); color: var(--amber);
+}
+.clk-stop:hover { background: var(--amber); color: var(--bg); }
+
+.clk-run { display: flex; align-items: center; gap: 7px; padding: 6px 2px 2px; }
+.clk-proj {
+  flex: 1; min-width: 0; font-size: 12px; font-weight: 700; color: var(--fg-bright);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.clk-time { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--amber); }
+.clk-desc {
+  padding: 0 2px 4px; font-size: 11px; color: var(--fg-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.clk-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--amber);
+  animation: clk-pulse 1.6s ease-in-out infinite;
+}
+@keyframes clk-pulse { 50% { opacity: .25; } }
