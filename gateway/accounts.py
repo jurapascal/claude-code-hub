@@ -26,6 +26,10 @@ Tři věci, které stojí za vysvětlení:
 * `role` je `admin`, nebo `user`. Admin spravuje účty z CLI; role nerozhoduje
   o izolaci session — tu drží `isolation.py` bez ohledu na roli.
 * `vault` je jméno Obsidian paměti daného uživatele.
+
+**Neúspěšná přihlášení** se zapisují sem (`login_fails`), ne do paměti brány:
+zámek po hádání hesla tak přežije restart brány (noční aktualizace) a správce
+ho zruší z CLI (`claude-hub-admin zamky odemknout`).
 """
 import hashlib
 import hmac
@@ -60,6 +64,12 @@ CREATE TABLE IF NOT EXISTS users (
     created  REAL NOT NULL,
     disabled INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS login_fails (
+    key     TEXT PRIMARY KEY,           -- ip:…|email:…, ip:…, email:…
+    hits    TEXT NOT NULL DEFAULT '[]', -- časy neúspěchů, které se ještě počítají
+    locked  REAL NOT NULL DEFAULT 0,    -- do kdy je zamčeno
+    updated REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tokens (
     fingerprint BLOB PRIMARY KEY,
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -86,6 +96,15 @@ def _clean_role(role):
 def _clean_auth(auth):
     auth = (auth or "central").strip().lower()
     return auth if auth in AUTHS else "central"
+
+
+def _times(raw):
+    """Časy neúspěchů uložené jako JSON seznam čísel."""
+    try:
+        data = json.loads(raw or "[]")
+    except ValueError:
+        return []
+    return [t for t in data if isinstance(t, (int, float))] if isinstance(data, list) else []
 
 
 def _codes(raw):
@@ -291,6 +310,74 @@ class Accounts:
         if not row or not ok or row["disabled"]:
             return None
         return self._public(row)
+
+    # ── neúspěšná přihlášení ─────────────────────────────────────────────────
+    # `keys` = [(klíč, limit)] — pravidla skládá brána (server._fail_keys).
+    def fail_wait(self, keys):
+        """Kolik sekund ještě drží zámek na některém z klíčů; 0 = volno."""
+        names = [key for key, _limit in keys]
+        if not names:
+            return 0
+        now = time.time()
+        with self._lock:
+            rows = self.db.execute(
+                "SELECT locked FROM login_fails WHERE key IN (%s)" % ",".join("?" * len(names)),
+                names).fetchall()
+        return max([row["locked"] - now for row in rows] + [0])
+
+    def fail_record(self, keys, window, lock):
+        """Zapíše neúspěch. Kde se tím dosáhne limitu za `window` sekund, zamkne
+        na `lock` sekund. Vrací (sekund do odemčení, kolik pokusů zbývá,
+        klíče zamčené právě teď)."""
+        now = time.time()
+        wait, left, locked_now = 0, None, []
+        with self._lock:
+            for key, limit in keys:
+                row = self.db.execute("SELECT hits, locked FROM login_fails WHERE key = ?",
+                                      (key,)).fetchone()
+                hits = [t for t in _times(row["hits"] if row else "") if now - t < window]
+                locked = row["locked"] if row and row["locked"] > now else 0
+                hits.append(now)
+                if not locked and len(hits) >= limit:
+                    # Po odemčení se začíná znovu od nuly, ne od starých pokusů.
+                    locked, hits = now + lock, []
+                    locked_now.append(key)
+                self.db.execute(
+                    "INSERT OR REPLACE INTO login_fails (key, hits, locked, updated)"
+                    " VALUES (?, ?, ?, ?)", (key, json.dumps(hits), locked, now))
+                wait = max(wait, locked - now) if locked else wait
+                remaining = 0 if locked else max(0, limit - len(hits))
+                left = remaining if left is None else min(left, remaining)
+            self.db.execute("DELETE FROM login_fails WHERE locked < ? AND updated < ?",
+                            (now, now - window))
+        return wait, (left or 0), locked_now
+
+    def fail_clear(self, key):
+        """Povedené přihlášení: pokusy na tenhle klíč se zapomenou."""
+        with self._lock:
+            self.db.execute("DELETE FROM login_fails WHERE key = ?", (key,))
+
+    def fail_list(self):
+        """Zámky a počítané neúspěchy pro správu: [{"key", "hits", "locked"}]."""
+        now = time.time()
+        with self._lock:
+            rows = self.db.execute("SELECT key, hits, locked FROM login_fails"
+                                   " ORDER BY locked DESC, updated DESC").fetchall()
+        return [{"key": r["key"], "hits": len(_times(r["hits"])),
+                 "locked": r["locked"] if r["locked"] > now else 0} for r in rows]
+
+    def fail_unlock(self, target):
+        """Zruší zámky a pokusy pro e-mail nebo adresu. Vrací, kolik záznamů smazal."""
+        target = (target or "").strip().lower()
+        if not target:
+            raise ValueError("Zadej e-mail nebo IP adresu.")
+        mark = ("email:" if "@" in target else "ip:") + target
+        with self._lock:
+            keys = [r["key"] for r in self.db.execute("SELECT key FROM login_fails")
+                    if mark in r["key"].split("|")]
+            for key in keys:
+                self.db.execute("DELETE FROM login_fails WHERE key = ?", (key,))
+        return len(keys)
 
     @staticmethod
     def _public(row):

@@ -110,9 +110,20 @@ Povinné je pro všechny (`HUB_GW_REQUIRE_2FA=0` ho vypne).
   otisk). Appka na počítači má tytéž kroky — QR si kreslí sama z odkazu.
 - **Tokeny:** platí jen ty vydané po druhém kroku (`tokens.mfa`). Přihlášení
   z doby před 2.7.0 skončila — každý se jednou přihlásí znovu.
-- **Hádání:** druhý krok má lístek s platností 5 minut a pěti pokusy; po osmi
-  neúspěších (heslo i kód) za čtvrt hodinu brána z téže adresy (`X-Real-IP`)
-  ani na tentýž e-mail nepustí. Stejný kód z aplikace podruhé neprojde.
+- **Hádání:** po **třech** neúspěších (heslo, kód z aplikace i současné heslo
+  při změně — počítají se dohromady) se přihlášení k účtu z téže adresy
+  (`X-Real-IP`) na **hodinu** zablokuje; hláška předem řekne, kolik pokusů
+  zbývá. Povedené přihlášení překlepy před ním odpustí. Pojistky proti
+  rozesílání: 10 neúspěchů z jedné adresy na různé účty, nebo 10 na jeden účet
+  z různých adres, zablokuje taky na hodinu tu adresu, resp. ten účet. Přísný
+  limit je na účet + adresu, ne na adresu samotnou — z kanceláře za jednou
+  veřejnou IP by jinak tři překlepy jednoho zamkly všechny. Zámky leží
+  v databázi účtů (`login_fails`), takže je restart brány nezruší. Lístek na
+  druhý krok platí 5 minut, stejný kód z aplikace podruhé neprojde.
+- **Zámky:** `claude-hub-admin zamky` vypíše, co je zablokované;
+  `claude-hub-admin zamky odemknout <e-mail|ip>` zámek zruší. Limity jdou změnit
+  v prostředí služby: `HUB_GW_LOGIN_TRIES` (3), `HUB_GW_LOGIN_LOCK` (3600 s),
+  `HUB_GW_LOGIN_WIDE` (10).
 - **Nastavení → Účet** v prostoru: stav ověření, nové záložní kódy (s kódem
   z aplikace) a změna hesla (se současným heslem; odhlásí ostatní zařízení).
 - **Ztracený telefon i kódy:** `claude-hub-admin 2fa reset <e-mail>` — ověřování

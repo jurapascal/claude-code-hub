@@ -35,7 +35,6 @@ from . import config, isolation, pocitac, shared, totp, workspace
 from .accounts import Accounts
 
 HTML = "text/html; charset=utf-8"
-TOO_MANY = "Moc neúspěšných pokusů. Zkus to znovu za čtvrt hodiny."
 
 # Hlavičky, které se u proxy nepřeposílají — patří jednomu skoku spojení, ne
 # tomu za ním.
@@ -71,18 +70,39 @@ def _handoff_new(token):
 
 # Přihlášení ve dvou krocích. Po správném hesle brána ještě nevydá token, jen
 # lístek na druhý krok — kód z aplikace, nebo první nastavení aplikace — s pěti
-# minutami platnosti a pěti pokusy. Lístek žije jen v paměti brány.
+# minutami platnosti a stejným počtem pokusů jako heslo. Lístek žije jen
+# v paměti brány.
 LOGIN_TTL = 5 * 60
-LOGIN_TRIES = 5
+LOGIN_TRIES = config.LOGIN_TRIES
 _tickets = {}                        # lístek -> {"uid", "exp", "tries", "secret", "label"}
 _ticket_lock = threading.Lock()
 
-# Hádání hesel a kódů: po FAIL_MAX neúspěších za FAIL_WINDOW se z téže adresy
-# ani na tentýž e-mail nepřihlašuje. scrypt sám zdrží jen o desetinu vteřiny.
-FAIL_MAX = 8
-FAIL_WINDOW = 15 * 60
-_fails = {}                          # klíč -> [časy neúspěchů]
-_fail_lock = threading.Lock()
+
+# Hádání hesel a kódů: po config.LOGIN_TRIES neúspěších se přihlášení na
+# config.LOGIN_LOCK zamkne (Accounts.fail_*, klíče skládá _fail_keys).
+# scrypt sám zdrží jen o desetinu vteřiny — bez zámku by se dalo hádat dál.
+def _duration(seconds):
+    """Doba ve 4. pádě: „hodinu", „3 minuty", „40 minut"."""
+    minutes = max(1, -(-int(seconds) // 60))
+    if 55 <= minutes <= 60:
+        return "hodinu"
+    return ("1 minutu" if minutes == 1 else f"{minutes} minuty" if minutes < 5
+            else f"{minutes} minut")
+
+
+def too_many(seconds):
+    return ("Moc neúspěšných pokusů — přihlášení je zablokované. "
+            f"Zkus to znovu za {_duration(seconds)}.")
+
+
+def locked_now(seconds):
+    return f"Přihlášení je teď na {_duration(seconds)} zablokované."
+
+
+def tries_left(left):
+    if left == 1:
+        return f"Zbývá 1 pokus, pak se přihlášení na {_duration(config.LOGIN_LOCK)} zablokuje."
+    return f"Zbývají {left} pokusy." if 1 < left < 5 else f"Zbývá {left} pokusů."
 
 
 def _ticket_new(uid, label="", secret=""):
@@ -122,30 +142,6 @@ def _ticket_miss(ticket):
         if left <= 0:
             _tickets.pop(ticket, None)
         return max(0, left)
-
-
-def _blocked(keys):
-    now = time.time()
-    with _fail_lock:
-        for key in keys:
-            hits = [t for t in _fails.get(key, []) if now - t < FAIL_WINDOW]
-            if hits:
-                _fails[key] = hits
-            else:
-                _fails.pop(key, None)
-            if len(hits) >= FAIL_MAX:
-                return True
-    return False
-
-
-def _failed(keys):
-    now = time.time()
-    with _fail_lock:
-        if len(_fails) > 10000:                  # rozsypané pokusy na tisíce e-mailů
-            for key in [k for k, v in _fails.items() if now - v[-1] >= FAIL_WINDOW]:
-                _fails.pop(key, None)
-        for key in keys:
-            _fails.setdefault(key, []).append(now)
 
 
 def _handoff_take(code):
@@ -767,12 +763,15 @@ class Handler(BaseHTTPRequestHandler):
         password = form.get("password") or ""
         label = self.headers.get("User-Agent", "")[:60]
         keys = self._fail_keys(email)
-        if _blocked(keys):
-            return self._login_error(TOO_MANY, 429)
+        wait = self.accounts.fail_wait(keys)
+        if wait:
+            return self._login_error(too_many(wait), 429)
         user = self.accounts.verify(email, password)
         if not user:
-            _failed(keys)
-            return self._login_error("Špatný e-mail nebo heslo.")
+            locked, left = self._failed(keys)
+            if locked:
+                return self._login_error("Špatný e-mail nebo heslo. " + locked, 429)
+            return self._login_error("Špatný e-mail nebo heslo. " + tries_left(left))
         state = self.accounts.twofa(user["id"])
         if not state["enabled"] and not config.REQUIRE_2FA:
             return self._login_done(self.accounts.issue_token(user, label), user)
@@ -796,10 +795,25 @@ class Handler(BaseHTTPRequestHandler):
         return self.headers.get("X-Real-IP") or self.client_address[0]
 
     def _fail_keys(self, email=""):
-        keys = ["ip:" + self._client_ip()]
-        if email:
-            keys.append("email:" + email.strip().lower())
-        return keys
+        """[(klíč, limit)]: přísně účet z téhle adresy, volněji adresa a účet zvlášť.
+        Přísný klíč je vždycky první — ten se po přihlášení maže."""
+        ip = "ip:" + self._client_ip()
+        email = (email or "").strip().lower()
+        if not email:
+            return [(ip, config.LOGIN_WIDE)]
+        return [(f"{ip}|email:{email}", config.LOGIN_TRIES), (ip, config.LOGIN_WIDE),
+                ("email:" + email, config.LOGIN_WIDE)]
+
+    def _failed(self, keys):
+        """Zapíše neúspěch. Vrací (sekund do odemčení, kolik pokusů zbývá) a hlášku
+        o zámku: „právě zamčeno", nebo „pořád zamčeno" (zámek z jiného klíče)."""
+        wait, left, locked = self.accounts.fail_record(keys, config.LOGIN_LOCK,
+                                                       config.LOGIN_LOCK)
+        if locked:
+            print(f"přihlášení zablokováno na {config.LOGIN_LOCK // 60} min: "
+                  + ", ".join(locked), flush=True)
+        note = (locked_now(wait) if locked else too_many(wait)) if wait else ""
+        return note, left
 
     def _login_error(self, message, code=401):
         if self._wants_json():
@@ -807,6 +821,8 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(200, login_page(message), HTML)
 
     def _login_done(self, token, user, recovery=None):
+        # Povedlo se: překlepy před tím se tomuhle účtu z téhle adresy odpouští.
+        self.accounts.fail_clear(self._fail_keys(user["email"])[0][0])
         if self._wants_json():
             # Hub na počítači si token uloží sám; cookie by mu byla k ničemu.
             out = {"token": token, "user": user}
@@ -832,9 +848,10 @@ class Handler(BaseHTTPRequestHandler):
             _ticket_drop(ticket_id)
             return self._login_error("Přihlášení vypršelo — zadej znovu e-mail a heslo.")
         keys = self._fail_keys(user["email"])
-        if _blocked(keys):
+        wait = self.accounts.fail_wait(keys)
+        if wait:
             _ticket_drop(ticket_id)
-            return self._login_error(TOO_MANY, 429)
+            return self._login_error(too_many(wait), 429)
         recovery = None
         if ticket["secret"]:
             ok = bool(totp.verify(ticket["secret"], code))
@@ -845,9 +862,12 @@ class Handler(BaseHTTPRequestHandler):
         else:
             ok = bool(self.accounts.second_factor(user["id"], code))
         if not ok:
-            _failed(keys)
-            left = _ticket_miss(ticket_id)
-            message = "Kód nesedí." + (f" Zbývá pokusů: {left}." if left
+            locked, left = self._failed(keys)
+            left = min(left, _ticket_miss(ticket_id))
+            if locked:
+                _ticket_drop(ticket_id)
+                return self._login_error("Kód nesedí. " + locked, 429)
+            message = "Kód nesedí." + (" " + tries_left(left) if left
                                        else " Přihlas se znovu.")
             if self._wants_json():
                 return self._json({"error": message, "left": left}, 401)
@@ -872,14 +892,17 @@ class Handler(BaseHTTPRequestHandler):
         if not self._account_post_ok():
             return self._json({"error": "Heslo jde změnit jen v nastavení hubu."}, 403)
         keys = self._fail_keys(user["email"])
-        if _blocked(keys):
-            return self._json({"error": TOO_MANY}, 429)
+        wait = self.accounts.fail_wait(keys)
+        if wait:
+            return self._json({"error": too_many(wait)}, 429)
         form = self._read_form()
         current = str(form.get("current") or "")
         new = str(form.get("new") or "")
         if not self.accounts.verify(user["email"], current):
-            _failed(keys)
-            return self._json({"error": "Současné heslo nesedí."}, 400)
+            locked, left = self._failed(keys)
+            if locked:
+                return self._json({"error": "Současné heslo nesedí. " + locked}, 429)
+            return self._json({"error": "Současné heslo nesedí. " + tries_left(left)}, 400)
         if new == current:
             return self._json({"error": "Nové heslo je stejné jako to současné."}, 400)
         try:
@@ -898,13 +921,16 @@ class Handler(BaseHTTPRequestHandler):
         if not self._account_post_ok():
             return self._json({"error": "Kódy jde vygenerovat jen v nastavení hubu."}, 403)
         keys = self._fail_keys(user["email"])
-        if _blocked(keys):
-            return self._json({"error": TOO_MANY}, 429)
+        wait = self.accounts.fail_wait(keys)
+        if wait:
+            return self._json({"error": too_many(wait)}, 429)
         form = self._read_form()
         if not self.accounts.second_factor(user["id"], str(form.get("code") or ""),
                                            allow_recovery=False):
-            _failed(keys)
-            return self._json({"error": "Kód z aplikace nesedí."}, 400)
+            locked, left = self._failed(keys)
+            if locked:
+                return self._json({"error": "Kód z aplikace nesedí. " + locked}, 429)
+            return self._json({"error": "Kód z aplikace nesedí. " + tries_left(left)}, 400)
         return self._json({"recovery": self.accounts.new_recovery(user["id"])})
 
     def _gw_shared(self, user):

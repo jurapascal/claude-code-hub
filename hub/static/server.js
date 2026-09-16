@@ -305,7 +305,7 @@
           if (r.error) {
             say(err, 'err', r.error);
             code.select();
-            if (/Přihlas se znovu|vypršelo/.test(r.error)) setTimeout(back.onclick, 1500);
+            if (/Přihlas se znovu|vypršelo|zablokované/.test(r.error)) setTimeout(back.onclick, 1500);
           } else if (r.recovery && r.recovery.length) {
             showRecovery(r);
           } else if (opts.onReady) {

@@ -23,6 +23,16 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 30      # měsíc; jinak by se pořád přihla�
 # Dvoufázové ověření: po heslu kód z aplikace v mobilu (gateway/totp.py). Kdo ho
 # ještě nemá, nastaví si ho při přihlášení — bez něj se dál nedostane.
 REQUIRE_2FA = os.environ.get("HUB_GW_REQUIRE_2FA", "1") != "0"
+# Hádání hesel a kódů (heslo, kód z aplikace, současné heslo při změně): po
+# LOGIN_TRIES neúspěších na tentýž účet z téže adresy se přihlášení na LOGIN_LOCK
+# sekund zamkne. LOGIN_WIDE je pojistka proti rozesílání — tolik neúspěchů
+# z jedné adresy na různé účty, nebo na jeden účet z různých adres. Přísný limit
+# platí pro účet a adresu dohromady, ne pro samotnou adresu: z kanceláře za
+# jednou veřejnou IP by jinak tři překlepy jednoho zamkly všechny. Zámky leží v databázi účtů, restart je nezruší;
+# zruší je `claude-hub-admin zamky odemknout <e-mail|ip>`.
+LOGIN_TRIES = int(os.environ.get("HUB_GW_LOGIN_TRIES", "3"))
+LOGIN_LOCK = int(os.environ.get("HUB_GW_LOGIN_LOCK", str(60 * 60)))
+LOGIN_WIDE = int(os.environ.get("HUB_GW_LOGIN_WIDE", "10"))
 
 # Kolik instancí hubu smí běžet naráz a kdy uspat nečinnou. Změřeno v README
 # brány: na 8GB stroj s weby a mailem se vejdou realisticky čtyři.

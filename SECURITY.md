@@ -16,6 +16,20 @@ stojí, a ať je z čeho vyjít při další změně.
 Token je celá obrana: bez něj vrací každý endpoint 403. Cizí stránka v prohlížeči
 na port dosáhne, ale token neuhodne a odpověď si kvůli CORS stejně nepřečte.
 
+## Přihlášení na server (brána)
+
+| | |
+|---|---|
+| **Tři pokusy, pak hodina** | heslo, kód z aplikace i současné heslo při změně se počítají dohromady; po třetím neúspěchu na účet z téže adresy je přihlášení hodinu zablokované — i se správným heslem |
+| **Pojistky proti rozesílání** | 10 neúspěchů z jedné adresy na různé účty zablokuje adresu, 10 na jeden účet z různých adres zablokuje účet |
+| **Zámek přežije restart** | leží v databázi účtů (`login_fails`), ne v paměti brány — noční aktualizace ho nezruší |
+| **Kolegové za jednou IP se nezamknou** | přísný limit je na účet + adresu; kancelář za jednou veřejnou IP tak nezablokuje jeden člověk |
+| **Heslo i token jen jako otisk** | scrypt a SHA-256; povinné dvoufázové ověření |
+
+Co to **neřeší**: kdo zná e-mail, může desíti špatnými pokusy z různých adres
+účet na hodinu zablokovat. Je to vědomá cena za to, že se heslo nedá hádat
+donekonečna; správce zámek zruší `claude-hub-admin zamky odemknout <e-mail>`.
+
 ## Přístup z telefonu
 
 Zapíná se v nastavení a dokud se nezapne, žádný druhý listener nevzniká.

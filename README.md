@@ -402,6 +402,11 @@ klik na něj otevře *Účet*, odkud se vrátíš na počítač nebo odhlásíš
 Jak to drží pohromadě:
 
 - **Heslo se neukládá.** V `hub-config.json` je jen token zařízení (`gw_token`).
+- **Tři pokusy, pak hodina pauza.** Po třech špatných pokusech (heslo i kód
+  z aplikace dohromady) se přihlášení k účtu z téhle adresy na hodinu
+  zablokuje; hláška předem řekne, kolik pokusů zbývá. Kolega ze stejné sítě se
+  přihlásí dál. Dřív pomůže jen správce serveru:
+  `claude-hub-admin zamky odemknout <e-mail>`.
 - **Okno se přihlašuje jednorázovým kódem** s minutovou platností
   (`/gw/handoff`), ne tokenem v adrese, která by skončila v historii. Okno
   i appka drží tentýž token, takže *Odhlásit se* na serveru odhlásí i appku.

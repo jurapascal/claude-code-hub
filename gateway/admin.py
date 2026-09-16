@@ -29,6 +29,8 @@ přes `--password` (hodí se do skriptu, ale zůstane v historii shellu).
     python3 -m gateway.admin predplatne set jmeno@firma.cz    # token z `claude setup-token`
     python3 -m gateway.admin predplatne remove jmeno@firma.cz
     python3 -m gateway.admin google status | remove
+    python3 -m gateway.admin zamky               # zablokovaná přihlášení (3 špatné pokusy)
+    python3 -m gateway.admin zamky odemknout jmeno@firma.cz   # nebo IP adresa
 """
 import argparse
 import getpass
@@ -118,6 +120,27 @@ def cmd_2fa(a, args):
     a.reset_totp(args.email)
     print(f"{args.email}: dvoufázové ověření zrušené a všechna zařízení odhlášená. "
           "Při příštím přihlášení si ho nastaví znovu.")
+
+
+def cmd_zamky(a, args):
+    """Zablokovaná přihlášení (tři špatné pokusy): výpis, nebo odemknutí."""
+    if args.action == "odemknout":
+        count = a.fail_unlock(args.target)
+        print(f"{args.target}: odemčeno ({count} záznamů)." if count
+              else f"{args.target}: nic zamčeného ani počítaného tu není.")
+        return
+    rows = a.fail_list()
+    locks = [r for r in rows if r["locked"]]
+    now = time.time()
+    if not locks:
+        print("Nic není zablokované.")
+    else:
+        w = max(len(r["key"]) for r in locks)
+        for r in locks:
+            print(f'{r["key"]:<{w}}  zamčeno ještě {max(1, int(r["locked"] - now) // 60)} min')
+    counting = len(rows) - len(locks)
+    if counting:
+        print(f"Počítané nepovedené pokusy bez zámku: {counting} (po hodině se zapomenou).")
 
 
 def cmd_passwd(a, args):
@@ -585,6 +608,11 @@ def build_parser():
     tf.add_argument("action", choices=("status", "reset"))
     tf.add_argument("email", nargs="?", default="", help="e-mail účtu (u status volitelný)")
     tf.set_defaults(func=cmd_2fa)
+
+    zk = sub.add_parser("zamky", help="zablokovaná přihlášení po špatných pokusech: výpis, odemknutí")
+    zk.add_argument("action", nargs="?", default="status", choices=("status", "odemknout"))
+    zk.add_argument("target", nargs="?", default="", help="e-mail nebo IP adresa (u odemknout)")
+    zk.set_defaults(func=cmd_zamky)
 
     sub.add_parser("sessions", help="které prostory běží a kolik berou paměti"
                    ).set_defaults(func=cmd_sessions)
