@@ -26,10 +26,27 @@ na port dosáhne, ale token neuhodne a odpověď si kvůli CORS stejně nepřeč
 | **Kolegové za jednou IP se nezamknou** | přísný limit je na účet + adresu; kancelář za jednou veřejnou IP tak nezablokuje jeden člověk |
 | **Heslo i token jen jako otisk** | scrypt a SHA-256; povinné dvoufázové ověření |
 | **HSTS** | `max-age=31536000; includeSubDomains`, takže prohlížeč na http nesáhne ani napoprvé; http vrací 301 na https |
+| **Hlavičky proti rámování** | `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin` — hub je terminál, do cizího rámu nepatří |
 
 Co to **neřeší**: kdo zná e-mail, může desíti špatnými pokusy z různých adres
 účet na hodinu zablokovat. Je to vědomá cena za to, že se heslo nedá hádat
 donekonečna; správce zámek zruší `claude-hub-admin zamky odemknout <e-mail>`.
+
+## Server samotný
+
+| | |
+|---|---|
+| **SSH jen klíčem** | `PasswordAuthentication no`, `PermitRootLogin prohibit-password`. Než se to vyplo, bylo v logu **2 142 neúspěšných hesel** na root a útok běžel dál — fail2ban měl zabanováno 7 adres. |
+| **Dva klíče** | pracovní a záchranný, ať vypnutí hesel nezamkne správce ven |
+| **Firewall** | ufw: jen 22, 80 a 443 |
+| **fail2ban** | jail na sshd |
+| **Bezpečnostní aktualizace** | `unattended-upgrades` zapnuté (i ESM) |
+| **Brána neběží jako root** | systémový účet `hub`, prostory pod ním v bwrapu |
+
+**Pozor při zpřísňování SSH na dálku:** měnit to bez pojistky je sázka. Postup,
+který se osvědčil — záložní klíč napřed, pak `systemd-run --on-active=5min`
+s obnovou původní konfigurace, teprve pak změna, `sshd -t`, `reload`, test
+z nového spojení a nakonec zrušení pojistky.
 
 ## Prostory na serveru: čím jsou od sebe oddělené
 

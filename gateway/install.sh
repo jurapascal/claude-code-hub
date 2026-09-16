@@ -471,6 +471,11 @@ EOF
             # `max-age=0` a počká, až to prohlížeče převezmou. Na téhle doméně
             # nic než https neběží, takže je to bez rizika.
             echo "    add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;"
+            # Hub je terminál — vložit ho do rámu cizí stránky nemá důvod
+            # a dá se tím klikat za přihlášeného člověka.
+            echo "    add_header X-Frame-Options \"DENY\" always;"
+            echo "    add_header X-Content-Type-Options \"nosniff\" always;"
+            echo "    add_header Referrer-Policy \"same-origin\" always;"
             echo "$proxy"
             echo "}"
             echo "server {"
