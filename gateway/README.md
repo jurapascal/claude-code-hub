@@ -61,11 +61,17 @@ a restartuje bránu; když někdo pracuje, počká na další pokus. Výsledek j
 v `/etc/claude-hub/update.json` a v prostoru v Nastavení → Aktualizace —
 tlačítko Aktualizovat tam není, zdroj patří serveru.
 
-**Claude přes klíč API.** `claude-hub-admin apikey set` uloží klíč (ověří ho
-u Anthropicu) a prostory na `central` ho při startu dostanou jako
+**Claude přes klíč API.** `claude-hub-admin apikey set` uloží společný klíč
+(ověří ho u Anthropicu) a prostory na `central` ho při startu dostanou jako
 `ANTHROPIC_API_KEY`, předschválený, takže se nikdo nepřihlašuje. Platí se podle
-spotřeby — v Anthropic Console nastav měsíční limit. `auth <e-mail> own` je
-vlastní účet Claude.
+spotřeby — v Anthropic Console nastav měsíční limit.
+
+`apikey set --user <e-mail>` dá jednomu účtu **vlastní klíč**: má pak v Console
+svůj strop, ve spotřebě je poznat a kdo si klíč v prostoru přečte z prostředí,
+přečte jen ten svůj. Kdo vlastní nemá, jede na společném; `apikey status`
+vypíše, kdo je na čem, a `apikey remove --user <e-mail>` ho vrátí na společný.
+`auth <e-mail> own` je vlastní účet Claude, `auth --vsechny central` přepne
+naráz všechny.
 
 **Služby v prostorech.** V Nastavení → Napojení má každý karty Freelo, Canva,
 Ecomail a Google, pod nimi svoje účty (i víc u jedné služby) a u každého
@@ -136,6 +142,30 @@ Vedle osobního trezoru v každém prostoru je jeden společný trezor pro všec
   v sandboxu jen ke čtení. Návrh z domova se čte bez následování odkazů
   a cílová cesta nesmí ven z trezoru.
 - Kdo co nahrál: `/home/hub/firma/nahrano.jsonl` (mimo trezor).
+
+## Firemní skilly
+
+Hotové postupy, ze kterých si Claude sám vybírá, leží ve firemním trezoru:
+`<trezor>/skills/<kategorie>/<skill>/SKILL.md`. Tím je má celý tým z jednoho
+místa a jen ke čtení — nikdo je nemá zvlášť u sebe a z prostoru je nikdo
+nepřepíše.
+
+    claude-hub-admin skills install        # stáhnout do firemního trezoru
+    claude-hub-admin skills install --from /cesta/ke/skillum   # z vlastní složky
+    claude-hub-admin skills update         # novější verze z gitu
+    claude-hub-admin skills status         # kolik jich je, jaké kategorie, odkud
+
+Claude o nich ví z pokynů, které brána píše do `~/.claude/CLAUDE.md` prostoru
+při každém jeho startu (`workspace._company_block`): dostane cestu, seznam
+kategorií a pokyn vybrat podle zadání nejvýš dva tři a přečíst je, než začne
+pracovat — celý seznam skillů by sežral kontext. **Nové skilly se v prostoru
+objeví po jeho dalším startu**; `claude-hub-admin stop <e-mail>` to uspíší.
+
+Instalačka je zavádí sama (`setup_company_skills`) a při dalším běhu
+aktualizuje; nahrané z vlastní složky nechá být. Zdroj je
+`jurapascal/claude-brain-skills`, přebije ho `HUB_SKILLS_REPO`. Přepsat je
+`skills install --force` — co tam bylo, se odloží vedle trezoru jako
+`_skilly-<čas>`.
 
 ## Sdílené Obsidiany
 

@@ -17,8 +17,13 @@ přes `--password` (hodí se do skriptu, ale zůstane v historii shellu).
     python3 -m gateway.admin sessions            # které prostory běží
     python3 -m gateway.admin stop jmeno@firma.cz # zastavit prostor
     python3 -m gateway.admin stop --orphans      # zastavit osiřelé
-    python3 -m gateway.admin apikey set          # klíč API pro prostory na central
+    python3 -m gateway.admin auth jmeno@firma.cz central   # klíč API / own
+    python3 -m gateway.admin auth --vsechny central
+    python3 -m gateway.admin apikey set          # společný klíč pro prostory
+    python3 -m gateway.admin apikey set --user jmeno@firma.cz   # klíč jen jeho
     python3 -m gateway.admin apikey status | remove
+    python3 -m gateway.admin skills install      # firemní skilly do trezoru
+    python3 -m gateway.admin skills status | update
     python3 -m gateway.admin google set          # klient OAuth pro Google (jednou)
     python3 -m gateway.admin google status | remove
 """
@@ -26,6 +31,8 @@ import argparse
 import getpass
 import json
 import os
+import shutil
+import subprocess
 import sys
 import time
 
@@ -126,10 +133,21 @@ def cmd_vault(a, args):
 
 
 def cmd_auth(a, args):
-    a.set_auth(args.email, args.mode)
-    kde = "klíč API brány" if args.mode == "central" else "vlastní účet"
-    print(f"{args.email}: Claude se teď ověřuje přes {kde}."
-          " (Projeví se při dalším startu jeho prostoru.)")
+    kde = "klíč API" if args.mode == "central" else "vlastní účet"
+    if args.vsechny:
+        if args.email:
+            raise ValueError("Zadej buď e-mail, nebo --vsechny, ne obojí.")
+        rows = a.list()
+        for r in rows:
+            a.set_auth(r["email"], args.mode)
+        print(f"Přepnuto na {kde}: účtů {len(rows)}.")
+    elif not args.email:
+        raise ValueError("Zadej e-mail účtu, nebo --vsechny.")
+    else:
+        a.set_auth(args.email, args.mode)
+        print(f"{args.email}: Claude se teď ověřuje přes {kde}.")
+    print("Projeví se při dalším startu prostoru — běžící zastavíš:"
+          " stop <e-mail>.")
 
 
 def _check_key(key):
@@ -151,44 +169,200 @@ def _check_key(key):
         return ""
 
 
+def _user_or_die(a, email):
+    user = a.get(email)
+    if not user:
+        raise ValueError(f"{email} tu žádný účet nemá.")
+    return user
+
+
+def _key_path(user=None):
+    """Kde leží klíč: společný, nebo vlastní podle čísla účtu (e-mail se do
+    cesty nedostane)."""
+    return (os.path.join(config.API_KEYS_DIR, str(user["id"])) if user
+            else config.API_KEY_FILE)
+
+
+def _key_info(path):
+    """(posledních 5 znaků, kdy uložen), nebo ('', '') když tam klíč není."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            key = fh.read().strip()
+        if not key:
+            return "", ""
+        when = time.strftime("%d. %m. %Y %H:%M",
+                             time.localtime(os.path.getmtime(path)))
+        return key[-5:], when
+    except OSError:
+        return "", ""
+
+
+def _save_key(path, key):
+    """Klíč umí přečíst jen uživatel hub (0600 v 0700 složce) — v prostoru je
+    pak vidět jedině v prostředí toho, komu patří."""
+    parent = os.path.dirname(path)
+    os.makedirs(parent, exist_ok=True)
+    if parent == config.API_KEYS_DIR:
+        os.chmod(parent, 0o700)
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(key + "\n")
+    os.replace(tmp, path)
+
+
 def cmd_apikey(a, args):
     """Klíč API pro prostory na `central`. Leží jen u brány (0600, uživatel
-    hub) a do prostoru přijde jako ANTHROPIC_API_KEY při jeho startu."""
-    path = config.API_KEY_FILE
+    hub) a do prostoru přijde jako ANTHROPIC_API_KEY při jeho startu.
+
+    Bez `--user` je to společný klíč pro každého, kdo svůj nemá. S `--user`
+    klíč jednoho účtu: ten pak má v Anthropic Console vlastní strop a kdo si
+    klíč v prostoru přečte z prostředí, přečte jen ten svůj."""
+    user = _user_or_die(a, args.user) if args.user else None
+    path = _key_path(user)
+    kdo = user["email"] if user else "Společný klíč"
     if args.action == "status":
-        key = workspace.api_key()
-        central = sum(1 for u in a.list()
-                      if (u.get("claude_auth") or "central") == "central")
-        if not key:
-            print("Klíč API není nastavený — prostory na central se musí přihlásit samy.")
-        else:
-            when = time.strftime("%d. %m. %Y %H:%M",
-                                 time.localtime(os.path.getmtime(path)))
-            print(f"Klíč API je nastavený (…{key[-4:]}, uložen {when}); "
-                  f"používá ho účtů na central: {central}.")
+        tail, when = _key_info(path)
+        if user:
+            print(f"{kdo}: " + (f"vlastní klíč …{tail} (uložen {when})" if tail
+                                else "vlastní klíč nemá — jede na společném"))
+            return
+        print(f"Společný klíč: " + (f"…{tail}, uložen {when}" if tail
+                                    else "není nastavený"))
+        rows = [u for u in a.list()
+                if (u.get("claude_auth") or "central") == "central"]
+        svoje = 0
+        for u in rows:
+            t, w = _key_info(_key_path(u))
+            svoje += bool(t)
+            print(f"  {u['email']:<28} " + (f"vlastní klíč …{t} ({w})" if t
+                                            else "společný klíč"))
+        print(f"Účtů na klíči API: {len(rows)} (z toho na vlastním: {svoje});"
+              f" na vlastním účtu Claude: {len(a.list()) - len(rows)}.")
+        if not tail and svoje < len(rows):
+            print("Pozor: kdo je na společném klíči a ten není nastavený,"
+                  " se v prostoru musí přihlásit sám.")
         return
     if args.action == "remove":
         try:
             os.remove(path)
         except FileNotFoundError:
             pass
-        print("Klíč API smazán. Běžící prostory ho mají do svého dalšího startu.")
+        print((f"{kdo}: vlastní klíč smazán — od dalšího startu prostoru jede"
+               " na společném." if user else
+               "Společný klíč smazán. Běžící prostory ho mají do svého"
+               " dalšího startu."))
         return
-    key = (getpass.getpass("Klíč API (sk-ant-…): ") if sys.stdin.isatty()
-           else sys.stdin.readline()).strip()
+    key = (getpass.getpass(f"Klíč API pro {kdo} (sk-ant-…): ")
+           if sys.stdin.isatty() else sys.stdin.readline()).strip()
     if not key.startswith("sk-ant-"):
         raise ValueError("Tohle nevypadá jako klíč API Anthropicu (začíná sk-ant-).")
     problem = _check_key(key)
     if problem:
         raise ValueError(problem)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fh:
-        fh.write(key + "\n")
-    os.replace(tmp, path)
-    print(f"Klíč API uložen (…{key[-4:]}). Platí od dalšího startu prostoru; "
-          "běžící zastavíš: stop <e-mail>.")
+    _save_key(path, key)
+    print(f"{kdo}: klíč uložen (…{key[-5:]}). Platí od dalšího startu prostoru;"
+          " běžící zastavíš: stop <e-mail>.")
+
+
+SKILLS_REPO = os.environ.get("HUB_SKILLS_REPO", "jurapascal/claude-brain-skills")
+
+
+def _skill_count(root):
+    return sum(1 for _d, _s, files in os.walk(root) if "SKILL.md" in files)
+
+
+def _git(*args):
+    """(povedlo se, výstup). Bez shellu — cesty i adresa repozitáře jdou
+    argumentem."""
+    try:
+        done = subprocess.run(("git",) + args, capture_output=True, text=True,
+                              timeout=600)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, str(exc)
+    return done.returncode == 0, (done.stdout + done.stderr).strip()
+
+
+def _move_aside(root):
+    """Stávající skilly odloží vedle trezoru (ne do něj — v Obsidianu by se
+    ukázaly dvakrát). Vrací, kam."""
+    away = os.path.join(config.COMPANY_DIR,
+                        "_skilly-" + time.strftime("%Y%m%d-%H%M%S"))
+    shutil.move(root, away)
+    os.makedirs(root, exist_ok=True)
+    return away
+
+
+def cmd_skills(a, args):
+    """Firemní skilly — `<firemní trezor>/skills`.
+
+    Leží v trezoru, takže je má každý prostor jen ke čtení jako zbytek trezoru
+    a nikdo je nemá zvlášť u sebe. Claude o nich ví z pokynů, které brána píše
+    do `~/.claude/CLAUDE.md` prostoru při jeho startu (workspace._company_block)
+    — nové skilly se tam objeví po dalším startu prostoru."""
+    workspace.ensure_company_vault()
+    root = config.COMPANY_SKILLS
+    clone = os.path.isdir(os.path.join(root, ".git"))
+    obsah = [n for n in os.listdir(root) if not n.startswith(".")]
+
+    if args.action == "status":
+        print(f"Firemní skilly: {root}")
+        if not obsah:
+            print("Zatím tam žádné nejsou — zavedeš je:"
+                  " claude-hub-admin skills install")
+            return
+        cats = workspace.company_skill_categories()
+        print(f"skillů: {_skill_count(root)}, kategorií: {len(cats)}")
+        if cats:
+            print("  " + ", ".join(cats))
+        if clone:
+            ok, out = _git("-C", root, "log", "-1", "--format=%cd %s",
+                           "--date=short")
+            src = _git("-C", root, "remote", "get-url", "origin")[1]
+            print(f"z gitu: {src}" + (f" ({out})" if ok else ""))
+            print("aktualizace: claude-hub-admin skills update")
+        else:
+            print("nejsou z gitu — aktualizuješ je znovu přes"
+                  " skills install --from <cesta>")
+        return
+
+    if args.action == "update":
+        if not clone:
+            raise ValueError("Skilly nejsou z gitu — nahraj novou verzi:"
+                             " skills install --from <cesta> --force")
+        ok, out = _git("-C", root, "pull", "--ff-only")
+        if not ok:
+            raise ValueError(f"Aktualizace nevyšla: {out or 'git mlčí'}")
+        print(f"Skilly aktuální: {_skill_count(root)}."
+              " Prostory je uvidí po svém dalším startu.")
+        return
+
+    # install
+    if obsah and not args.force:
+        raise ValueError(f"Ve {root} už skilly jsou ({_skill_count(root)})."
+                         " Aktualizuj je: skills update — nebo přepiš:"
+                         " skills install --force")
+    away = _move_aside(root) if obsah else ""
+    if args.src:
+        src = os.path.abspath(os.path.expanduser(args.src))
+        if not _skill_count(src):
+            raise ValueError(f"V {src} žádný SKILL.md není.")
+        shutil.copytree(src, root, dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns(".git"))
+        odkud = src
+    else:
+        ok, out = _git("clone", "--quiet", "--depth", "1",
+                       f"https://github.com/{SKILLS_REPO}.git", root)
+        if not ok:
+            raise ValueError(f"Stažení nevyšlo: {out or 'git mlčí'}")
+        odkud = SKILLS_REPO
+    cats = workspace.company_skill_categories()
+    print(f"Firemní skilly z {odkud}: {_skill_count(root)} ve {len(cats)}"
+          f" kategoriích → {root}")
+    if away:
+        print(f"Předchozí odloženy do {away} (smaž je, až to prověříš).")
+    print("Prostory je uvidí po svém dalším startu — hned to bude:"
+          " claude-hub-admin stop <e-mail>.")
 
 
 def cmd_google(a, args):
@@ -327,14 +501,26 @@ def build_parser():
     va.add_argument("vault")
     va.set_defaults(func=cmd_vault)
 
-    au = sub.add_parser("auth", help="Claude: klíč API brány (central) / vlastní účet (own)")
-    au.add_argument("email")
+    au = sub.add_parser("auth", help="Claude: klíč API (central) / vlastní účet (own)")
+    au.add_argument("email", nargs="?", default="")
     au.add_argument("mode", choices=("central", "own"))
+    au.add_argument("--vsechny", action="store_true",
+                    help="přepnout všechny účty místo jednoho")
     au.set_defaults(func=cmd_auth)
 
     ak = sub.add_parser("apikey", help="klíč API pro prostory na central")
     ak.add_argument("action", choices=("set", "status", "remove"))
+    ak.add_argument("--user", default="",
+                    help="e-mail účtu — klíč jen jeho, místo společného")
     ak.set_defaults(func=cmd_apikey)
+
+    sk = sub.add_parser("skills", help="firemní skilly ve firemním Obsidianu")
+    sk.add_argument("action", choices=("install", "update", "status"))
+    sk.add_argument("--from", dest="src", default="",
+                    help="složka se skilly místo stažení z gitu")
+    sk.add_argument("--force", action="store_true",
+                    help="přepsat skilly, které tam už jsou")
+    sk.set_defaults(func=cmd_skills)
 
     go = sub.add_parser("google", help="klient OAuth pro napojení na Google")
     go.add_argument("action", choices=("set", "status", "remove"))

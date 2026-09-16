@@ -11,9 +11,10 @@ Každý účet dostane vlastní domovskou složku pojmenovanou podle e-mailu
   paměť míří do jeho vaultu, projekty do jeho složky. Hub žádné okno neotvírá,
   brána ho pustí s `--no-browser` a mluví s ním přes proxy.
 * **přihlášení Claude Code**. Na `central` (výchozí) dostane prostor klíč API
-  brány (`ANTHROPIC_API_KEY`, viz session_env) a nikdo se nepřihlašuje; platí
-  se podle spotřeby. Na `own` se člověk přihlásí vlastním účtem. Sdílet jedno
-  osobní přihlášení mezi víc lidí (dřívější `central`) je proti podmínkám
+  (`ANTHROPIC_API_KEY`, viz session_env) a nikdo se nepřihlašuje; platí se podle
+  spotřeby. Klíč je buď vlastní klíč toho účtu, nebo společný klíč brány, když
+  svůj nemá (viz api_key). Na `own` se člověk přihlásí vlastním účtem. Sdílet
+  jedno osobní přihlášení mezi víc lidí (dřívější `central`) je proti podmínkám
   Anthropicu, proto to brána už nedělá.
 
 Cesty jdou přebít proměnnými prostředí, aby šel modul otestovat i mimo server.
@@ -356,14 +357,29 @@ def claude_auth(user):
     return "own" if (user.get("claude_auth") or "central") == "own" else "central"
 
 
-def api_key():
-    """Klíč API brány, nebo ''. Čte se při každém startu prostoru, takže
-    `claude-hub-admin apikey set` platí od dalšího startu bez restartu brány."""
-    try:
-        with open(config.API_KEY_FILE, encoding="utf-8") as fh:
-            return fh.read().strip()
-    except OSError:
-        return ""
+def api_key(user=None):
+    """Klíč API pro prostor toho účtu, nebo ''.
+
+    Nejdřív vlastní klíč účtu (`api-keys/<id>`), a když ho nemá, společný klíč
+    brány. Vlastní klíč dává každému svůj strop v Anthropic Console a nikdo
+    v prostoru nepřečte klíč kolegy. Bez `user` vrací jen ten společný.
+
+    Čte se při každém startu prostoru, takže `claude-hub-admin apikey set`
+    platí od dalšího startu bez restartu brány."""
+    paths = []
+    uid = (user or {}).get("id")
+    if uid:
+        paths.append(os.path.join(config.API_KEYS_DIR, str(uid)))
+    paths.append(config.API_KEY_FILE)
+    for path in paths:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                key = fh.read().strip()
+        except OSError:
+            continue
+        if key:
+            return key
+    return ""
 
 
 def google_client():
@@ -381,7 +397,7 @@ def session_env(user):
     """Proměnné prostředí navíc pro prostor: klíč API (jen `central`) a klient
     OAuth pro napojení na Google (všem — účty si každý přidává sám)."""
     env = {}
-    key = api_key() if claude_auth(user) == "central" else ""
+    key = api_key(user) if claude_auth(user) == "central" else ""
     if key:
         env["ANTHROPIC_API_KEY"] = key
     cid, secret = google_client()
@@ -498,7 +514,7 @@ def ensure(user):
             os.remove(cred_link)
     except OSError:
         pass
-    key = api_key() if claude_auth(user) == "central" else ""
+    key = api_key(user) if claude_auth(user) == "central" else ""
     if key:
         _approve_api_key(home, key)
 
@@ -546,7 +562,43 @@ def ensure_company_vault():
                                            if not n.startswith(".")]:
         with open(readme, "w", encoding="utf-8") as fh:
             fh.write(COMPANY_README)
+    # Skilly patří do trezoru, ať je má celý tým odtamtud jen ke čtení. Složka
+    # se zakládá až po README — prázdný trezor se pozná podle toho, že v něm
+    # nic není. Naplní ji `claude-hub-admin skills install`.
+    os.makedirs(config.COMPANY_SKILLS, exist_ok=True)
     return vault
+
+
+def company_skill_categories():
+    """Kategorie firemních skillů — názvy složek v `<trezor>/skills`.
+
+    Skilly samotné se nevypisují: jsou jich stovky a v pokynech by sežraly
+    kontext. Kategorie Claudovi stačí, aby věděl, co tam je, a šel si přečíst
+    ten, který potřebuje. Složky od `_` a `.` jsou pomocné (`_guides`)."""
+    try:
+        return [d for d in sorted(os.listdir(config.COMPANY_SKILLS))
+                if not d.startswith(("_", "."))
+                and os.path.isdir(os.path.join(config.COMPANY_SKILLS, d))]
+    except OSError:
+        return []
+
+
+def _company_skills_text():
+    """Odstavec o firemních skillech do bloku v CLAUDE.md. Bez skillů prázdný —
+    ať Clauda neposíláme do složky, kde nic není."""
+    cats = company_skill_categories()
+    if not cats:
+        return ""
+    return f"""
+**Firemní skilly.** Hotové postupy na konkrétní práci leží v trezoru
+v `{config.COMPANY_SKILLS}/<kategorie>/<skill>/SKILL.md`.
+Kategorie: {", ".join(cats)}.
+Je jich hodně — **nenačítej je všechny**. Podle zadání vyber nejvýš
+dva tři a jejich `SKILL.md` si přečti **než** začneš pracovat; co je u skillu
+v `references/`, čti teprve když potřebuješ detail. Jsou jen ke čtení a platí
+pro celý tým — když některý chybí nebo je v něm chyba, řekni to uživateli,
+zavádí je správce serveru (`claude-hub-admin skills`).
+"""
 
 
 def _company_block():
@@ -557,7 +609,7 @@ def _company_block():
 Vedle osobního trezoru tohohle uživatele je společný **firemní Obsidian**
 celého týmu: `{config.COMPANY_VAULT}`. Je jen ke čtení — firemní postupy,
 kontakty a know-how hledej a čti tam.
-
+{_company_skills_text()}
 Zapisovat do něj přímo nejde, jde to jen nástrojem níž. Jak to funguje, závisí
 na tom, ve kterém tabu hubu běžíš — poznáš to podle proměnné `HUB_VAULT`:
 

@@ -48,6 +48,13 @@ IDLE_SLEEP = int(os.environ.get("HUB_GW_IDLE_SLEEP", str(30 * 60)))
 # Čte ho jen uživatel hub (0600); do prostoru přijde jako ANTHROPIC_API_KEY.
 API_KEY_FILE = os.environ.get("HUB_GW_API_KEY_FILE",
                               os.path.join(GATEWAY_DIR, "anthropic-api-key"))
+# Klíče po účtech (claude-hub-admin apikey set --user). Soubor se jmenuje podle
+# čísla účtu, ne podle e-mailu — e-mail se do cesty nedostane. Kdo svůj klíč
+# nemá, dostane společný z API_KEY_FILE. Vlastní klíč na účet je jediný způsob,
+# jak dát každému svůj strop v Anthropic Console a jak zajistit, že kdo si klíč
+# v prostoru přečte z prostředí, přečte jen ten svůj.
+API_KEYS_DIR = os.environ.get("HUB_GW_API_KEYS_DIR",
+                              os.path.join(GATEWAY_DIR, "api-keys"))
 
 # Klient OAuth pro napojení na Google (claude-hub-admin google set). Zakládá se
 # jednou pro všechny; do prostorů přijde jako GOOGLE_OAUTH_CLIENT_ID/SECRET.
@@ -61,6 +68,11 @@ COMPANY_DIR = os.environ.get("HUB_GW_COMPANY_DIR",
 COMPANY_VAULT = os.environ.get("HUB_GW_COMPANY_VAULT",
                                os.path.join(COMPANY_DIR, "Firemní Brain"))
 COMPANY_LOG = os.path.join(COMPANY_DIR, "nahrano.jsonl")
+# Firemní skilly: `<trezor>/skills/<kategorie>/<skill>/SKILL.md`. Leží ve
+# firemním trezoru, takže je má každý prostor jen ke čtení jako zbytek trezoru
+# a nikdo je nemá zvlášť u sebe. Zavádí a aktualizuje je claude-hub-admin
+# skills; pokyny k nim dostane Claude v ~/.claude/CLAUDE.md prostoru.
+COMPANY_SKILLS = os.path.join(COMPANY_VAULT, "skills")
 # Sdílené Obsidiany pro vybrané lidi (gateway/shared.py): každý ve vlastní složce,
 # registr členů vedle nich.
 SHARED_DIR = os.environ.get("HUB_GW_SHARED_DIR",

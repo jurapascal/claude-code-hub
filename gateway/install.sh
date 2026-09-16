@@ -380,6 +380,23 @@ EOF
     chmod 755 /usr/local/bin/claude-hub-admin
 }
 
+setup_company_skills() {
+    step "Firemní skilly"
+    # Hotové postupy pro celý tým leží ve firemním Obsidianu — jeden trezor,
+    # v prostorech jen ke čtení — a ne u každého v domově. Tohle je jediné
+    # místo, kde se zavádějí při instalaci; ručně pak `claude-hub-admin skills`.
+    local out
+    if out="$(claude-hub-admin skills update 2>&1)"; then          # jsou z gitu
+        ok "${out%%$'\n'*}"
+    elif out="$(claude-hub-admin skills install 2>&1)"; then       # ještě tam nejsou
+        ok "${out%%$'\n'*}"
+    else
+        # Vlastní skilly, které z gitu nejsou — do těch se nevrtáme.
+        info "${out%%$'\n'*}"
+        echo "$out" >>"$LOG"
+    fi
+}
+
 # Míří doména na tenhle server? Bez toho Let's Encrypt certifikát nevydá.
 dns_points_here() {
     local here v4 v6
@@ -598,6 +615,7 @@ main() {
     fetch_repo
     write_conf
     install_admin_tool
+    setup_company_skills
     setup_service
     setup_updater
     setup_nginx
