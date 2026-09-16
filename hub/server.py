@@ -31,7 +31,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (account, chats, clockify, connect, core, pocitac, predplatne, pty_backend,
-               qr, remote, stats)
+               qr, remote, restart, stats)
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -731,6 +731,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             return self._json(account.status(
                 timeout=5 if payload.get("quick") else account.TIMEOUT))
+        if name == "restart":
+            # Restart po aktualizaci: uloží otevřené taby, pustí novou instanci
+            # a tuhle ukončí. Obnovu pak udělá stránka v novém okně (/api/restore).
+            if core.on_gateway():
+                return self._json({"error": "Prostor na serveru restartuje server sám."}, 400)
+            return self._json(restart.relaunch(HUB))
+        if name == "restore":
+            # Co bylo otevřené před restartem. Čte se jednou, pak je soubor pryč.
+            return self._json({"tabs": restart.take()})
         if name == "clockify":
             # Ruční stopky u projektu (hub/clockify.py). Běží mimo agenta —
             # člověk klikne Start, po Stopu je čas v Clockify.

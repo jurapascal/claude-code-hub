@@ -706,6 +706,28 @@ Samotná aktualizace běží na serveru na pozadí a stránka se na stav ptá, t
 ji přežije i reload okna. Aktualizace
 funguje i bez klonu: zdroj si stáhne do `~/.claude/hub-src`.
 
+### Restart po aktualizaci — taby zůstanou
+
+Nová verze se projeví až po startu, tak se hub **restartuje sám** a otevřené
+taby vrátí zpátky. Nic se nepotvrzuje a nikam se neklika.
+
+Jak to jde za sebou:
+
+1. Před vypnutím se zapíše, co je otevřené, do `~/.claude/hub-restore.json` —
+   u tabů s Claudem i **id konverzace**, takže se dá navázat.
+2. Pustí se nová instance a stará skončí. (Ne `execv`: okno na Linuxu běží
+   uvnitř procesu a jeho smyčka se z obsluhy požadavku ukončit nedá.)
+3. Nové okno si stav jednou přečte, soubor zahodí a taby otevře —
+   u Clauda přes `claude --resume`, takže konverzace **pokračuje tam, kde byla**.
+
+**Co restart nepřežije:** běžící program v terminálu. Pseudoterminál patří
+procesu, který umírá s ním, takže se neobnovuje „co zrovna běželo", ale
+konverzace. Rozepsaný text v bublině je taky pryč — hub ho před restartem
+neukládá, tak si ho radši odešli.
+
+Uložený stav platí **hodinu**. Kdyby se hub nepustil, taby z minula už by po
+takové době jen mátly, tak se zahodí.
+
 Z příkazové řádky je to pořád ten samý jeden řádek:
 
 ```bash
@@ -770,6 +792,9 @@ hub/static/predplatne.js  karta s propojením předplatného, stav v Nastavení 
 gateway/safefs.py         zápis brány do domovů bez následování odkazů (O_NOFOLLOW, dir_fd)
 hub/static/pocitac.js     volba přístupu, dotaz před prvním vstupem do prostoru, štítek počítače v prostoru
 tools/pocitac_mcp.py      MCP server v prostoru — nástroje mcp__pocitac__* pro Claude Code (i úkoly na později)
+hub/restart.py            restart po aktualizaci: uloží otevřené taby (i id konverzací) a vrátí je
+hub/clockify.py           stopky u projektu: Start/Stop rovnou do Clockify, mimo agenta
+hub/static/clockify.js    panel stopek v rychlých akcích — výběr projektu, běžící čas
 hub/remote.py             přístup z telefonu: stav Tailscalu, `tailscale serve`, párovací adresa
 hub/qr.py                 QR kód jako SVG, jen ze standardní knihovny (bez závislostí)
 hub/static/mobile.js      chování na telefonu: šuplík, dlouhý stisk, klávesnice, service worker

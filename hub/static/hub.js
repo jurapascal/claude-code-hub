@@ -1990,6 +1990,9 @@ function handle(msg) {
   } else if (msg.t === 'sessions') {
     if (staleVersion(msg.version)) return;
     restore(msg.list);
+    // Prázdný seznam = čerstvě nastartovaný server. Když se restartoval kvůli
+    // aktualizaci, leží tu po něm uložené taby (hub/restart.py).
+    if (!msg.list.length) restoreAfterRestart();
   } else if (msg.t === 'memory-saved') {
     memorySaved(msg);
   } else if (msg.t === 'pocitac-ukol') {
@@ -2015,6 +2018,35 @@ function staleVersion(version) {
   }
   location.reload();
   return true;
+}
+
+let restartRestored = false;
+
+function tabyWord(n) {
+  return n === 1 ? 'tab' : (n >= 2 && n <= 4 ? 'taby' : 'tabů');
+}
+
+/* Po restartu kvůli aktualizaci: server je nový a žádné sessions nemá, ale
+ * hub/restart.py před vypnutím uložil, co bylo otevřené. Otevře se to znovu —
+ * u Clauda s `--resume`, takže konverzace pokračuje tam, kde skončila.
+ * Soubor se čte jednou (server ho při čtení maže), tohle je jen pojistka. */
+async function restoreAfterRestart() {
+  if (restartRestored) return;
+  restartRestored = true;
+  let tabs = [];
+  try {
+    tabs = (await api('restore')).tabs || [];
+  } catch (_) {
+    return;                 // obnova je bonus, chyba tu nesmí nic shodit
+  }
+  if (!tabs.length) return;
+  for (const t of tabs) {
+    openTab({kind: t.kind, path: t.path, title: t.title,
+             agent: t.agent, model: t.model, resume: t.resume});
+  }
+  const back = tabs.filter(t => t.resume).length;
+  toast(`Hub aktualizovaný — ${tabs.length} ${tabyWord(tabs.length)} zpátky` +
+        (back ? `, z toho ${back} pokračuje v konverzaci.` : '.'));
 }
 
 /* Re-attach after a reload or a dropped connection: the server is the source of

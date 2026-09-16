@@ -1492,10 +1492,23 @@
           status.textContent = r.detail || 'Aktualizace se nepovedla.';
         } else if (r.changed) {
           status.className = 'set-status ok';
-          status.textContent = `✓ Nainstalována verze ${r.now}. ` +
-            'Zavři a znovu otevři aplikaci, ať se načte.';
           doIt.hidden = true;
           info.textContent = 'Nainstalováno: ' + r.now;
+          /* Nová verze se projeví až po startu, tak si hub sáhne na restart
+             sám. Otevřené taby se před tím uloží a nové okno je zase otevře —
+             u Clauda se pokračuje v téže konverzaci (`--resume`). */
+          status.textContent = `✓ Nainstalována verze ${r.now}. Restartuju…`;
+          try {
+            const res = await io.api('restart');
+            status.textContent = res && res.tabs
+              ? `✓ Verze ${r.now}. Restartuju a vracím ${res.tabs} ` +
+                (res.tabs === 1 ? 'tab…' : res.tabs < 5 ? 'taby…' : 'tabů…')
+              : `✓ Verze ${r.now}. Restartuju…`;
+          } catch (err) {
+            status.className = 'set-status warn';
+            status.textContent = `✓ Nainstalována verze ${r.now}, ale restart se ` +
+              'nepovedl: ' + err.message + ' Zavři a znovu otevři aplikaci.';
+          }
         } else {
           status.className = 'set-status ok';
           status.textContent = '✓ ' + (r.detail || 'Nic nového.');
