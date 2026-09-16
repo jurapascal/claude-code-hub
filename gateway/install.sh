@@ -207,9 +207,30 @@ bantime = 1h
 findtime = 10m
 EOF
     fi
+    # Filtr na přihlášení do brány. Zámek v databázi drží hádání hesel
+    # u jednoho účtu, tohle odstřihne celou adresu na firewallu.
+    local filtr="$REPO_DIR/gateway/fail2ban-brana.conf"
+    [ -f "$filtr" ] || filtr="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/fail2ban-brana.conf"
+    if [ -f "$filtr" ]; then
+        install -m 644 "$filtr" /etc/fail2ban/filter.d/claude-hub-brana.conf
+        # Vlastní soubor, ne jail.local: ten se zakládá jen jednou a na
+        # serverech, kde už byl, by se jail nikdy nedoplnil.
+        cat >/etc/fail2ban/jail.d/claude-hub-brana.conf <<'EOF'
+[claude-hub-brana]
+enabled = true
+backend = systemd
+filter = claude-hub-brana
+# Brána poslouchá jen na loopbacku; ban proto patří na port, kde sedí nginx.
+port = http,https
+maxretry = 5
+bantime = 1h
+findtime = 10m
+journalmatch = _SYSTEMD_USER_UNIT=claude-hub-gateway.service
+EOF
+    fi
     quiet systemctl enable fail2ban
     quiet systemctl restart fail2ban
-    ok "fail2ban: SSH, 5 pokusů, ban na hodinu"
+    ok "fail2ban: SSH i přihlášení do brány, 5 pokusů, ban na hodinu"
 
     cat >/etc/apt/apt.conf.d/20auto-upgrades <<'EOF'
 APT::Periodic::Update-Package-Lists "1";

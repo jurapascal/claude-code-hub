@@ -809,6 +809,10 @@ class Handler(BaseHTTPRequestHandler):
         o zámku: „právě zamčeno", nebo „pořád zamčeno" (zámek z jiného klíče)."""
         wait, left, locked = self.accounts.fail_record(keys, config.LOGIN_LOCK,
                                                        config.LOGIN_LOCK)
+        # Pro fail2ban (filtr claude-hub-brana): zámek v databázi drží hádání
+        # hesel u jednoho účtu, tohle nechá bránu blokovat celou adresu na
+        # firewallu, ať se na server nebuší dál.
+        print(f"neúspěšné přihlášení z {self._client_ip()}", flush=True)
         if locked:
             print(f"přihlášení zablokováno na {config.LOGIN_LOCK // 60} min: "
                   + ", ".join(locked), flush=True)
