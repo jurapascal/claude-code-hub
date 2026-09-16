@@ -2500,16 +2500,18 @@ def firma_tab_prompt():
     return FIRMA_TAB_PROMPT.format(tool=tool)
 
 
-def cmd_agent(path, agent_id="", slash="", model="", resume="", fork=False, vault=""):
+def cmd_agent(path, agent_id="", slash="", model="", resume="", fork=False, vault="",
+              prompt=""):
     """(příkaz pro tab, proměnné prostředí) — tudy se spouští každý agent.
     `resume` = pokračovat v uložené konverzaci (seznam konverzací), `fork` =
-    jako její kopie."""
+    jako její kopie, `prompt` = úvodní zpráva (úkol ze serveru, hub/pocitac.py)."""
     spec = agent_spec(agent_id)
     # Možnost bypassu jen po potvrzeném varování (bypass_accepted) — jinak by
     # se Claude Code při každém startu ptal a Enter by ho ukončil.
     bypass = bool(agents.bypass_arg(spec)) and bypass_accepted()
     resume = str(resume or "") if SESSION_ID.fullmatch(str(resume or "")) else ""
-    argv = agents.launch_args(spec, model, slash, bypass=bypass, resume=resume, fork=fork)
+    argv = agents.launch_args(spec, model, slash or prompt, bypass=bypass, resume=resume,
+                              fork=fork)
     # Firemní tab: agent dostane pokyn pro tohle sezení a nástroj firma.py podle
     # HUB_VAULT pozná, že se nahrává rovnou.
     firma = vault == "firma" and bool(company_vault())

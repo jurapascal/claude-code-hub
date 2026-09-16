@@ -45,6 +45,7 @@ sahat na tenhle počítač (`hub/pocitac.py`). To je vědomě díra ven, takže:
 | **Server ji změnit neumí** | stránka prostoru zná adresu i token hubu na počítači (`#local=`, cesta zpátky). POST na `/api` proto musí mít `Origin` stránky hubu — z prostoru neprojde. |
 | **Přihlášení appky a Claude Code se nečte** | `hub-config.json` (token zařízení) a `.credentials.json` odmítne čtení, hledání, stažení i zápis. S tokenem zařízení by si Claude v prostoru sám potvrdil, co potvrzuje člověk (firemní Obsidian). |
 | **Každý úkol do logu** | `hub.log` a posledních pár v ⚙ → Účet |
+| **Úkol na později spouští počítač** | zadání, které Claude z prostoru nechal vypnutému počítači, otevře tab s Claude Code sám jen s plným přístupem — ten už stejně dovoluje příkazy. S přístupem jen ke čtení čeká na *Spustit* v okně appky (POST s `Origin` hubu, prostor ho nespustí). Tab běží v režimu oprávnění, který má Claude Code nastavený, a o souhlas se ptá jako jindy. |
 
 Co to **neřeší**: s plným přístupem Claude spouští příkazy, a příkaz si
 soubor s přihlášením přečte i tak. Plný přístup je proto stejná důvěra jako

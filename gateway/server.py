@@ -662,6 +662,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._pocitac_reply(method)
             if route == "/gw/pocitac/volani":
                 return self._pocitac_call(method)
+            if route == "/gw/pocitac/ukol":
+                return self._pocitac_ukol(method)
             # Přihlášení Clauda v prostoru: appka tokenem zařízení, prostor
             # (prohlížeč) cookie — obojí řeší _gw_claude.
             if route == "/gw/claude":
@@ -690,8 +692,10 @@ class Handler(BaseHTTPRequestHandler):
             if route == "/gw/restart":
                 return self._gw_restart(method, user)
             if route == "/gw/pocitac":
-                # Které počítače jsou k prostoru připojené — štítek v hlavičce.
-                return self._json({"computers": self.server.pocitac.list(user["id"])})
+                # Které počítače jsou k prostoru připojené — štítek v hlavičce —
+                # a kde jsou úkoly, které jim Claude nechal na později.
+                return self._json({"computers": self.server.pocitac.list(user["id"]),
+                                   "ukoly": self.server.pocitac.ukoly(user["id"])})
 
             # Přihlášený → všechno ostatní jde do jeho instance hubu.
             return self._proxy(method, user)
@@ -944,7 +948,7 @@ class Handler(BaseHTTPRequestHandler):
                            "version": __version__,
                            # Co brána umí navíc — appka podle toho pozná, jestli
                            # se má ptát třeba na most na počítač.
-                           "features": ["pocitac", "predplatne"],
+                           "features": ["pocitac", "predplatne", "ukoly"],
                            "host": self._public_host()})
 
     def _gw_me(self):
@@ -1026,7 +1030,8 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             return self._json({"error": str(exc)}, 400)
         try:
-            return self._json({"tasks": tasks})
+            return self._json({"tasks": tasks,
+                               "ukoly": broker.ukoly_offer(user["id"], info.get("id"))})
         except OSError:
             # Počítač mezitím spojení zavřel — úkoly nesmí propadnout.
             broker.requeue(user["id"], info.get("id"), tasks)
@@ -1044,6 +1049,20 @@ class Handler(BaseHTTPRequestHandler):
         ok = self.server.pocitac.reply(user["id"], form.get("computer"), form.get("id"), result)
         return self._json({"ok": ok})
 
+    def _pocitac_ukol(self, method):
+        """Úkol na později: počítač si ho stáhne (take) a hlásí, kde je (state)."""
+        if method != "POST":
+            return self._json({"error": "Jen POST."}, 405)
+        user = self._bearer()
+        if not user:
+            return self._json({"error": "Neplatný token."}, 401)
+        form = self._read_form()
+        broker = self.server.pocitac
+        if form.get("action") == "take":
+            return self._json(broker.ukol_take(user["id"], form.get("computer"), form.get("id")))
+        return self._json(broker.ukol_mark(user["id"], form.get("computer"), form.get("id"),
+                                           str(form.get("state") or "")))
+
     def _pocitac_call(self, method):
         """Úkol od Clauda z prostoru pro počítač jeho uživatele.
 
@@ -1060,11 +1079,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": False, "error": "Neplatný žeton prostoru."}, 401)
         form = self._read_form()
         op = str(form.get("op") or "")
+        args = form.get("args") if isinstance(form.get("args"), dict) else {}
         broker = self.server.pocitac
         if op == "list":
-            return self._json({"ok": True, "computers": broker.list(user["id"])})
-        return self._json(broker.call(user["id"], op, form.get("args"),
-                                      str(form.get("computer") or "")))
+            return self._json({"ok": True, "computers": broker.list(user["id"]),
+                               "ukoly": broker.ukoly(user["id"])})
+        # Úkoly na později: počítač teď připojený být nemusí.
+        if op == "ukol-novy":
+            return self._json(broker.ukol_new(user["id"], args))
+        if op == "ukol-zrusit":
+            return self._json(broker.ukol_cancel(user["id"], args.get("id")))
+        return self._json(broker.call(user["id"], op, args, str(form.get("computer") or "")))
 
     def _logout(self):
         token = self._cookies().get(config.SESSION_COOKIE, "")
@@ -1286,7 +1311,7 @@ class Gateway(ThreadingHTTPServer):
         self.accounts = accounts
         self.hubs = hubs
         self.assume_https = assume_https
-        self.pocitac = pocitac.Broker()
+        self.pocitac = pocitac.Broker(config.POCITAC_UKOLY_DIR)
 
 
 def _loopback_url():

@@ -12,7 +12,11 @@
  *  - `serverBlock(io)` v prostoru v Nastavení → Účet: které počítače jsou
  *                      připojené a cesta, jak to zapnout.
  *  - `chip(io)`        štítek v hlavičce prostoru, dokud je nějaký počítač
- *                      připojený.
+ *                      připojený. Hlídá i úkoly na později: jakmile si je
+ *                      počítač převezme, ukáže to kartou (`ukolyNotice`).
+ *  - `ukol(io, msg)`   na počítači: hláška od hubu o úkolu ze serveru (převzatý
+ *                      čeká na potvrzení → karta, spuštěný → hláška).
+ *  - `pending(io)`     na počítači po načtení: čekající úkoly ze serveru.
  *
  * Volba přístupu se ukládá jen na počítači (POST /api/pocitac). Prostor na
  * serveru ji změnit neumí — tlačítko tam jen vrátí okno sem.
@@ -82,6 +86,13 @@
     return wrap;
   }
 
+  function stamp(ts) {
+    if (!ts) return '';
+    const d = new Date(ts * 1000);
+    return d.getDate() + '. ' + (d.getMonth() + 1) + '. ' +
+      d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
   const TRUST_NOTE =
     'Platí jen pro tvůj prostor a jen dokud je tady appka otevřená. Každý přístup se ' +
     'zapíše do logu a posledních pár uvidíš v Nastavení → Účet. Na počítač tak ' +
@@ -101,6 +112,8 @@
     box.appendChild(line);
     const recent = el('div', 'pc-recent');
     box.appendChild(recent);
+    const tasks = el('div', 'pc-recent');
+    box.appendChild(tasks);
 
     let timer = null;
     let busy = false;
@@ -146,6 +159,7 @@
           line.appendChild(el('span', 'set-warn', '! ' + (st.note || 'Most neběží.')));
         }
       }
+      drawTasks(st.ukoly || []);
       recent.textContent = '';
       const rows = st.recent || [];
       if (!rows.length) return;
@@ -159,6 +173,25 @@
         row.appendChild(el('span', 'pc-when', ago(now - r.at)));
         if (!r.ok && r.error) row.title = r.error;
         recent.appendChild(row);
+      }
+    }
+
+    /* Úkoly, které Claude ze serveru nechal na později (hub/pocitac.py). */
+    function drawTasks(list) {
+      tasks.textContent = '';
+      if (!list.length) return;
+      tasks.appendChild(el('div', 'set-dim pc-recent-t', 'Úkoly ze serveru:'));
+      for (const u of list.slice(0, 8)) {
+        const row = el('div', 'pc-row pc-task');
+        row.appendChild(el('span', 'pc-op', UKOL_LABEL[u.state] || u.state));
+        row.appendChild(el('span', 'pc-what', u.title));
+        row.appendChild(el('span', 'pc-when', stamp(u.received)));
+        if (u.state === 'ceka') {
+          const b = el('button', 'btn ghost pc-task-btn', 'Zobrazit');
+          b.onclick = () => card(io, u);
+          row.appendChild(b);
+        }
+        tasks.appendChild(row);
       }
     }
 
@@ -241,12 +274,179 @@
     });
   }
 
+  /* ── na počítači: úkoly ze serveru ────────────────────────────────────────── */
+  const UKOL_LABEL = {ceka: 'čeká', spusteno: 'spuštěný', zahozeno: 'zahozený'};
+  const shown = new Set();            // úkoly, které mají kartu nebo ji měly
+
+  /* Karta s úkolem, který Claude ze serveru nechal na později. Spustí ho
+     člověk tady — s přístupem jen ke čtení se sám nespustí. */
+  function card(io, u) {
+    const open = document.querySelector('.pc-ukol');
+    if (open) open.remove();
+    shown.add(u.id);
+    const root = el('div', 'onb pc-ukol');
+    const box = el('div', 'onb-box');
+    const head = el('div', 'onb-head');
+    const mark = el('span', 'onb-mark');
+    mark.appendChild(icon('i-laptop'));
+    head.appendChild(mark);
+    const titles = el('div');
+    titles.appendChild(el('div', 'onb-title', 'Úkol od Clauda ze serveru'));
+    titles.appendChild(el('div', 'onb-sub',
+      [u.server, u.created && 'zadáno ' + stamp(u.created)].filter(Boolean).join(' · ')));
+    head.appendChild(titles);
+    box.appendChild(head);
+
+    const body = el('div', 'onb-body');
+    body.appendChild(el('div', 'pc-ukol-name', u.title));
+    body.appendChild(el('div', 'pc-ukol-text', u.text));
+    if (u.folder) body.appendChild(el('div', 'pc-ukol-meta', 'Složka: ' + u.folder));
+    if ((u.files || []).length) {
+      body.appendChild(el('div', 'pc-ukol-meta', 'Přílohy: ' + u.files.join(', ')));
+    }
+    body.appendChild(el('p', 'onb-note',
+      'Spustí se v novém tabu s Claude Code tady na počítači. Claude si zadání přečte ' +
+      'a než začne, shrne, co udělá.'));
+    const err = el('div', 'srv-status err');
+    err.hidden = true;
+    body.appendChild(err);
+    box.appendChild(body);
+
+    const foot = el('div', 'onb-foot');
+    const drop = el('button', 'btn ghost', 'Zahodit');
+    const later = el('button', 'btn ghost', 'Později');
+    const run = el('button', 'btn primary', 'Spustit');
+    foot.append(drop, later, el('span', 'spacer'), run);
+    box.appendChild(foot);
+    root.appendChild(box);
+    document.body.appendChild(root);
+    run.focus();
+
+    async function act(action, done) {
+      run.disabled = drop.disabled = true;
+      try {
+        const r = await io.api('pocitac', {action, id: u.id});
+        if (r.error) throw new Error(r.error);
+        root.remove();
+        done(r);
+        pending(io);                         // další čekající, když nějaký je
+      } catch (e) {
+        err.textContent = 'Nepovedlo se: ' + e.message;
+        err.hidden = false;
+        run.disabled = drop.disabled = false;
+      }
+    }
+    run.onclick = () => act('ukol-spustit', (r) => {
+      if (r.tab && io.focusTab) io.focusTab(r.tab.id);
+    });
+    drop.onclick = () => act('ukol-zahodit', () => io.toast('Úkol zahozen.'));
+    later.onclick = () => {
+      root.remove();
+      io.toast('Úkol počká — najdeš ho v Nastavení → Účet.');
+    };
+  }
+
+  /* Po načtení okna: čekající úkoly. `opts.focus` = okno se vrátilo ze
+     serveru kvůli úkolu — když už běží, přepne se na jeho tab. */
+  async function pending(io, opts) {
+    opts = opts || {};
+    let st;
+    try { st = await io.api('pocitac'); } catch (_) { return; }
+    const list = st.ukoly || [];
+    const waiting = list.filter((u) => u.state === 'ceka' && !shown.has(u.id));
+    if (waiting.length) return card(io, waiting[waiting.length - 1]);   // nejstarší
+    if (opts.focus && io.focusTab) {
+      const running = list.find((u) => u.state === 'spusteno' && u.tab);
+      if (running) io.focusTab(running.tab);
+    }
+  }
+
+  /* Hláška od hubu (websocket): úkol ze serveru dorazil nebo se spustil. */
+  async function ukol(io, msg) {
+    if (msg.state === 'spusteno') {
+      io.toast('Úkol ze serveru „' + msg.title + '“ běží v novém tabu.');
+      if (msg.auto && io.focusTab) io.focusTab(msg.tab, {idle: true});
+      return;
+    }
+    if (msg.state === 'ceka' && !shown.has(msg.id) && !document.querySelector('.pc-ukol')) {
+      pending(io);
+    }
+  }
+
   /* ── v prostoru na serveru ───────────────────────────────────────────────── */
-  async function computers() {
+  async function gwState() {
     const r = await fetch('/gw/pocitac', {credentials: 'same-origin'});
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    const data = await r.json();
+    return r.json();
+  }
+
+  async function computers() {
+    const data = await gwState();
     return (data.computers || []).filter((c) => c.online && c.access);
+  }
+
+  /* Karta v prostoru: počítač si úkol převzal. Jednou na úkol a stav — co
+     už člověk viděl, drží localStorage (bez něj se ukáže jen v tomhle načtení). */
+  const SEEN_KEY = 'hub.ukolySeen';
+  const seenHere = new Set();
+
+  function seen(key) {
+    if (seenHere.has(key)) return true;
+    try { return (JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')).includes(key); }
+    catch (_) { return false; }
+  }
+
+  function markSeen(key) {
+    seenHere.add(key);
+    try {
+      const list = JSON.parse(localStorage.getItem(SEEN_KEY) || '[]').filter((k) => k !== key);
+      list.push(key);
+      localStorage.setItem(SEEN_KEY, JSON.stringify(list.slice(-50)));
+    } catch (_) { /* jen pohodlí */ }
+  }
+
+  function ukolyNotice(io, list) {
+    if (document.querySelector('.pc-ukol')) return;
+    const now = Date.now() / 1000;
+    const u = (list || []).find((x) => (x.state === 'prevzato' || x.state === 'spusteno') &&
+                                       now - x.changed < 30 * 60 && !seen(x.id + ':' + x.state));
+    if (!u) return;
+    markSeen(u.id + ':' + u.state);
+    const started = u.state === 'spusteno';
+    const root = el('div', 'onb pc-ukol');
+    const box = el('div', 'onb-box');
+    const head = el('div', 'onb-head');
+    const mark = el('span', 'onb-mark');
+    mark.appendChild(icon('i-laptop'));
+    head.appendChild(mark);
+    const titles = el('div');
+    titles.appendChild(el('div', 'onb-title',
+      started ? 'Úkol běží na počítači' : 'Úkol čeká na počítači'));
+    titles.appendChild(el('div', 'onb-sub', u.by || ''));
+    head.appendChild(titles);
+    box.appendChild(head);
+    const body = el('div', 'onb-body');
+    body.appendChild(el('div', 'pc-ukol-name', u.title));
+    body.appendChild(el('p', 'onb-lead', started
+      ? 'Počítač ' + (u.by || '') + ' si úkol převzal a Claude na něm pracuje v novém tabu. ' +
+        'Když bude potřebovat souhlas, zeptá se tam.'
+      : 'Počítač ' + (u.by || '') + ' si úkol převzal. Má zapnutý přístup jen ke čtení, ' +
+        'takže se nespustí sám — potvrď ho v appce na počítači.'));
+    box.appendChild(body);
+    const foot = el('div', 'onb-foot');
+    const close = el('button', 'btn ghost', 'Zavřít');
+    close.onclick = () => root.remove();
+    foot.append(close, el('span', 'spacer'));
+    const hs = global.HubServer;
+    if (hs && hs.localBack() && hs.appAtLeast('2.15.0')) {
+      const go = el('button', 'btn primary', started ? 'Přejít na počítač' : 'Potvrdit na počítači');
+      go.title = 'Okno přejde do appky na počítači. Do prostoru se vrátíš v Nastavení → Účet.';
+      go.onclick = () => hs.backTo('ukoly');
+      foot.appendChild(go);
+    }
+    box.appendChild(foot);
+    root.appendChild(box);
+    document.body.appendChild(root);
   }
 
   function lastText(c) {
@@ -261,7 +461,8 @@
     body.appendChild(el('div', 'set-note', 'Zjišťuji, jestli je připojený…'));
     box.appendChild(body);
 
-    computers().then((list) => {
+    gwState().then((data) => {
+      const list = (data.computers || []).filter((c) => c.online && c.access);
       body.textContent = '';
       if (list.length) {
         body.appendChild(el('div', 'set-note',
@@ -279,7 +480,19 @@
         body.appendChild(el('div', 'set-note',
           'Claude v prostoru teď na žádný tvůj počítač nedosáhne. Zapíná se v appce ' +
           'Claude Code Hub na počítači (Nastavení → Účet → Claude ze serveru na tomhle ' +
-          'počítači) a funguje, dokud je appka otevřená.'));
+          'počítači) a funguje, dokud je appka otevřená. Co má počkat, než se počítač ' +
+          'připojí, řekni Claudovi — nechá mu úkol a Claude na počítači ho pak dodělá.'));
+      }
+      const tasks = data.ukoly || [];
+      if (tasks.length) {
+        body.appendChild(el('div', 'set-dim pc-recent-t', 'Úkoly na později:'));
+        for (const u of tasks.slice(0, 8)) {
+          const row = el('div', 'pc-row pc-task');
+          row.appendChild(el('span', 'pc-op', u.state_label + (u.by ? ' (' + u.by + ')' : '')));
+          row.appendChild(el('span', 'pc-what', u.title));
+          row.appendChild(el('span', 'pc-when', stamp(u.changed || u.created)));
+          body.appendChild(row);
+        }
       }
       if (global.HubServer && global.HubServer.localBack() &&
           !global.HubServer.appAtLeast('2.14.1')) {
@@ -319,7 +532,9 @@
       clearTimeout(timer);
       let wait = 15000;
       try {
-        const list = await computers();
+        const data = await gwState();
+        const list = (data.computers || []).filter((c) => c.online && c.access);
+        ukolyNotice(io, data.ukoly);
         b.hidden = !list.length;
         if (list.length) {
           label.textContent = list.length === 1 ? list[0].name : list.length + ' počítače';
@@ -344,6 +559,6 @@
     tick();
   }
 
-  global.HubPocitac = {LEVELS, panel, ask, serverBlock, chip, levelLabel};
+  global.HubPocitac = {LEVELS, panel, ask, serverBlock, chip, levelLabel, ukol, pending};
 
 })(window);

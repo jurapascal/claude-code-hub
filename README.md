@@ -92,7 +92,9 @@ dělá jednu aplikaci:
   počítač, ze kterého se k prostoru přihlásíš: čte a hledá soubory, zapisuje,
   spouští příkazy a kopíruje soubory mezi počítačem a serverem. Zapíná se na
   počítači (vypnuto / jen čtení / plný přístup) a běží, dokud je appka
-  otevřená. Podrobně v [Claude ze serveru na tvém počítači](#claude-ze-serveru-na-tvém-počítači).
+  otevřená. Když je počítač vypnutý, nechá mu Claude úkol na později — po
+  zapnutí ho dodělá Claude v tabu na počítači. Podrobně v
+  [Claude ze serveru na tvém počítači](#claude-ze-serveru-na-tvém-počítači).
 - **Telefon** — hub se dá přes Tailscale otevřít i z mobilu (Android i iPhone):
   QR kód v nastavení, ikona na ploše, šuplík místo panelu a řádek kláves,
   ze kterého jde poslat Esc, Tab i šipky. Podrobně níž.
@@ -480,6 +482,36 @@ Jak to drží pohromadě:
 Na počítač tak dosáhne i ten, kdo spravuje server. Zapínej to jen u serveru,
 kterému věříš.
 
+#### Úkoly na později
+
+Počítač nemusí být zapnutý. Zadáš práci v prostoru, Claude tam připraví, co
+jde, a počítači nechá **úkol**: zadání a přílohy (nástroj `nechat_ukol`).
+Brána ho podrží, a jakmile otevřeš appku na počítači:
+
+1. Appka si úkol stáhne do `~/.claude/hub-ukoly/<id>/` (zadání a `soubory/`).
+2. **S plným přístupem** se hned otevře tab s Claude Code, který dostane
+   zadání jako první zprávu a úkol dodělá. **S přístupem jen ke čtení** se
+   ukáže karta se zadáním a úkol se spustí, až klikneš na *Spustit*.
+3. V prostoru na serveru naskočí karta *Úkol běží na počítači* (nebo *čeká na
+   počítači*) s tlačítkem, které okno přepne na počítač, přímo k úkolu.
+
+- **Claude na počítači konverzaci ze serveru nevidí** — ví jen, co stojí
+  v zadání. Claude v prostoru ho proto píše samostatně: co udělat, kde, s čím
+  a jak poznat, že je hotovo. Když by šlo o mazání nebo přepsání něčeho, co
+  zadání nezmiňuje, zeptá se.
+- **Spustit ho umí jen počítač.** Prostor na serveru úkol jen nechá; otevřít
+  tab na počítači neumí, stejně jako neumí změnit přístup. S přístupem
+  *Vypnuto* si počítač úkoly vůbec nevyzvedne — počkají.
+- **Kde úkol je**, vidí Claude v prostoru (`ukoly_pro_pocitac`) i ty: v prostoru
+  ⚙ → Účet → *Tvůj počítač*, na počítači ⚙ → Účet → *Úkoly ze serveru*.
+  Nevyzvednutý úkol jde zrušit (`zrusit_ukol`), převzatý zahodit na počítači.
+- **Limity:** zadání do 8 000 znaků, přílohy do 15 MB a 20 souborů, nejvýš 20
+  čekajících úkolů. Přílohy se na bráně smažou, jakmile si je počítač
+  převezme; nevyzvednutý úkol propadne po měsíci.
+- Úkol může mířit na konkrétní počítač (jméno); bez něj ho dostane první,
+  který se připojí. Potřebuje appku 2.15.0 nebo novější — na starší Claude
+  v prostoru upozorní.
+
 ## Playwright MCP (volitelné)
 
 Prohlížeč pro Claude Code — otevře stránku, klikne, přečte konzoli, udělá screenshot.
@@ -713,7 +745,7 @@ hub/predplatne.py         Claude v prostoru na vlastním předplatném: claude s
 hub/static/predplatne.js  karta s propojením předplatného, stav v Nastavení → Účet
 gateway/safefs.py         zápis brány do domovů bez následování odkazů (O_NOFOLLOW, dir_fd)
 hub/static/pocitac.js     volba přístupu, dotaz před prvním vstupem do prostoru, štítek počítače v prostoru
-tools/pocitac_mcp.py      MCP server v prostoru — nástroje mcp__pocitac__* pro Claude Code
+tools/pocitac_mcp.py      MCP server v prostoru — nástroje mcp__pocitac__* pro Claude Code (i úkoly na později)
 hub/remote.py             přístup z telefonu: stav Tailscalu, `tailscale serve`, párovací adresa
 hub/qr.py                 QR kód jako SVG, jen ze standardní knihovny (bez závislostí)
 hub/static/mobile.js      chování na telefonu: šuplík, dlouhý stisk, klávesnice, service worker

@@ -25,7 +25,8 @@ import urllib.error
 import urllib.request
 
 NAME = "pocitac"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
+UKOLY_OD = "2.15.0"                   # appka na počítači, která úkoly na později umí
 MAX_TRANSFER = 15 * 1024 * 1024       # stejný strop jako na počítači
 MAX_TEXT = 80 * 1024                  # víc textu naráz Claudovi nepomůže
 
@@ -45,7 +46,11 @@ v prostoru uživatele.
   jen na jeho výslovné přání. Hesla, klíče a přihlašovací údaje z počítače
   nevypisuj ani nekopíruj na server, pokud o to výslovně nepožádá.
 - Když počítač není připojený, řekni uživateli, ať má na počítači otevřenou appku
-  Claude Code Hub a v Nastavení → Účet zapnutý přístup pro Clauda ze serveru."""
+  Claude Code Hub a v Nastavení → Účet zapnutý přístup pro Clauda ze serveru.
+- Když připojený není a má se na něm něco udělat, nemusí se čekat: co jde, připrav
+  tady na serveru a nech počítači úkol přes `nechat_ukol`. Až se počítač připojí,
+  otevře se na něm tab s Claude Code, který úkol podle tvého zadání dodělá. Jak
+  jsou úkoly daleko, ukáže `ukoly_pro_pocitac`."""
 
 _PC = {"type": "string",
        "description": "Na kterém počítači (jméno z `pocitace`). Stačí vynechat, když je připojený jen jeden."}
@@ -114,6 +119,35 @@ TOOLS = [
          "cesta_na_serveru": {"type": "string",
                               "description": "Kam soubor uložit na serveru; relativní = od pracovní složky."},
          "pocitac": _PC}}},
+    {"name": "nechat_ukol",
+     "description": "Nechá úkol pro Clauda na počítači uživatele, který teď není připojený "
+                    "(nebo když to má počkat). Až se počítač připojí — appka Claude Code Hub "
+                    "otevřená a přístup pro Clauda ze serveru zapnutý — otevře se na něm tab "
+                    "s Claude Code, dostane tvoje zadání a přílohy a úkol dodělá. Zadání piš "
+                    "samostatně: Claude na počítači tuhle konverzaci nevidí, ví jen to, co "
+                    "napíšeš (co udělat, kde, s čím a jak poznat, že je hotovo). Co jde "
+                    "připravit tady na serveru, připrav předem a přilož.",
+     "inputSchema": {"type": "object", "required": ["nazev", "zadani"], "properties": {
+         "nazev": {"type": "string",
+                   "description": "Krátký název, jak ho uživatel uvidí, např. „Web květinářství na plochu\"."},
+         "zadani": {"type": "string",
+                    "description": "Celé zadání pro Clauda na počítači, nejvýš 8000 znaků."},
+         "slozka": {"type": "string",
+                    "description": "Složka na počítači, ve které se tab otevře (např. ~/Desktop/projekt). "
+                                   "Prázdné = domovská složka."},
+         "soubory": {"type": "array", "items": {"type": "string"},
+                     "description": "Soubory tady na serveru, které se k úkolu přiloží (dohromady do "
+                                    "15 MB, nejvýš 20). Claude na počítači se dozví, kde je najde."},
+         "pocitac": {"type": "string",
+                     "description": "Pro který počítač (jméno z `pocitace`). Prázdné = první, který se připojí."}}}},
+    {"name": "ukoly_pro_pocitac",
+     "description": "Úkoly, které čekají na počítač uživatele nebo si je už převzal (nechat_ukol): "
+                    "název, stav, kdy a na kterém počítači.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "zrusit_ukol",
+     "description": "Zruší úkol, který si počítač ještě nevyzvedl.",
+     "inputSchema": {"type": "object", "required": ["id"], "properties": {
+         "id": {"type": "string", "description": "Id úkolu z `ukoly_pro_pocitac`."}}}},
     {"name": "nahrat",
      "description": "Zkopíruje soubor (i binární, do 15 MB) ze serveru na počítač uživatele. "
                     "Potřebuje plný přístup.",
@@ -195,16 +229,19 @@ def t_pocitace(a):
     data = gateway("list", wait=20)
     comps = data.get("computers") or []
     online = [c for c in comps if c.get("online") and c.get("access") in ("cteni", "vse")]
+    waiting = sum(1 for u in data.get("ukoly") or [] if u.get("state") == "ceka")
+    later = f"Na počítač čeká úkolů na později: {waiting} (ukoly_pro_pocitac)." if waiting else ""
     if not online:
         return ("Žádný počítač uživatele teď není připojený. Musí mít na počítači otevřenou "
                 "appku Claude Code Hub přihlášenou k tomuhle serveru a v Nastavení → Účet "
-                "zapnutý přístup „Claude ze serveru na tomhle počítači\".")
+                "zapnutý přístup „Claude ze serveru na tomhle počítači\". Když to může počkat, "
+                "nech počítači úkol (nechat_ukol). " + later).strip()
     lines = []
     for c in online:
         lines.append(f"- {c.get('name')}: {c.get('system') or '?'}, uživatel {c.get('user') or '?'}, "
                      f"domovská složka {c.get('home') or '?'}, shell {c.get('shell') or '?'}, "
                      f"přístup: {c.get('access_label')}")
-    return "Připojené počítače:\n" + "\n".join(lines)
+    return "Připojené počítače:\n" + "\n".join(lines + ([later] if later else []))
 
 
 def t_slozka(a):
@@ -327,9 +364,86 @@ def t_nahrat(a):
     return f"Nahráno na počítač {pc}: {source} → {res.get('path')} ({_size(res.get('bytes'))})."
 
 
+def _older(version, than):
+    """Je verze appky starší než `than`? Neznámá verze se bere jako starší."""
+    def num(v):
+        return [int(p) if p.isdigit() else 0 for p in str(v or "").split(".")[:3]]
+    return not version or num(version) < num(than)
+
+
+def t_nechat_ukol(a):
+    paths = a.get("soubory") or []
+    if not isinstance(paths, list):
+        raise Failed("`soubory` má být seznam cest na serveru.")
+    files, total = [], 0
+    for raw in paths:
+        source = _server_path(raw)
+        if not os.path.isfile(source):
+            raise Failed(f"Na serveru soubor {source} není.")
+        total += os.path.getsize(source)
+        if total > MAX_TRANSFER:
+            raise Failed(f"Přílohy mají dohromady přes {_size(MAX_TRANSFER)} — zabal je, nebo "
+                         "přilož jen to podstatné.")
+        with open(source, "rb") as fh:
+            files.append({"name": os.path.basename(source),
+                          "data": base64.b64encode(fh.read()).decode("ascii")})
+    data = gateway("ukol-novy", {"title": a.get("nazev") or "", "text": a.get("zadani") or "",
+                                 "folder": a.get("slozka") or "", "computer": a.get("pocitac") or "",
+                                 "files": files}, wait=120)
+    ukol = data.get("ukol") or {}
+    out = [f"Úkol „{ukol.get('title')}\" (id {ukol.get('id')}) čeká na počítač"
+           + (f" {ukol['computer']}" if ukol.get("computer") else "") + "."]
+    try:
+        comps = gateway("list", wait=20).get("computers") or []
+    except Failed:
+        comps = []
+    target = str(ukol.get("computer") or "").casefold()
+    mine = [c for c in comps if not target or target in (str(c.get("name")).casefold(),
+                                                         str(c.get("id")).casefold())]
+    online = [c for c in mine if c.get("online") and c.get("access") in ("cteni", "vse")]
+    if online:
+        out.append(f"Počítač {online[0].get('name')} je připojený — vyzvedne si ho hned.")
+    else:
+        out.append("Až se počítač připojí (appka Claude Code Hub otevřená, přístup pro Clauda "
+                   "ze serveru zapnutý), otevře se na něm tab s Claude Code a úkol dodělá. "
+                   "S plným přístupem se spustí sám, s přístupem jen ke čtení ho uživatel "
+                   "na počítači potvrdí.")
+    old = [c for c in mine if _older(c.get("version"), UKOLY_OD)]
+    if old:
+        out.append("Pozor: appka na počítači " + ", ".join(str(c.get("name")) for c in old)
+                   + f" je starší než {UKOLY_OD} a úkoly na později ještě neumí. Řekni "
+                   "uživateli, ať ji aktualizuje (Nastavení → Aktualizace).")
+    return "\n".join(out)
+
+
+def t_ukoly(a):
+    items = gateway("list", wait=20).get("ukoly") or []
+    if not items:
+        return "Žádné úkoly na později tu nejsou."
+    lines = []
+    for u in items:
+        line = f"- {u.get('id')} · „{u.get('title')}\" — {u.get('state_label')}"
+        if u.get("by"):
+            line += f" ({u['by']}, {_stamp(u.get('changed'))})"
+        line += f"; zadáno {_stamp(u.get('created'))}"
+        if u.get("computer"):
+            line += f"; pro počítač {u['computer']}"
+        if u.get("files"):
+            line += "; přílohy: " + ", ".join(u["files"])
+        lines.append(line)
+    return "Úkoly na později (nejnovější první):\n" + "\n".join(lines)
+
+
+def t_zrusit_ukol(a):
+    ukol = gateway("ukol-zrusit", {"id": a.get("id") or ""}, wait=20).get("ukol") or {}
+    return f"Úkol „{ukol.get('title')}\" je zrušený, na počítač už nepřijde."
+
+
 HANDLERS = {"pocitace": t_pocitace, "slozka": t_slozka, "precist": t_precist,
             "hledat": t_hledat, "zapsat": t_zapsat, "upravit": t_upravit,
-            "spustit": t_spustit, "stahnout": t_stahnout, "nahrat": t_nahrat}
+            "spustit": t_spustit, "stahnout": t_stahnout, "nahrat": t_nahrat,
+            "nechat_ukol": t_nechat_ukol, "ukoly_pro_pocitac": t_ukoly,
+            "zrusit_ukol": t_zrusit_ukol}
 
 
 # ── MCP po stdio ─────────────────────────────────────────────────────────────

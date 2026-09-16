@@ -1956,6 +1956,9 @@ function handle(msg) {
     restore(msg.list);
   } else if (msg.t === 'memory-saved') {
     memorySaved(msg);
+  } else if (msg.t === 'pocitac-ukol') {
+    // Úkol, který nechal Claude ze serveru (hub/pocitac.py): dorazil, nebo běží.
+    HubPocitac.ukol(hubIO(), msg);
   } else if (msg.t === 'error') {
     const tab = TABS.find(t => t.ref === msg.ref);
     if (tab) closeTab(tab);
@@ -2044,6 +2047,19 @@ function toast(text) {
 }
 
 /* ── průvodce a nastavení ─────────────────────────────────────────────────── */
+/* Přepnout na tab podle id — i na takový, který teprve dorazí po websocketu
+   (tab úkolu ze serveru otevírá hub, ne tohle okno). `idle`: jen když
+   člověk zrovna nemá otevřený jiný tab. */
+function focusTab(id, opts = {}, tries = 15) {
+  const tab = TABS.find(t => t.id === id);
+  if (!tab) {
+    if (tries > 0) setTimeout(() => focusTab(id, opts, tries - 1), 200);
+    return;
+  }
+  if (opts.idle && ACTIVE && ACTIVE !== tab) return;
+  activate(tab);
+}
+
 function hubIO() {
   return {
     get state() { return STATE; },
@@ -2069,6 +2085,7 @@ function hubIO() {
     // Nastavení agentů otevírá taby: instalaci i přihlášení je lepší vidět
     // běžet, než je pustit skrytě na pozadí.
     openTab: (opts) => openTab(opts),
+    focusTab,
   };
 }
 
@@ -2185,7 +2202,8 @@ async function applyReturn() {
   history.replaceState(null, '', location.pathname + '?' + params.toString());
   if (mode === 'local') await api('account', {action: 'local'}).catch(() => {});
   else if (mode === 'logout') await api('account', {action: 'logout'}).catch(() => {});
-  else if (mode !== 'pocitac' && mode !== 'predplatne') return '';   // jen volba, pak zpátky
+  // pocitac, predplatne = jen volba, pak zpátky; ukoly = zůstat u úkolu ze serveru
+  else if (!['pocitac', 'predplatne', 'ukoly'].includes(mode)) return '';
   return mode;
 }
 
@@ -2195,13 +2213,20 @@ async function applyReturn() {
  * Sem se tedy dostane, jen když to nevyšlo (server neodpovídá, přihlášení
  * vypršelo) — nebo když se okno ze serveru vrátilo. */
 async function startScreen(returned) {
-  const onLocal = () => {
+  const onLocal = (opts) => {
     // Napoprvé se hub nastavuje tady, ne v instalačce — ta běží jednou a v
     // terminálu, takže po ní nebylo kde nastavení změnit.
     if (!STATE.onboarded) HubOnboarding.open({...hubIO(), state: STATE});
+    // Úkoly, které tu nechal Claude ze serveru a čekají na spuštění.
+    else if (!STATE.config.gateway_user) HubPocitac.pending(hubIO(), opts);
   };
   if (STATE.config.gateway_user || !HubServer.isAppWindow()) return onLocal();
 
+  if (returned === 'ukoly') {
+    // Z prostoru kvůli úkolu ze serveru: potvrdit ho, nebo přejít na jeho tab.
+    // Serverový režim zůstává — do prostoru se vrací přes Nastavení → Účet.
+    return onLocal({focus: true});
+  }
   if (returned === 'local') {
     toast('Pracuješ na tomhle počítači. Na server se vrátíš v Nastavení → Účet.');
     return onLocal();

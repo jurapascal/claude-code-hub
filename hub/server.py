@@ -285,8 +285,8 @@ class Hub:
         return running
 
     def open(self, kind, path, title, cols, rows, agent="", model="", resume="", fork=False,
-             vault=""):
-        script, cwd, env = self._command_for(kind, path, agent, model, resume, fork, vault)
+             vault="", prompt=""):
+        script, cwd, env = self._command_for(kind, path, agent, model, resume, fork, vault, prompt)
         # Agent si model mohl doplnit sám (Ollama bez modelu nespustíš) —
         # ať se to dozví i tab, jinak by chip v bublině hlásil „výchozí".
         model = env.get("HUB_AGENT_MODEL") or model
@@ -300,7 +300,7 @@ class Hub:
         return session
 
     @staticmethod
-    def _command_for(kind, path, agent="", model="", resume="", fork=False, vault=""):
+    def _command_for(kind, path, agent="", model="", resume="", fork=False, vault="", prompt=""):
         """(příkaz, pracovní složka, prostředí navíc) pro daný druh tabu."""
         if kind == "shell":
             return core.cmd_shell(), (path or core.HOME), {}
@@ -320,7 +320,7 @@ class Hub:
                                          slash="/" + kind.split(":", 1)[1])
             return script, path, env
         script, env = core.cmd_agent(path, agent, model=model, resume=resume, fork=fork,
-                                     vault=vault)
+                                     vault=vault, prompt=prompt)
         return script, path, env
 
     def close(self, sid, autosave=True):
@@ -739,6 +739,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(predplatne.status())
         if name == "pocitac":
             # Claude ze serveru na tomhle počítači: stav mostu a volba přístupu.
+            action = payload.get("action") or ""
+            if action in ("ukol-spustit", "ukol-zahodit"):
+                # Úkol na později spouští člověk tady, ne prostor na serveru.
+                if core.on_gateway():
+                    return self._json({"error": "Úkoly ze serveru se spouštějí v appce na počítači."}, 400)
+                try:
+                    run = pocitac.start_ukol if action == "ukol-spustit" else pocitac.dismiss_ukol
+                    return self._json(run(payload.get("id")))
+                except ValueError as exc:
+                    return self._json({"error": str(exc)}, 400)
             if "access" in payload:
                 if core.on_gateway():
                     return self._json({"error": "Tohle se nastavuje v appce na počítači."}, 400)
@@ -1186,9 +1196,22 @@ def start():
     threading.Thread(target=watch_autosave, daemon=True).start()
     # Most na počítač: na počítači čeká na úkoly od Clauda ze serveru (když je
     # zapnutý), v prostoru na serveru napojí Claude Code jeho MCP server.
+    pocitac.OPEN_TAB = open_ukol_tab
+    pocitac.NOTIFY = HUB.broadcast
     pocitac.start()
     return httpd, f"http://127.0.0.1:{port}/?t={urllib.parse.quote(token)}"
 
+
+
+def open_ukol_tab(title, path, prompt):
+    """Tab s Claude Code pro úkol, který nechal Claude ze serveru (hub/pocitac.py).
+
+    Otevírá ho hub, ne okno — okno může být zrovna v prostoru na serveru, nebo
+    zavřené. Otevřená okna tab dostanou jako každý tab z jiného okna."""
+    session = HUB.open("project", path, title, 120, 32, agent="claude", prompt=prompt)
+    core.log(f"tab otevřen: úkol ze serveru {session.path or '~'} [claude]")
+    HUB.broadcast({"t": "tab-opened", **session.info()})
+    return session.info()
 
 
 def watch_autosave():

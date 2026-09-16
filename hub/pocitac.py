@@ -23,11 +23,19 @@ Pravidla, na kterých to stojí:
   s tokenem zařízení by si v prostoru sám potvrdil, co má potvrdit člověk.
   Příkazům (plný přístup) se to zakázat nedá — proto je to zvlášť volba.
 * Každý úkol jde do logu hubu a posledních pár je vidět v nastavení.
+
+**Úkoly na později.** Když tenhle počítač připojený nebyl, mohl mu Claude
+z prostoru nechat zadání a soubory (MCP nástroj `nechat_ukol`). Brána je
+nabídne v odpovědi na dotaz; hub si je stáhne do `~/.claude/hub-ukoly/<id>`
+a úkol dodělá Claude Code v novém tabu tady. S plným přístupem se tab otevře
+sám, s přístupem jen ke čtení čeká úkol na potvrzení v okně appky — prostor
+na serveru ho spustit neumí, stejně jako neumí změnit přístup.
 """
 import base64
 import collections
 import fnmatch
 import getpass
+import json
 import os
 import platform
 import re
@@ -64,12 +72,24 @@ OUT_LIMITS = {"stdout": (8 * 1024, 24 * 1024), "stderr": (4 * 1024, 12 * 1024)}
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".cache",
              ".npm", ".gradle", ".Trash", "$RECYCLE.BIN", "System Volume Information"}
 
+UKOLY_DIR = os.path.join(core.CLAUDE_DIR, "hub-ukoly")
+UKOL_ID = re.compile(r"[a-f0-9]{16}")
+UKOL_KEEP = 30 * 86400              # vyřízené úkoly se po měsíci uklidí
+# Stav úkolu tady → stav, který se hlásí bráně.
+UKOL_REPORT = {"ceka": "prevzato", "spusteno": "spusteno", "zahozeno": "zahozeno"}
+_WIN_RESERVED = re.compile(r"(?i)(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?")
+
+# Háčky, které nastaví server.py (tenhle modul o tabech ani oknech neví):
+OPEN_TAB = None      # (title, path, prompt) -> info otevřeného tabu
+NOTIFY = None        # (zpráva) -> pošle ji všem otevřeným oknům
+
 STATE = {"state": "off", "note": "", "since": 0.0}
 RECENT = collections.deque(maxlen=12)
 _WAKE = threading.Event()
 _SLOTS = threading.BoundedSemaphore(6)
 _LOCK = threading.Lock()
 _STARTED = False
+_TAKING = set()                     # úkoly na později, které se právě stahují
 
 
 class TaskError(Exception):
@@ -116,7 +136,7 @@ def status():
     return {"access": access_level(), "asked": bool(core.CONFIG.get("pocitac_asked")),
             "state": STATE["state"], "note": STATE["note"],
             "server": account._host(account._base()) if account._base() else "",
-            "name": _machine_name(), "recent": recent[:6]}
+            "name": _machine_name(), "recent": recent[:6], "ukoly": ukoly()}
 
 
 def _set(state, note=""):
@@ -241,6 +261,12 @@ def _loop():
             for task in data["tasks"]:
                 if isinstance(task, dict):
                     threading.Thread(target=_handle, args=(task, token), daemon=True).start()
+            for offer in data.get("ukoly") or []:
+                if isinstance(offer, dict):
+                    _take_later(str(offer.get("id") or ""), token)
+            if time.time() - _SYNC["at"] > 300:
+                _SYNC["at"] = time.time()
+                threading.Thread(target=_sync_reports, args=(token,), daemon=True).start()
             continue
         if kind == account.AUTH:
             _set("error", "Přihlášení k serveru vypršelo — přihlas se znovu (Nastavení → Účet).")
@@ -689,6 +715,220 @@ def op_run(args):
 OPS = {"info": op_info, "ls": op_ls, "read": op_read, "find": op_find,
        "download": op_download, "write": op_write, "edit": op_edit,
        "upload": op_upload, "run": op_run}
+
+
+# ── úkoly na později ─────────────────────────────────────────────────────────
+_SYNC = {"at": 0.0}
+
+
+def _take_later(tid, token):
+    if not UKOL_ID.fullmatch(tid):
+        return
+    with _LOCK:
+        if tid in _TAKING:
+            return
+        _TAKING.add(tid)
+    threading.Thread(target=_fetch_ukol, args=(tid, token), daemon=True).start()
+
+
+def _fetch_ukol(tid, token):
+    """Stáhne úkol, uloží ho, potvrdí bráně a spustí (plný přístup) nebo ohlásí."""
+    try:
+        meta = _read_ukol(tid)
+        if meta is None:
+            data, err, _kind = account._call(
+                "/gw/pocitac/ukol", token=token, timeout=180,
+                payload={"action": "take", "computer": device_id(), "id": tid})
+            if data is None or not data.get("ok"):
+                if not (data or {}).get("gone"):
+                    core.log(f"počítač: úkol ze serveru se nepodařilo stáhnout — "
+                             f"{(data or {}).get('error') or err}", "warn")
+                return
+            try:
+                meta = _store_ukol(data.get("ukol") or {})
+            except (OSError, ValueError) as exc:
+                core.log_error("počítač: úkol ze serveru se nepodařilo uložit", exc)
+                return
+            core.log(f"počítač: převzat úkol ze serveru „{meta['title']}\"")
+            if meta["state"] == "ceka" and access_level() == "vse" and OPEN_TAB:
+                try:
+                    start_ukol(tid, auto=True)
+                    return
+                except ValueError as exc:
+                    core.log(f"počítač: úkol „{meta['title']}\" se nespustil sám — {exc}", "warn")
+            _notify({"t": "pocitac-ukol", "id": tid, "title": meta["title"],
+                     "state": meta["state"]})
+        _report(meta, token)
+    finally:
+        with _LOCK:
+            _TAKING.discard(tid)
+
+
+def _file_name(raw):
+    """Jméno přílohy bez cesty a znaků, které Windows v názvu nesnese."""
+    name = str(raw or "").replace("\\", "/").rsplit("/", 1)[-1]
+    name = re.sub(r'[\x00-\x1f<>:"|?*]', "_", name).strip()[:120].rstrip(". ")
+    if name in ("", ".", ".."):
+        return ""
+    return "_" + name if _WIN_RESERVED.fullmatch(name) else name
+
+
+def _ukol_dir(tid):
+    return os.path.join(UKOLY_DIR, tid)
+
+
+def _read_ukol(tid):
+    try:
+        with open(os.path.join(_ukol_dir(tid), "ukol.json"), encoding="utf-8") as fh:
+            meta = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(meta, dict) or meta.get("id") != tid or meta.get("state") not in UKOL_REPORT:
+        return None
+    return meta
+
+
+def _write_ukol(meta):
+    _atomic_write(os.path.join(_ukol_dir(meta["id"]), "ukol.json"),
+                  json.dumps(meta, ensure_ascii=False, indent=1).encode("utf-8"))
+
+
+def _store_ukol(ukol):
+    tid = str(ukol.get("id") or "")
+    if not UKOL_ID.fullmatch(tid):
+        raise ValueError("úkol bez platného id")
+    title = " ".join(str(ukol.get("title") or "").split())[:120] or "Úkol ze serveru"
+    names = []
+    for item in ukol.get("files") or []:
+        name = _file_name(item.get("name")) if isinstance(item, dict) else ""
+        if not name or name.casefold() in (n.casefold() for n in names):
+            continue
+        data = base64.b64decode(str(item.get("data") or ""), validate=True)
+        _atomic_write(os.path.join(_ukol_dir(tid), "soubory", name), data)
+        names.append(name)
+    meta = {"id": tid, "title": title, "text": str(ukol.get("text") or ""),
+            "folder": str(ukol.get("folder") or "")[:500], "files": names,
+            "created": int(ukol.get("created") or 0), "received": int(time.time()),
+            "server": account._host(account._base()) if account._base() else "",
+            "state": "ceka", "changed": int(time.time()), "reported": ""}
+    _write_ukol(meta)
+    return meta
+
+
+def _report(meta, token=""):
+    """Řekne bráně, kde úkol je. Když se to nepovede, zkusí to smyčka později."""
+    want = UKOL_REPORT.get(meta.get("state"))
+    token = token or core.CONFIG.get("gw_token") or ""
+    if not want or meta.get("reported") == want or not token or not account._base():
+        return
+    data, _err, _kind = account._call(
+        "/gw/pocitac/ukol", token=token, timeout=20,
+        payload={"action": "state", "computer": device_id(), "id": meta["id"], "state": want})
+    if data is not None and (data.get("ok") or data.get("gone")):
+        with _LOCK:
+            fresh = _read_ukol(meta["id"])
+            if fresh and fresh["state"] == meta["state"]:
+                fresh["reported"] = want
+                _write_ukol(fresh)
+
+
+def _sync_reports(token):
+    for meta in ukoly():
+        if UKOL_REPORT[meta["state"]] != meta.get("reported"):
+            _report(meta, token)
+
+
+def _notify(message):
+    if NOTIFY:
+        try:
+            NOTIFY(message)
+        except Exception:
+            pass
+
+
+def ukoly():
+    """Úkoly ze serveru na tomhle počítači, nejnovější první. Staré uklidí."""
+    try:
+        names = os.listdir(UKOLY_DIR)
+    except OSError:
+        return []
+    out, now = [], time.time()
+    for name in names:
+        meta = _read_ukol(name) if UKOL_ID.fullmatch(name) else None
+        if meta is None:
+            continue
+        if meta["state"] != "ceka" and now - meta.get("changed", 0) > UKOL_KEEP:
+            shutil.rmtree(_ukol_dir(name), ignore_errors=True)
+            continue
+        out.append(meta)
+    return sorted(out, key=lambda m: -m.get("received", 0))
+
+
+def _set_state(tid, state, expect="ceka"):
+    with _LOCK:
+        meta = _read_ukol(str(tid or "")) if UKOL_ID.fullmatch(str(tid or "")) else None
+        if meta is None:
+            raise ValueError("Takový úkol tu není.")
+        if meta["state"] != expect:
+            raise ValueError("Úkol už je spuštěný nebo zahozený.")
+        meta.update(state=state, changed=int(time.time()))
+        _write_ukol(meta)
+    return meta
+
+
+def start_ukol(tid, auto=False):
+    """Otevře tab s Claude Code, který úkol dodělá."""
+    if not OPEN_TAB:
+        raise ValueError("Úkol jde spustit jen v appce na počítači.")
+    meta = _set_state(tid, "spusteno")
+    note = ""
+    path = _path(meta["folder"]) if meta["folder"] else core.HOME
+    if not os.path.isdir(path):
+        note = (f"Složka {meta['folder']} na tomhle počítači není, tab je proto otevřený "
+                f"v domovské složce {core.HOME}.")
+        path = core.HOME
+    try:
+        tab = OPEN_TAB(meta["title"][:40], path, ukol_prompt(meta, note))
+    except Exception as exc:
+        _set_state(tid, "ceka", expect="spusteno")
+        raise ValueError(f"Tab se nepodařilo otevřít: {exc}") from None
+    with _LOCK:
+        fresh = _read_ukol(meta["id"])
+        if fresh:
+            fresh["tab"] = tab.get("id")         # okno se na něj po návratu přepne
+            _write_ukol(fresh)
+    core.log(f"počítač: úkol ze serveru „{meta['title']}\" spuštěn v tabu"
+             + (" (sám, plný přístup)" if auto else ""))
+    _notify({"t": "pocitac-ukol", "id": meta["id"], "title": meta["title"],
+             "state": "spusteno", "tab": tab.get("id"), "auto": auto})
+    threading.Thread(target=_report, args=(meta,), daemon=True).start()
+    return {"ok": True, "tab": tab}
+
+
+def dismiss_ukol(tid):
+    meta = _set_state(tid, "zahozeno")
+    shutil.rmtree(os.path.join(_ukol_dir(meta["id"]), "soubory"), ignore_errors=True)
+    core.log(f"počítač: úkol ze serveru „{meta['title']}\" zahozen")
+    threading.Thread(target=_report, args=(meta,), daemon=True).start()
+    return {"ok": True}
+
+
+def ukol_prompt(meta, note=""):
+    """Úvodní zpráva pro Clauda v tabu — tuhle konverzaci ze serveru nezná."""
+    when = time.strftime("%d. %m. %Y %H:%M", time.localtime(meta.get("created") or time.time()))
+    lines = [f"Claude v prostoru na serveru {meta.get('server') or ''} ti nechal úkol pro "
+             f"tenhle počítač (zadáno {when}). Konverzaci ze serveru nevidíš — řiď se "
+             "zadáním níž.", "", f"# {meta['title']}", "", meta["text"].strip()]
+    if meta["files"]:
+        lines += ["", "Přílohy ze serveru jsou ve složce "
+                  + os.path.join(_ukol_dir(meta["id"]), "soubory") + ":"]
+        lines += [f"- {name}" for name in meta["files"]]
+    if note:
+        lines += ["", note]
+    lines += ["", "Než začneš, v pár větách shrň, co uděláš. Když zadání nesedí na to, co "
+              "tady najdeš, nebo by šlo o mazání či přepsání něčeho, co zadání výslovně "
+              "nezmiňuje, zeptej se uživatele."]
+    return "\n".join(lines)
 
 
 # ── v prostoru na serveru ────────────────────────────────────────────────────

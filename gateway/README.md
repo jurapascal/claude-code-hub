@@ -226,8 +226,17 @@ bráně k tomu patří `gateway/pocitac.py` a tři adresy (tabulka níž):
 - **Brána obsah jen přepravuje.** Fronty a čekání drží v paměti; co smí,
   rozhoduje počítač u každého úkolu (vypnuto / jen čtení / plný přístup).
   Brána přístup zná jen kvůli srozumitelné odpovědi dřív, než úkol odejde.
+- **Úkoly na později** (`features: ["ukoly"]`). Když počítač připojený není,
+  nechá mu Claude z prostoru zadání a přílohy (`volani`, `op: ukol-novy`). Brána
+  je drží v `HUB_GW_POCITAC_UKOLY_DIR` (výchozí `<gateway>/pocitac-ukoly/<účet>/<id>`,
+  0700/0600) a počítači je nabídne v odpovědi na `poll` (`ukoly`); nový úkol
+  čekající dotaz probudí hned. Počítač si úkol stáhne (`/gw/pocitac/ukol`,
+  `take`) a hlásí stav (`prevzato` → `spusteno` / `zahozeno`). Přílohy se smažou
+  po převzetí, nevyzvednutý úkol po 30 dnech, záznam o vyřízeném po 14.
 - **Limity:** soubor do 15 MB (nginx má `client_max_body_size 25m`, base64
   přidá třetinu), příkaz nejvýš 10 minut, 32 čekajících úkolů na počítač.
+  Úkol na později: zadání 8 000 znaků, přílohy 15 MB a 20 souborů, 20
+  nevyzvednutých úkolů na účet.
 - V `docker` izolaci most nefunguje — kontejner na loopback brány nedosáhne.
 
 ## Běžící prostory
@@ -285,8 +294,9 @@ proxuje do instance hubu toho uživatele.
 | `GET /logout` | zneplatní token z cookie | cookie |
 | `POST /gw/pocitac/poll` | počítač čeká na úkoly od Clauda z prostoru (až 25 s), `bye` = odpojit | `Authorization: Bearer` |
 | `POST /gw/pocitac/vysledek` | počítač vrací výsledek úkolu | `Authorization: Bearer` |
-| `POST /gw/pocitac/volani` | MCP server v prostoru posílá úkol počítači; jen přímo na loopback, přes nginx 404 | `X-Hub-Pocitac` (žeton prostoru) |
-| `GET /gw/pocitac` | připojené počítače — štítek v hlavičce prostoru | cookie |
+| `POST /gw/pocitac/volani` | MCP server v prostoru posílá úkol počítači, nechává a ruší úkoly na později (`ukol-novy`, `ukol-zrusit`); jen přímo na loopback, přes nginx 404 | `X-Hub-Pocitac` (žeton prostoru) |
+| `POST /gw/pocitac/ukol` | počítač si stáhne úkol na později (`take`) nebo hlásí jeho stav (`state`) | `Authorization: Bearer` |
+| `GET /gw/pocitac` | připojené počítače a úkoly na později — štítek a karta v prostoru | cookie |
 | `GET /gw/claude` | na čem Claude v prostoru jede (předplatné / klíč API / přihlášení / nic) a jestli čeká na restart | `Authorization: Bearer` nebo cookie |
 | `POST /gw/claude` | připojit (`token`) nebo odpojit (`remove`) vlastní předplatné | `Authorization: Bearer`, z prohlížeče cookie + `X-Hub-Account` |
 

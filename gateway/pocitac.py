@@ -15,9 +15,19 @@ zařadí počítači, počká na odpověď a vrátí ji. Do obsahu nesahá.
 Co smí, rozhoduje počítač: přístup (jen čtení / plný) se zapíná v appce na něm
 a ověřuje ho u každého úkolu znovu. Brána ho zná jen proto, aby Claude dostal
 srozumitelnou odpověď dřív, než úkol vůbec odejde.
+
+Úkoly na později: když počítač připojený není, nechá mu Claude z prostoru
+zadání (a soubory). Brána ho drží na disku, a jakmile se počítač ozve, nabídne
+mu ho v odpovědi na dotaz (`ukoly`). Počítač si ho stáhne (`/gw/pocitac/ukol`,
+take), uloží, potvrdí (prevzato) a dodělá ho Claude Code v tabu na počítači.
+Stav se hlásí zpátky, ať Claude v prostoru i člověk vidí, kde úkol je.
 """
+import base64
+import json
+import os
 import re
 import secrets
+import shutil
 import threading
 import time
 
@@ -34,6 +44,19 @@ BATCH = 8               # kolik úkolů si počítač odnese jedním dotazem
 RUN_MAX = 600
 
 _ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
+
+# Úkoly na později. Zadání dostane Claude na počítači jako úvodní zprávu tabu —
+# příkazová řádka na Windows víc než pár desítek tisíc znaků neunese.
+UKOL_TEXT = 8000
+UKOL_TITLE = 120
+UKOL_FILES = 20
+UKOL_BYTES = 15 * 1024 * 1024       # přílohy dohromady, jako jeden přenos mostem
+UKOL_WAITING = 20                   # nevyzvednutých úkolů na účet
+UKOL_KEEP = 30 * 86400              # nevyzvednutý úkol po měsíci propadne
+UKOL_HISTORY = 14 * 86400           # vyřízený se ukazuje ještě dva týdny
+UKOL_STATES = {"ceka": "čeká na počítač", "prevzato": "na počítači čeká na spuštění",
+               "spusteno": "spuštěný na počítači", "zahozeno": "zahozený na počítači"}
+_UKOL_ID = re.compile(r"[a-f0-9]{16}")
 
 
 def _text(value, limit=200):
@@ -59,6 +82,47 @@ def timeout_for(op, args):
     return 150
 
 
+def file_name(raw):
+    """Jméno přílohy bez cesty a znaků, které Windows v názvu nesnese. "" = neplatné."""
+    name = str(raw or "").replace("\\", "/").rsplit("/", 1)[-1]
+    name = re.sub(r'[\x00-\x1f<>:"|?*]', "_", name).strip()[:120].rstrip(". ")
+    return "" if name in ("", ".", "..") else name
+
+
+def decode_files(raw):
+    """Přílohy úkolu [{"name", "data" (base64)}] → ([(jméno, bajty)], chyba)."""
+    if raw in (None, ""):
+        return [], ""
+    if not isinstance(raw, list):
+        return None, "Přílohy musí být seznam."
+    if len(raw) > UKOL_FILES:
+        return None, f"K úkolu jde přiložit nejvýš {UKOL_FILES} souborů — zabal je do archivu."
+    out, seen, total = [], set(), 0
+    for item in raw:
+        if not isinstance(item, dict):
+            return None, "Nečitelná příloha."
+        name = file_name(item.get("name"))
+        if not name:
+            return None, "Příloha nemá platné jméno."
+        encoded = str(item.get("data") or "")
+        total += len(encoded) * 3 // 4
+        if total > UKOL_BYTES + 3:
+            return None, (f"Přílohy mají dohromady přes {UKOL_BYTES // (1024 * 1024)} MB — "
+                          "zabal je nebo pošli jen to podstatné.")
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except ValueError:
+            return None, f"Příloha {name} je poškozená."
+        stem, ext = os.path.splitext(name)
+        n = 2
+        while name.casefold() in seen:
+            name = f"{stem} ({n}){ext}"
+            n += 1
+        seen.add(name.casefold())
+        out.append((name, data))
+    return out, ""
+
+
 class Computer:
     """Jeden počítač jednoho účtu, jak ho brána zná z jeho dotazů."""
 
@@ -76,6 +140,7 @@ class Computer:
         self.last_seen = 0.0
         self.queue = []
         self.last = None            # poslední úkol: {"op", "summary", "at"}
+        self.offered = set()        # úkoly na později, o kterých už ví
 
     def online(self, now):
         return self.polling > 0 or now - self.last_seen < ONLINE_GRACE
@@ -94,10 +159,12 @@ class Computer:
 class Broker:
     """Fronty úkolů pro počítače a čekání na jejich výsledky."""
 
-    def __init__(self):
+    def __init__(self, ukoly_dir=""):
         self._cond = threading.Condition()
         self.computers = {}           # (uid, id počítače) -> Computer
         self._waiting = {}            # id úkolu -> {"event", "result", "uid", "cid"}
+        self.ukoly_dir = ukoly_dir    # prázdné = úkoly na později vypnuté
+        self._ukoly = {}              # uid -> {id úkolu -> záznam}, načtené z disku
 
     # ── strana počítače ──────────────────────────────────────────────────────
     def poll(self, uid, info, wait=POLL_WAIT):
@@ -123,7 +190,8 @@ class Broker:
             comp.polling += 1
             try:
                 deadline = time.time() + max(0.0, min(float(wait), POLL_WAIT))
-                while not comp.queue:
+                # Nový úkol na později vzbudí dotaz hned, ne až po POLL_WAIT.
+                while not comp.queue and not (self._offer_ids(comp) - comp.offered):
                     left = deadline - time.time()
                     if left <= 0:
                         break
@@ -215,7 +283,205 @@ class Broker:
         return {"ok": False, "computer": comp.name,
                 "error": _text(result.get("error"), 2000) or "Na počítači se to nepovedlo."}
 
+    # ── úkoly na později ─────────────────────────────────────────────────────
+    def ukol_new(self, uid, args):
+        """Claude z prostoru nechává úkol počítači. {"ok", "ukol"} nebo {"ok": False, "error"}."""
+        if not self.ukoly_dir:
+            return {"ok": False, "error": "Tahle brána úkoly na později neumí."}
+        args = args if isinstance(args, dict) else {}
+        title = " ".join(str(args.get("title") or "").split())[:UKOL_TITLE]
+        text = str(args.get("text") or "").strip()
+        if not title or not text:
+            return {"ok": False, "error": "Úkol potřebuje název i zadání."}
+        if len(text) > UKOL_TEXT:
+            return {"ok": False, "error": (
+                f"Zadání má {len(text)} znaků, vejde se nejvýš {UKOL_TEXT}. Zkrať ho, "
+                "nebo podrobnosti ulož do souboru a přilož ho.")}
+        files, error = decode_files(args.get("files"))
+        if error:
+            return {"ok": False, "error": error}
+        now = time.time()
+        with self._cond:
+            waiting = sum(1 for r in self._load(uid, now).values() if r["state"] == "ceka")
+        if waiting >= UKOL_WAITING:
+            return {"ok": False, "error": (
+                f"Na počítač už čeká {waiting} úkolů. Než přidáš další, počkej, až si je "
+                "vyzvedne, nebo nepotřebné zruš (zrusit_ukol).")}
+        record = {"id": secrets.token_hex(8), "title": title, "text": text,
+                  "folder": _text(args.get("folder"), 500),
+                  "computer": _text(args.get("computer"), 80),
+                  "files": [{"name": name, "size": len(data)} for name, data in files],
+                  "created": int(now), "state": "ceka", "by": "", "by_id": "", "changed": 0}
+        base = os.path.join(self._user_dir(uid), record["id"])
+        try:
+            # Přílohy se píšou mimo zámek — patnáct megabajtů nesmí zdržet
+            # dotazy ostatních počítačů.
+            os.makedirs(os.path.join(base, "soubory"), mode=0o700, exist_ok=True)
+            for name, data in files:
+                fd = os.open(os.path.join(base, "soubory", name),
+                             os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(data)
+            self._save(uid, record)
+        except OSError as exc:
+            shutil.rmtree(base, ignore_errors=True)
+            return {"ok": False, "error": f"Úkol se na bráně nepodařilo uložit: {exc}"}
+        with self._cond:
+            self._load(uid, now)[record["id"]] = record
+            self._cond.notify_all()
+        return {"ok": True, "ukol": self._public(record)}
+
+    def ukoly(self, uid):
+        """Úkoly na později tohohle účtu, nejnovější první."""
+        if not self.ukoly_dir:
+            return []
+        with self._cond:
+            items = list(self._load(uid, time.time()).values())
+        return [self._public(r) for r in sorted(items, key=lambda r: -r["created"])]
+
+    def ukol_cancel(self, uid, tid):
+        with self._cond:
+            items = self._load(uid, time.time()) if self.ukoly_dir else {}
+            record = items.get(str(tid or ""))
+            if not record:
+                return {"ok": False, "error": "Takový úkol tu není."}
+            if record["state"] != "ceka":
+                return {"ok": False, "error": (
+                    f"Úkol už si převzal počítač {record['by'] or ''} — tam ho jde zahodit "
+                    "(Nastavení → Účet → Úkoly ze serveru).")}
+            items.pop(record["id"], None)
+        shutil.rmtree(os.path.join(self._user_dir(uid), record["id"]), ignore_errors=True)
+        return {"ok": True, "ukol": self._public(record)}
+
+    def ukoly_offer(self, uid, cid):
+        """Úkoly, které si tenhle počítač může vzít — patří do odpovědi na dotaz."""
+        with self._cond:
+            comp = self.computers.get((uid, str(cid or "")))
+            if not comp:
+                return []
+            ids = self._offer_ids(comp)
+            comp.offered = ids
+            items = self._ukoly.get(uid) or {}
+            offer = [items[i] for i in ids if i in items]
+        return [{"id": r["id"], "title": r["title"], "created": r["created"],
+                 "size": sum(f["size"] for f in r["files"])}
+                for r in sorted(offer, key=lambda r: r["created"])]
+
+    def ukol_take(self, uid, cid, tid):
+        """Celý úkol i s přílohami pro počítač. Stav se nemění — to až `ukol_mark`."""
+        with self._cond:
+            comp = self.computers.get((uid, str(cid or "")))
+            record = (self._load(uid, time.time()) if self.ukoly_dir else {}).get(str(tid or ""))
+            if not comp or not comp.access:
+                return {"ok": False, "error": "Počítač není připojený s povoleným přístupem."}
+            if not record or record["state"] != "ceka" or not self._for(record, comp):
+                return {"ok": False, "gone": True,
+                        "error": "Úkol tu už není — vyřízený, zrušený, nebo pro jiný počítač."}
+            record = dict(record)
+        folder = os.path.join(self._user_dir(uid), record["id"], "soubory")
+        files = []
+        try:
+            for f in record["files"]:
+                with open(os.path.join(folder, f["name"]), "rb") as fh:
+                    files.append({"name": f["name"],
+                                  "data": base64.b64encode(fh.read()).decode("ascii")})
+        except OSError:
+            return {"ok": False, "gone": True, "error": "Úkol se mezitím zrušil."}
+        return {"ok": True, "ukol": dict(self._public(record), text=record["text"], files=files)}
+
+    def ukol_mark(self, uid, cid, tid, state):
+        """Počítač hlásí, kde úkol je: prevzato → spusteno / zahozeno."""
+        if state not in ("prevzato", "spusteno", "zahozeno"):
+            return {"ok": False, "error": "Neznámý stav úkolu."}
+        cid = str(cid or "")
+        now = time.time()
+        with self._cond:
+            comp = self.computers.get((uid, cid))
+            record = (self._load(uid, now) if self.ukoly_dir else {}).get(str(tid or ""))
+            if not record:
+                return {"ok": False, "gone": True, "error": "Takový úkol tu není."}
+            if record["state"] == "ceka":
+                if not comp or not self._for(record, comp):
+                    return {"ok": False, "error": "Úkol je pro jiný počítač."}
+            elif record["by_id"] != cid:
+                return {"ok": False, "error": "Úkol převzal jiný počítač."}
+            elif record["state"] in ("spusteno", "zahozeno") or state == "prevzato":
+                return {"ok": True, "ukol": self._public(record)}   # už je dál
+            if comp:
+                record["by"] = comp.name
+            record.update(state=state, by_id=cid, changed=int(now))
+            try:
+                self._save(uid, record)
+            except OSError:
+                pass                     # stav v paměti platí, zapíše se příště
+            public = self._public(record)
+        # Přílohy už má počítač u sebe — na bráně nemají co dělat.
+        shutil.rmtree(os.path.join(self._user_dir(uid), record["id"], "soubory"),
+                      ignore_errors=True)
+        return {"ok": True, "ukol": public}
+
     # ── pomůcky (pod zámkem) ─────────────────────────────────────────────────
+    def _user_dir(self, uid):
+        return os.path.join(self.ukoly_dir, str(int(uid)))
+
+    def _save(self, uid, record):
+        path = os.path.join(self._user_dir(uid), record["id"], "ukol.json")
+        tmp = f"{path}.{secrets.token_hex(4)}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(record, fh, ensure_ascii=False)
+        os.replace(tmp, path)
+
+    def _load(self, uid, now):
+        """Úkoly účtu (poprvé z disku) bez těch, které propadly."""
+        items = self._ukoly.get(uid)
+        if items is None:
+            items = self._ukoly[uid] = {}
+            root = self._user_dir(uid)
+            try:
+                names = os.listdir(root)
+            except OSError:
+                names = []
+            for name in names:
+                try:
+                    with open(os.path.join(root, name, "ukol.json"), encoding="utf-8") as fh:
+                        record = json.load(fh)
+                except (OSError, ValueError):
+                    continue
+                if isinstance(record, dict) and record.get("id") == name \
+                        and _UKOL_ID.fullmatch(name) and record.get("state") in UKOL_STATES:
+                    items[name] = record
+        for tid, record in list(items.items()):
+            if record["state"] == "ceka":
+                expired = now - record["created"] > UKOL_KEEP
+            else:
+                expired = now - record["changed"] > UKOL_HISTORY
+            if expired:
+                items.pop(tid)
+                shutil.rmtree(os.path.join(self._user_dir(uid), tid), ignore_errors=True)
+        return items
+
+    def _offer_ids(self, comp):
+        if not self.ukoly_dir or not comp.access:
+            return set()
+        return {tid for tid, r in self._load(comp.uid, time.time()).items()
+                if r["state"] == "ceka" and self._for(r, comp)}
+
+    @staticmethod
+    def _for(record, comp):
+        """Je úkol pro tenhle počítač? Bez určení pro první, který se ozve."""
+        target = record["computer"].casefold()
+        return not target or target in (comp.name.casefold(), comp.id.casefold())
+
+    @staticmethod
+    def _public(record):
+        return {"id": record["id"], "title": record["title"], "folder": record["folder"],
+                "computer": record["computer"],
+                "files": [f["name"] for f in record["files"]],
+                "created": record["created"], "state": record["state"],
+                "state_label": UKOL_STATES.get(record["state"], record["state"]),
+                "by": record["by"], "changed": record["changed"]}
+
     def _pick(self, uid, target, now):
         mine = [c for (u, _cid), c in self.computers.items()
                 if u == uid and c.online(now) and c.access in ACCESS]
@@ -230,7 +496,9 @@ class Broker:
             return None, ("Žádný počítač uživatele teď není připojený. Musí mít na "
                           "počítači otevřenou appku Claude Code Hub přihlášenou k "
                           "tomuhle serveru a v ní zapnutý přístup: Nastavení → Účet → "
-                          "Claude ze serveru na tomhle počítači.")
+                          "Claude ze serveru na tomhle počítači. Když to může počkat, "
+                          "nech počítači úkol (nechat_ukol) — dodělá ho Claude na "
+                          "počítači, jakmile se připojí.")
         if len(mine) > 1:
             names = ", ".join(c.name for c in mine)
             return None, (f"Připojených počítačů je víc ({names}). Řekni, na kterém "

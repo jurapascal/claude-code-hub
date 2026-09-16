@@ -62,6 +62,12 @@ API_KEYS_DIR = os.environ.get("HUB_GW_API_KEYS_DIR",
 CLAUDE_TOKENS_DIR = os.environ.get("HUB_GW_CLAUDE_TOKENS_DIR",
                                    os.path.join(GATEWAY_DIR, "claude-predplatne"))
 
+# Úkoly na později pro počítače uživatelů (gateway/pocitac.py): zadání a přílohy,
+# které Claude z prostoru nechal počítači, dokud se nepřipojí. Složka podle čísla
+# účtu, 0700; přílohy se smažou, jakmile si je počítač převezme.
+POCITAC_UKOLY_DIR = os.environ.get("HUB_GW_POCITAC_UKOLY_DIR",
+                                   os.path.join(GATEWAY_DIR, "pocitac-ukoly"))
+
 # Klient OAuth pro napojení na Google (claude-hub-admin google set). Zakládá se
 # jednou pro všechny; do prostorů přijde jako GOOGLE_OAUTH_CLIENT_ID/SECRET.
 GOOGLE_CLIENT_FILE = os.environ.get("HUB_GW_GOOGLE_CLIENT_FILE",
