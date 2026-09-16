@@ -1213,6 +1213,18 @@ function renderDoctor() {
       (def.install ? '<br><code>' + def.install + '</code>' : '') +
       '<br>K dispozici je: ' + ready.map((a) => a.label).join(', ') + '.');
   }
+  // Složky projektů, do kterých hub nesměl — na macOS bez povolení k Ploše.
+  const blocked = (d.blocked_dirs || []).map((p) => p.replace(STATE.home, '~'));
+  if (blocked.length) {
+    const where = blocked.map((p) => '<code>' + escapeHtml(p) + '</code>').join(', ');
+    problems.push(d.platform === 'mac'
+      ? 'macOS nepustil hub do složky ' + where + ' — projekty z ní v panelu chybí.<br>' +
+        'Povol to: <b>Nastavení systému → Soukromí a zabezpečení → Soubory a složky</b> → ' +
+        'u aplikace, ze které hub spouštíš (obvykle <b>Terminál</b>), zapni <b>Plocha</b> ' +
+        '(a Dokumenty, když tam projekty máš). Pak hub zavři a spusť znovu.'
+      : 'Do složky ' + where + ' hub nesmí — projekty z ní v panelu chybí. ' +
+        'Zkontroluj práva ke složce.');
+  }
   warn.hidden = !problems.length;
   warn.innerHTML = problems.join('<hr style="border:none;border-top:1px solid var(--border);margin:8px 0">');
 }

@@ -485,6 +485,17 @@ class Handler(BaseHTTPRequestHandler):
             core.log_error(f"/api/{name} selhalo", exc)
             return self._json({"error": f"Chyba serveru: {exc}"}, 500)
 
+    @staticmethod
+    def _part(what, fn, default):
+        """Kus /api/state, který se nepovedl, nesmí shodit celé okno — jinak se
+        hub vůbec nenačte a nedá se ani přejít na server. Zaloguje se a místo
+        něj přijde prázdno."""
+        try:
+            return fn()
+        except Exception as exc:
+            core.log_error(f"/api/state: {what} selhalo", exc)
+            return default
+
     def _api_inner(self, name, query, payload=None):
         payload = payload or {}
         if name == "chats":
@@ -513,12 +524,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(core.tab_model(session.id, session.path or core.HOME,
                                              session.started))
         if name == "state":
+            part = self._part
             counts, recent = core.get_memory()
+            projects = part("projekty", core.get_projects, [])
             return self._json({
-                "projects": core.get_projects(),
+                "projects": projects,
                 "memory": {"counts": counts, "recent": recent,
                            "enabled": core.HAS_BRAIN},
-                "skills": core.installed_skills(),
+                "skills": part("skilly", core.installed_skills, []),
                 # Bez verzí (ty stojí spuštění každého CLI) — na nabídku
                 # „otevřít v…" a odznak na tabu stačí jméno, barva a PATH.
                 "agents": core.agents.detect(core._agents_extra(),
@@ -529,8 +542,8 @@ class Handler(BaseHTTPRequestHandler):
                 "doctor": core.doctor(),
                 "user": os.environ.get("USER") or os.environ.get("USERNAME") or "",
                 "obsidian": core.has_obsidian(),
-                "firma": core.firma_state(),
-                "shared": core.shared_state(),
+                "firma": part("firemní Obsidian", core.firma_state, {"vault": "", "name": ""}),
+                "shared": part("sdílené Obsidiany", core.shared_state, []),
                 "onboarded": bool(core.CONFIG.get("onboarded")),
                 "config": {"project_dirs": core.CONFIG.get("project_dirs") or [],
                            "brain_dir": core.CONFIG.get("brain_dir") or "",
@@ -552,16 +565,17 @@ class Handler(BaseHTTPRequestHandler):
                            # Vyplněné jen na instanci běžící na bráně — podle
                            # toho nastavení pozná, že je na serveru.
                            "gateway_user": core.CONFIG.get("gateway_user") or None},
-                "cloud": core.cloud_folders(),
-                "vaults": core.obsidian_vaults(),
+                "cloud": part("cloudové složky", core.cloud_folders, []),
+                "vaults": part("vaulty", core.obsidian_vaults, []),
                 "memory_link": core.memory_link_path(),
-                "suggest_dirs": core.suggest_project_dirs(),
+                "suggest_dirs": part("návrhy složek", core.suggest_project_dirs, []),
                 "home": core.HOME,
                 "version": core.version_info(),
-                "vault_git": dict(zip(("is_repo", "remote"), core.vault_git_state())),
+                "vault_git": dict(zip(("is_repo", "remote"),
+                                      part("git trezoru", core.vault_git_state, (False, "")))),
                 "vault_autosync": bool(core.CONFIG.get("vault_autosync")),
                 "memory_autosave": core.autosave_enabled(),
-                "autosave_recent": core.autosave_recent(),
+                "autosave_recent": part("poslední uložení", core.autosave_recent, []),
             })
         # Náhled trezoru Obsidian (vault.js) — jen ke čtení, jen uvnitř trezoru.
         # `vault=firma` je společný firemní Obsidian (na bráně), jinak osobní.

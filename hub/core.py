@@ -426,12 +426,25 @@ LIGHT = {
 
 
 # ── Data gathering ───────────────────────────────────────────────────────────
+# Složky projektů, do kterých hub při posledním skenu nesměl (macOS bez
+# povolení k Ploše či Dokumentům). Ukážou se na úvodní obrazovce (doctor).
+BLOCKED_DIRS = []
+
+
 def get_projects():
-    projects = []
+    projects, blocked = [], []
     for base in PROJECT_DIRS:
         if not os.path.isdir(base):
             continue
-        for d in sorted(os.listdir(base)):
+        try:
+            names = sorted(os.listdir(base))
+        except OSError as exc:
+            # Jedna nečitelná složka nesmí shodit celé okno — na macOS takhle
+            # dopadne Plocha, dokud aplikaci nepovolíš přístup k souborům.
+            log(f"projekty: do {base} nejde nahlédnout — {exc}", "warn")
+            blocked.append(base)
+            continue
+        for d in names:
             path = os.path.join(base, d)
             if not os.path.isdir(path):
                 continue
@@ -518,6 +531,7 @@ def get_projects():
         proj["archived"] = bool(info.get("archived"))
     projects.sort(key=lambda p: (p["archived"], (p["group"] or "").lower(),
                                  (p["label"] or p["name"]).lower()))
+    BLOCKED_DIRS[:] = blocked
     return projects
 
 
@@ -1303,6 +1317,13 @@ OBSIDIAN_CONFIGS = [
 ]
 
 
+def _count_notes(folder):
+    try:
+        return len([n for n in os.listdir(folder) if n.endswith(".md")])
+    except OSError:
+        return 0          # není, nebo do ní macOS nepustí
+
+
 def obsidian_vaults():
     """Vaulty, o kterých na tomhle stroji víme. Nejdřív ty od Obsidianu."""
     found, seen = [], set()
@@ -1318,9 +1339,7 @@ def obsidian_vaults():
             "source": source,
             # Paměť hubu žije v podsložce memory/ — když tam je, je vault
             # rovnou použitelný; když ne, dá se založit.
-            "notes": len([n for n in os.listdir(os.path.join(path, "memory"))
-                          if n.endswith(".md")])
-                     if os.path.isdir(os.path.join(path, "memory")) else 0,
+            "notes": _count_notes(os.path.join(path, "memory")),
             "has_memory": os.path.isdir(os.path.join(path, "memory")),
         })
 
@@ -3163,6 +3182,7 @@ def doctor():
         "brain": BRAIN if HAS_BRAIN else "",
         "clipboard": (_clipboard_tools("clipboard")[1] or [""])[0],
         "project_dirs": PROJECT_DIRS,
+        "blocked_dirs": list(BLOCKED_DIRS),
     }
 
 
