@@ -93,7 +93,9 @@ dělá jednu aplikaci:
   s posledními poznámkami (learnings/errors/wins); na serveru k tomu **Firemní**
   a **Sdílené**. Poznámky jde v hubu i psát: editor se živým náhledem jako
   v Obsidianu ([[odkazy]] s našeptáváním, ==zvýraznění==, #štítky, úkoly) a graf
-  poznámek s barvami a nastavením jako v originále. Osobní se ukládá samo, do
+  poznámek s barvami a nastavením jako v originále. Vložené obrázky jsou vidět
+  i při psaní. Osobní se ukládá samo a jde v něm poznámku **přejmenovat**
+  (odkazy se opraví samy) i **smazat** (do koše `.trash` v trezoru); do
   firemního a sdílených se změna potvrzuje kartou. Bez vaultu se sekce
   vůbec nezobrazí.
 

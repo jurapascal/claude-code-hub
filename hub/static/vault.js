@@ -445,6 +445,9 @@
     dirty = false;
     clearTimeout(saveTimer);
     q('.vault-modes').hidden = !canEdit();
+    // Přejmenovat a smazat umí hub jen v osobním trezoru — do společných
+    // zapisuje brána až po potvrzení karty.
+    q('.vault-rename').hidden = q('.vault-del').hidden = !canEdit() || proposes();
     setState(mode === 'edit' ? (proposes() ? 'úpravy se potvrzují kartou' : 'ukládá se samo') : '');
     if (mode === 'edit' && editor) editor.setDoc(lastText);
     if (graph) graph.setFocus(current);
@@ -518,6 +521,7 @@
       doc: lastText,
       readOnly: false,
       notes: () => notes.map((n) => n.path),
+      image: (name) => resolveImage(name),
       onChange: () => {
         dirty = true;
         if (proposes()) setState('neuložené změny', 'warn');
@@ -530,6 +534,9 @@
         else io.toast('Poznámka „' + target + '" v trezoru není.');
       },
     });
+    // Editor vzniká ve chvíli, kdy je jeho místo teprve odkryté — bez přeměření
+    // by první náhled počítal s nulovou výškou a nevykreslil nic.
+    requestAnimationFrame(() => editor && editor.view.requestMeasure());
     setState(proposes() ? 'úpravy se potvrzují kartou' : 'ukládá se samo');
   }
 
@@ -602,6 +609,60 @@
     setMode('edit');
     if (editor) editor.setDoc(lastText);
     if (!proposes()) saveNow();
+  }
+
+  async function renameNote() {
+    if (!current || proposes() || !canEdit()) return;
+    const was = current;
+    const name = (prompt('Nové jméno poznámky (může být i se složkou):',
+                         was.replace(/\.md$/i, '')) || '').trim();
+    if (!name || name === was.replace(/\.md$/i, '')) return;
+    if (dirty) await saveNow();
+    let res;
+    try {
+      res = await io.api('vault-rename', {path: was, to: name});
+    } catch (err) {
+      return io.toast('Přejmenovat se nepodařilo: ' + err.message);
+    }
+    if (!box) return;
+    if (!res.ok) return io.toast(res.error || 'Přejmenovat se nepodařilo.');
+    notes = notes.filter((n) => n.path !== was).concat([{path: res.path, mtime: noteMtime}]);
+    resolveNote = indexOf(notes.map((n) => n.path), true);
+    back = back.filter((p) => p !== was);
+    current = res.path;
+    renderList();
+    await load(res.path, {remember: false});
+    io.toast(res.relinked
+      ? `Přejmenováno · odkazy opraveny v ${res.relinked} poznámkách`
+      : 'Přejmenováno.');
+  }
+
+  async function deleteNote() {
+    if (!current || proposes() || !canEdit()) return;
+    const was = current;
+    if (!confirm(`Smazat poznámku „${baseName(was)}“? Přesune se do koše trezoru (.trash).`)) return;
+    clearTimeout(saveTimer);
+    dirty = false;
+    let res;
+    try {
+      res = await io.api('vault-delete', {path: was});
+    } catch (err) {
+      return io.toast('Smazat se nepodařilo: ' + err.message);
+    }
+    if (!box) return;
+    if (!res.ok) return io.toast(res.error || 'Smazat se nepodařilo.');
+    notes = notes.filter((n) => n.path !== was);
+    resolveNote = indexOf(notes.map((n) => n.path), true);
+    back = back.filter((p) => p !== was);
+    current = '';
+    renderList();
+    io.toast('Poznámka je v koši trezoru (.trash).');
+    const next = back.pop() || (notes[0] && notes[0].path);
+    if (next) return load(next, {remember: false});
+    setMode('read');
+    q('.vault-path').textContent = '';
+    q('.vault-md').textContent = '';
+    q('.vault-rename').hidden = q('.vault-del').hidden = true;
   }
 
   /* ── graf trezoru ─────────────────────────────────────────────────────── */
@@ -811,6 +872,8 @@
           </div>
           <span class="spacer"></span>
           <button class="btn ghost vault-new" title="Nová poznámka" hidden>+ Nová</button>
+          <button class="btn ghost vault-rename" title="Přejmenovat poznámku" hidden>Přejmenovat</button>
+          <button class="btn ghost vault-del" title="Smazat poznámku" hidden>Smazat</button>
           <button class="btn ghost vault-graph-btn" title="Graf poznámek">Graf</button>
           <button class="btn ghost vault-app" hidden>Otevřít v Obsidianu</button>
           <button class="set-x vault-close" title="Zavřít (Esc)">×</button>
@@ -853,6 +916,8 @@
     q('.vault-back').onclick = () => { if (back.length) load(back.pop(), {remember: false}); };
     q('.vault-new').hidden = !canEdit();
     q('.vault-new').onclick = newNote;
+    q('.vault-rename').onclick = renameNote;
+    q('.vault-del').onclick = deleteNote;
     q('.vault-graph-btn').onclick = toggleGraph;
     for (const b of box.querySelectorAll('.vault-mode')) {
       b.onclick = () => setMode(b.dataset.mode);

@@ -121,7 +121,7 @@
 
   const HIDE = Decoration.replace({});
 
-  function livePreview(view) {
+  function livePreview(view, image) {
     const marks = [];
     const sel = view.state.selection;
     // Řádek s kurzorem (nebo výběrem) ukazuje značky tak, jak jsou v souboru.
@@ -154,6 +154,20 @@
             marks.push({from: node.from, to: node.to,
                         deco: Decoration.replace({widget: new CheckWidget(/[xX]/.test(text), node.from)})});
             return;
+          }
+          if (name === 'Image' || name === 'WikiLink') {
+            // Vložený obrázek se ukáže; na řádku s kurzorem zůstane zápis.
+            const text = view.state.doc.sliceString(node.from, node.to);
+            const wiki = /^!\[\[([^\]|#\n]+)/.exec(text);
+            const md = /^!\[([^\]]*)\]\(<?([^)\s>]+?)>?\)$/.exec(text);
+            const target = wiki ? wiki[1].trim() : md ? safeDecode(md[2]) : '';
+            if (!target || !IMAGE_EXT.test(target)) return;
+            if (shown(node.from, node.to)) return;
+            const url = image(target);
+            if (!url) return;
+            marks.push({from: node.from, to: node.to,
+                        deco: Decoration.replace({widget: new ImageWidget(url, (md && md[1]) || target)})});
+            return false;                       // dovnitř už se nechodí
           }
           if (name === 'ListMark') {
             // Odrážka se ukáže jako puntík; číslovaný seznam si číslo nechá.
@@ -194,6 +208,21 @@
     }
   }
 
+  // Vložený obrázek: ![[obrazek.png]] i ![popisek](obrazek.png).
+  const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
+
+  class ImageWidget extends WidgetType {
+    constructor(url, alt) { super(); this.url = url; this.alt = alt; }
+    eq(other) { return other.url === this.url && other.alt === this.alt; }
+    toDOM() {
+      const img = document.createElement('img');
+      img.className = 'cm-embed';
+      img.src = this.url;
+      img.alt = this.alt || '';
+      return img;
+    }
+  }
+
   class RuleWidget extends WidgetType {
     toDOM() {
       const el = document.createElement('span');
@@ -202,12 +231,23 @@
     }
   }
 
-  const preview = ViewPlugin.fromClass(class {
-    constructor(view) { this.decorations = livePreview(view); }
-    update(u) {
-      if (u.docChanged || u.selectionSet || u.viewportChanged) this.decorations = livePreview(u.view);
-    }
-  }, {decorations: (v) => v.decorations});
+  function previewPlugin(image) {
+    return ViewPlugin.fromClass(class {
+      constructor(view) { this.decorations = livePreview(view, image); }
+      update(u) {
+        // geometryChanged: editor se zakládá ještě schovaný (přepnutí z Čtení),
+        // takže při prvním výpočtu nemá co kreslit — po změření se to dopočítá.
+        if (u.docChanged || u.selectionSet || u.viewportChanged || u.focusChanged ||
+            u.geometryChanged) {
+          this.decorations = livePreview(u.view, image);
+        }
+      }
+    }, {decorations: (v) => v.decorations});
+  }
+
+  function safeDecode(text) {
+    try { return decodeURIComponent(text); } catch (err) { return text; }
+  }
 
   /* ── našeptávání [[odkazů]] ────────────────────────────────────────────── */
 
@@ -268,7 +308,7 @@
         indentOnInput(), indentUnit.of('    '), closeBrackets(), highlightSelectionMatches(),
         search({top: true}),
         autocompletion({override: [wikiComplete(getNotes)], icons: false}),
-        language, syntaxHighlighting(style), preview, theme,
+        language, syntaxHighlighting(style), previewPlugin(opts.image || (() => '')), theme,
         EditorView.lineWrapping,
         placeholder(opts.placeholder || 'Piš poznámku…'),
         Prec.high(keymap.of([

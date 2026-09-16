@@ -814,6 +814,103 @@ def vault_save(rel, text, vault="", mtime=None):
     return {"ok": True, "path": vault_rel(full, vault), "mtime": saved, "created": not exists}
 
 
+def _relink_note(old_rel, new_rel):
+    """Po přejmenování přepíše odkazy na poznámku v ostatních poznámkách.
+    Vrací, kolika souborů se to týkalo — jako „aktualizovat odkazy" v Obsidianu."""
+    old_base = os.path.splitext(os.path.basename(old_rel))[0]
+    new_base = os.path.splitext(os.path.basename(new_rel))[0]
+    old_noext = old_rel[:-3] if old_rel.lower().endswith(".md") else old_rel
+    new_noext = new_rel[:-3] if new_rel.lower().endswith(".md") else new_rel
+    from urllib.parse import quote, unquote
+    # [[jméno]], [[cesta/jméno|popisek]], [odkaz](cesta/jméno.md)
+    wiki = re.compile(r"\[\[([^\]\n|#]+)")
+    mdlink = re.compile(r"\]\(<?([^)\s>]+?)(#[^)\s>]*)?>?\)")
+    changed = 0
+    for rel, full, _mtime in _walk_vault():
+        if not rel.lower().endswith(".md"):
+            continue
+        try:
+            with open(full, encoding="utf-8") as fh:
+                text = fh.read(VAULT_MAX_NOTE)
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        def fix_wiki(m):
+            target = m.group(1).strip()
+            if target.lower() in (old_base.lower(), old_noext.lower()):
+                return "[[" + (new_noext if "/" in target else new_base)
+            return m.group(0)
+
+        def fix_md(m):
+            target = m.group(1)
+            plain = unquote(target)
+            if plain.lower() in (old_rel.lower(), old_noext.lower()):
+                out = new_rel if plain.lower() == old_rel.lower() else new_noext
+                return "](" + (quote(out) if "%" in target else out) + (m.group(2) or "") + ")"
+            return m.group(0)
+
+        fixed = mdlink.sub(fix_md, wiki.sub(fix_wiki, text))
+        if fixed == text:
+            continue
+        try:
+            with open(full, "w", encoding="utf-8", newline="") as fh:
+                fh.write(fixed)
+            _VAULT_LINKS.pop(full, None)
+            changed += 1
+        except OSError:
+            continue
+    return changed
+
+
+def vault_rename(rel, new_rel, vault=""):
+    """Přejmenuje (i přesune) poznámku v osobním trezoru a opraví odkazy na ni."""
+    if vault:
+        return {"ok": False, "error": "Přejmenovat jde jen v osobním Obsidianu."}
+    src = vault_path(rel)
+    if not src:
+        return {"ok": False, "error": "Taková poznámka v trezoru není."}
+    dst = vault_target(new_rel)
+    if not dst:
+        return {"ok": False, "error": "Nové jméno v trezoru uložit nejde."}
+    if os.path.normcase(src) == os.path.normcase(dst):
+        return {"ok": True, "path": vault_rel(src), "relinked": 0}
+    if os.path.exists(dst):
+        return {"ok": False, "error": "Poznámka s tímhle jménem už tu je."}
+    old_path, new_path = vault_rel(src), vault_rel(dst)
+    try:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        os.rename(src, dst)
+    except OSError as exc:
+        return {"ok": False, "error": f"Přejmenovat se nepodařilo: {exc}"}
+    _VAULT_LINKS.pop(src, None)
+    return {"ok": True, "path": new_path, "was": old_path,
+            "relinked": _relink_note(old_path, new_path)}
+
+
+def vault_delete(rel, vault=""):
+    """Odloží poznámku do koše trezoru (.trash) — smazat úplně jde v Obsidianu."""
+    if vault:
+        return {"ok": False, "error": "Mazat jde jen v osobním Obsidianu."}
+    src = vault_path(rel)
+    if not src:
+        return {"ok": False, "error": "Taková poznámka v trezoru není."}
+    trash = os.path.join(_vault_root(), ".trash")
+    # Dvě smazání stejného jména v jedné vteřině by se v koši přepsala.
+    first = time.strftime("%Y%m%d-%H%M%S") + "-" + os.path.basename(src)
+    name, nth = first, 2
+    while os.path.exists(os.path.join(trash, name)):
+        stem, ext = os.path.splitext(first)
+        name = f"{stem}-{nth}{ext}"
+        nth += 1
+    try:
+        os.makedirs(trash, exist_ok=True)
+        os.rename(src, os.path.join(trash, name))
+    except OSError as exc:
+        return {"ok": False, "error": f"Smazat se nepodařilo: {exc}"}
+    _VAULT_LINKS.pop(src, None)
+    return {"ok": True, "path": vault_rel(src), "trash": ".trash/" + name}
+
+
 def vault_proposal(rel, text, vault):
     """Návrh zápisu do firemního nebo sdíleného Obsidianu — stejný soubor, jaký
     píše Claude (tools/firma.py, tools/sdilene.py). Potvrzuje se kartou v hubu."""

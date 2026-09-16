@@ -575,6 +575,10 @@ class Handler(BaseHTTPRequestHandler):
                                    "proposal": True})
             return self._json(core.vault_save(payload.get("path", ""), payload.get("text", ""),
                                               mtime=payload.get("mtime")))
+        if name == "vault-rename":
+            return self._json(core.vault_rename(payload.get("path", ""), payload.get("to", ""), which))
+        if name == "vault-delete":
+            return self._json(core.vault_delete(payload.get("path", ""), which))
         if name == "firma":
             # Návrhy do firemního Obsidianu od Clauda (tools/firma.py). Hub je
             # ukáže a umí zahodit; nahrává brána po kliknutí (/gw/firma/publish).

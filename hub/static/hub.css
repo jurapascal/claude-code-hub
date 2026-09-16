@@ -1126,6 +1126,7 @@ body { display: flex; flex-direction: column; }
 .cm-syntax { color: var(--dim); opacity: .7; }
 .cm-task { margin: 0 6px 0 0; vertical-align: -1px; }
 .cm-bullet { color: var(--dim); }
+.cm-embed { max-width: 100%; max-height: 420px; border-radius: 8px; vertical-align: top; }
 .cm-rule { display: inline-block; width: 100%; border-top: 1px solid var(--border); vertical-align: middle; }
 .vault-graph { position: absolute; inset: 0; display: flex; background: var(--bg); z-index: 2; }
 .graph-mount { flex: 1; min-width: 0; position: relative; }
