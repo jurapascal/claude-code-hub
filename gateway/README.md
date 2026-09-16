@@ -342,6 +342,36 @@ a založí se skutečná. `~/.claude.json` brána už vůbec nepíše — klíč
 a dokončené nastavení Claude Code předvyplní hub uvnitř sandboxu
 (`hub/predplatne.py`).
 
+## Zálohy
+
+Každou noc v 1:30 běží `claude-hub-zaloha` (systemd timer, nastaví ho
+`install.sh`): zabalí `/home/hub` — domovy prostorů, firemní vault, databázi
+účtů — a uloží do `/var/backups/claude-hub/`. Cache se vynechávají, takže
+z 3,2 GB je ~71 MB. Drží se posledních 14 kusů.
+
+**Šifruje se veřejným klíčem.** Server má jen ten a zálohu proto umí zabalit,
+ale rozbalit ne — ověřeno, hlásí `No secret key`. Soukromý klíč patří mimo
+server, do trezoru hesel správce. Kdo ukradne server i se zálohami, nepřečte
+z nich nic, a přitom se při zálohování nikam nezadává heslo.
+
+Klíč se nasadí jednou:
+
+```bash
+gpg --armor --export <klíč> | ssh root@brána 'cat > /etc/claude-hub/zalohy.asc'
+```
+
+**Bez toho souboru se zálohovat nebude** a skript to řekne. Je to schválně:
+nešifrovaná záloha by jen ležela na disku a tvářila se, že je o co opřít.
+
+Obnova (na stroji, kde je soukromý klíč):
+
+```bash
+gpg --decrypt hub-RRRRMMDD-HHMM.tar.zst.gpg | zstd -d | tar -xf - -C /kam
+```
+
+⚠️ Zálohy leží na stejném disku jako data — dokud si je někdo nestáhne pryč,
+neochrání to proti ztrátě disku. Stahování patří na stroj správce, ne sem.
+
 ## Izolace není volitelná
 
 Claude Code na bráně čte soubory a spouští příkazy. U jednoho člověka na

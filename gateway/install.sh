@@ -607,6 +607,48 @@ EOF
     ok "každou noc 2:15–5:15, když nikdo nepracuje (ručně: claude-hub-update)"
 }
 
+setup_zaloha() {
+    step "Noční šifrovaná záloha"
+    local src="$REPO_DIR/gateway/zaloha.sh"
+    [ -f "$src" ] || src="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/zaloha.sh"
+    if [ ! -f "$src" ]; then
+        warn "zaloha.sh nenalezen — záloha nenastavena"
+        return 0
+    fi
+    install -m 755 "$src" /usr/local/sbin/claude-hub-zaloha
+    cat >/etc/systemd/system/claude-hub-zaloha.service <<'EOF'
+[Unit]
+Description=Claude Code Hub - nocni sifrovana zaloha brany
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/claude-hub-zaloha
+EOF
+    cat >/etc/systemd/system/claude-hub-zaloha.timer <<'EOF'
+[Unit]
+Description=Claude Code Hub - nocni sifrovana zaloha brany
+
+[Timer]
+# Před aktualizací (2:15), ať se zálohuje ještě stará verze.
+OnCalendar=*-*-* 01:30:00
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+    quiet systemctl daemon-reload
+    quiet systemctl enable --now claude-hub-zaloha.timer
+    if [ -s /etc/claude-hub/zalohy.asc ]; then
+        ok "každou noc v 1:30 do /var/backups/claude-hub (ručně: claude-hub-zaloha)"
+    else
+        # Bez klíče se zálohovat nebude — nešifrovaná záloha by jen ležela na
+        # disku a tvářila se, že je o co opřít.
+        warn "chybí /etc/claude-hub/zalohy.asc — zálohy zatím NEBĚŽÍ"
+        echo -e "     ${D}Nasaď veřejný klíč:  gpg --armor --export <klíč> | ssh root@$DOMAIN 'cat > /etc/claude-hub/zalohy.asc'${R}"
+    fi
+}
+
 main() {
     parse_args "$@"
     echo ""
@@ -625,6 +667,7 @@ main() {
     setup_company_skills
     setup_service
     setup_updater
+    setup_zaloha
     setup_nginx
     create_admin
     summary
