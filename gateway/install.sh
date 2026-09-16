@@ -121,8 +121,8 @@ install_packages() {
     quiet apt-get update -q
     quiet apt-get install -y -q python3 git curl ca-certificates gnupg sudo \
         bubblewrap dbus-user-session nginx certbot python3-certbot-nginx \
-        fail2ban ufw unattended-upgrades
-    ok "python3, git, bubblewrap, dbus-user-session, nginx, certbot, fail2ban, ufw"
+        fail2ban ufw unattended-upgrades acl
+    ok "python3, git, bubblewrap, dbus-user-session, nginx, certbot, fail2ban, ufw, acl"
 }
 
 install_node_claude() {
@@ -250,6 +250,10 @@ setup_user() {
                "$HUB_HOME/.config" "$HUB_HOME/.config/systemd" "$HUB_HOME/.config/systemd/user"; do
         install -d -o "$HUB_USER" -g "$HUB_USER" -m 750 "$dir"
     done
+    # 751 jen na cestě k domovům: účty prostorů (hub-u<id>) tudy musí projít
+    # ke svému domovu. Výpis zůstává skrytý a cizí domov má stejně jiného
+    # vlastníka — viz gateway/prostor.py.
+    chmod 751 "$HUB_HOME" "$HUB_HOME/users"
     ok "$HUB_USER (uid $(id -u "$HUB_USER")), domov $HUB_HOME"
 }
 
@@ -633,6 +637,30 @@ EOF
     ok "každou noc 2:15–5:15, když nikdo nepracuje (ručně: claude-hub-update)"
 }
 
+setup_ucty() {
+    step "Účty prostorů (oddělená identita)"
+    local src="$REPO_DIR/gateway/prostor.py"
+    [ -f "$src" ] || src="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/prostor.py"
+    if [ ! -f "$src" ]; then
+        warn "prostor.py nenalezen — prostory poběží pod společným účtem"
+        return 0
+    fi
+    install -m 755 "$src" /usr/local/sbin/claude-hub-prostor
+    # Úzké pravidlo: `hub` smí spustit JEN tenhle spouštěč. Ten si příkazovou
+    # řádku ověří sám (jen bwrap, jen náš hub, jen domov pod /home/hub/users),
+    # takže z toho nejde udělat obecný root.
+    cat >/etc/sudoers.d/claude-hub <<EOF
+$HUB_USER ALL=(root) NOPASSWD: /usr/local/sbin/claude-hub-prostor
+EOF
+    chmod 440 /etc/sudoers.d/claude-hub
+    if ! visudo -cf /etc/sudoers.d/claude-hub >/dev/null 2>&1; then
+        rm -f /etc/sudoers.d/claude-hub
+        warn "sudoers pravidlo neprošlo kontrolou — nenasazeno"
+        return 0
+    fi
+    ok "spouštěč claude-hub-prostor + sudoers pro $HUB_USER"
+}
+
 setup_zaloha() {
     step "Noční šifrovaná záloha"
     local src="$REPO_DIR/gateway/zaloha.sh"
@@ -693,6 +721,7 @@ main() {
     setup_company_skills
     setup_service
     setup_updater
+    setup_ucty
     setup_zaloha
     setup_nginx
     create_admin

@@ -929,7 +929,8 @@ def session_spec(user, isolation, mode):
     # absolutní cesty zapečené uvnitř a přepisovat je by bylo křehké.
     legacy = os.path.join(USERS_ROOT, slug(user))
     argv = isolation.wrap(mode, inner, home, extra_ro=extra_ro, unit=unit,
-                          aliases=[legacy] if legacy != home else [])
-    if argv[:1] != ["systemd-run"]:
+                          aliases=[legacy] if legacy != home else [],
+                          ucet=slug(user))
+    if argv[:1] not in (["systemd-run"], ["sudo"]):
         unit = ""                 # bez scope (docker, stroj bez systemd)
     return argv, home, unit

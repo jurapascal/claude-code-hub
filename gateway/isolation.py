@@ -30,6 +30,12 @@ MODES = ("none", "bwrap", "docker")
 # Každý prostor běží ve vlastní systemd scope se jménem podle účtu. Podle jména
 # se pak pozná, jestli ještě běží, a zastaví se celý najednou — viz stop_scope.
 SCOPE_PREFIX = "claude-hub-"
+# Každý prostor pod vlastním systémovým účtem (hub-u<id>) místo společného
+# `hub`. Zapíná se HUB_GW_UCTY=1; bez toho se nic nemění. Spouští to úzký
+# spouštěč gateway/prostor.py přes sudo — brána sama práva přepnout uživatele
+# nemá a dát jí je obecně by znamenalo root pro kohokoli, kdo ji ovládne.
+PER_USER = os.environ.get("HUB_GW_UCTY", "0") == "1"
+SPOUSTEC = "/usr/local/sbin/claude-hub-prostor"
 DOCKER_IMAGE = "claude-hub-workspace"
 
 # Kolik si smí jedna session vzít. Naměřeno: session Claude Code drží kolem
@@ -65,7 +71,7 @@ def check(mode, host):
 
 
 def wrap(mode, argv, home, extra_ro=(), extra_rw=(), limits=None, unit="",
-         aliases=()):
+         aliases=(), ucet=""):
     """argv, kterým se session doopravdy spustí.
 
     `home` je domov uživatele na bráně — jediné místo, kam smí zapisovat.
@@ -86,7 +92,13 @@ def wrap(mode, argv, home, extra_ro=(), extra_rw=(), limits=None, unit="",
     if mode == "none":
         return _limited(list(argv), limits, unit)
     if mode == "bwrap":
-        return _limited(_bwrap(argv, home, extra_ro, extra_rw, aliases), limits, unit)
+        sandbox = _bwrap(argv, home, extra_ro, extra_rw, aliases)
+        if PER_USER and ucet and unit:
+            # Scope zakládá root ve SYSTÉMOVÉM manažeru (--uid), ne v uživatelském
+            # manažeru účtu hub. Limity si spouštěč nastaví sám, proto `limits`
+            # tudy neprochází.
+            return ["sudo", "-n", SPOUSTEC, "spustit", ucet, unit, "--"] + sandbox
+        return _limited(sandbox, limits, unit)
     if mode == "docker":
         # Docker si limity řeší sám, přes systemd by se počítaly dvakrát.
         return _docker(argv, home, extra_ro, limits, extra_rw)
@@ -193,7 +205,9 @@ def _systemctl(*args, timeout=15):
     env.setdefault("DBUS_SESSION_BUS_ADDRESS",
                    f"unix:path={env['XDG_RUNTIME_DIR']}/bus")
     try:
-        return subprocess.run(["systemctl", "--user", *args], timeout=timeout,
+        # V režimu účtů žijí scope v systémovém manažeru (zakládá je root).
+        base = ["systemctl"] if PER_USER else ["systemctl", "--user"]
+        return subprocess.run([*base, *args], timeout=timeout,
                               capture_output=True, text=True, env=env)
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -237,6 +251,16 @@ def stop_scope(unit, grace=8):
     name = unit + ".scope"
     if not scope_active(unit):
         return True
+    if PER_USER:
+        # Scope patří rootovi a procesy uvnitř cizímu uid — účet `hub` je sám
+        # nezabije. Zastavení proto jde přes tentýž úzký spouštěč.
+        subprocess.run(["sudo", "-n", SPOUSTEC, "zastavit", unit],
+                       capture_output=True, timeout=30)
+        for _ in range(int(grace / 0.3) + 1):
+            if not scope_active(unit):
+                return True
+            time.sleep(0.3)
+        return not scope_active(unit)
     _systemctl("kill", "--signal=SIGTERM", name)
     deadline = time.time() + grace
     while time.time() < deadline:
