@@ -464,6 +464,13 @@ EOF
                 echo "    include /etc/letsencrypt/options-ssl-nginx.conf;"
             [ -f /etc/letsencrypt/ssl-dhparams.pem ] && \
                 echo "    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;"
+            # HSTS: bez něj je první návštěva zranitelná — prohlížeč zkusí http
+            # a přesměrování na https může podvrhnout někdo po cestě. `always`,
+            # ať hlavička odejde i s chybovou odpovědí.
+            # Pozor: platí rok a odvolat se dá jen tím, že se pošle
+            # `max-age=0` a počká, až to prohlížeče převezmou. Na téhle doméně
+            # nic než https neběží, takže je to bez rizika.
+            echo "    add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;"
             echo "$proxy"
             echo "}"
             echo "server {"

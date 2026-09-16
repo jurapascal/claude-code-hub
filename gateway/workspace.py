@@ -527,7 +527,15 @@ def ensure(user):
     projects = os.path.join(home, "projects")
 
     # Domov zakládá brána ve složce, kam session nevidí — tady odkaz být nemůže.
-    os.makedirs(home, exist_ok=True)
+    # 0700: prostory sice od sebe dělí sandbox (cizí domov se do něj vůbec
+    # nepřiváže), ale všechny běží pod týmž systémovým účtem `hub`. Bez tohohle
+    # by stačilo bwrap obejít a domovy by ležely otevřené. Druhá vrstva navíc,
+    # ne náhrada sandboxu. `chmod` i na existující: starší domovy vznikly s 775.
+    os.makedirs(home, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(home, 0o700)
+    except OSError:
+        pass
     # Všechno uvnitř už patří session: jen přes safefs (odkazy se nenásledují).
     vault_rel = os.path.relpath(vault, home)
     for rel in (os.path.join(vault_rel, "memory"), os.path.join(vault_rel, "skills"),

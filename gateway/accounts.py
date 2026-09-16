@@ -138,6 +138,15 @@ class Accounts:
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.executescript(SCHEMA)
         self._migrate()
+        # Otisky hesel a tajemství pro dvoufázové ověření — číst je nemá kdo
+        # jiný než brána. sqlite zakládá soubor s 644 a WAL i SHM dědí totéž,
+        # takže se to musí srovnat ručně, po journal_mode=WAL (dřív ty soubory
+        # ještě nejsou). Nadřazená složka je 750, tohle je druhá vrstva.
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                os.chmod(path + suffix, 0o600)
+            except OSError:
+                pass
 
     def _migrate(self):
         """Doplní sloupce, které starší databáze ještě nemá."""

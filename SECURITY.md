@@ -25,10 +25,33 @@ na port dosáhne, ale token neuhodne a odpověď si kvůli CORS stejně nepřeč
 | **Zámek přežije restart** | leží v databázi účtů (`login_fails`), ne v paměti brány — noční aktualizace ho nezruší |
 | **Kolegové za jednou IP se nezamknou** | přísný limit je na účet + adresu; kancelář za jednou veřejnou IP tak nezablokuje jeden člověk |
 | **Heslo i token jen jako otisk** | scrypt a SHA-256; povinné dvoufázové ověření |
+| **HSTS** | `max-age=31536000; includeSubDomains`, takže prohlížeč na http nesáhne ani napoprvé; http vrací 301 na https |
 
 Co to **neřeší**: kdo zná e-mail, může desíti špatnými pokusy z různých adres
 účet na hodinu zablokovat. Je to vědomá cena za to, že se heslo nedá hádat
 donekonečna; správce zámek zruší `claude-hub-admin zamky odemknout <e-mail>`.
+
+## Prostory na serveru: čím jsou od sebe oddělené
+
+Každý prostor běží v **bwrapu**, kde je připojený **jen jeho vlastní domov**.
+Cizí domovy v sandboxu neexistují — ne že by byly zakázané, ony tam prostě
+nejsou. Ověřeno zevnitř sandboxu: `ls /home/hub/users` ukáže jediný řádek,
+ten vlastní.
+
+| | |
+|---|---|
+| **Vlastní domov** | jediné zapisovatelné místo, na stejné cestě jako venku |
+| **Zdroj hubu a firemní Obsidian** | jen ke čtení; do firemního zapisuje brána po potvrzení, ne session |
+| **Sdílené vaulty** | připojí se **jen ty, kde je člověk členem** (`shared.vaults_for`) — nesdílené se neváže vůbec |
+| **MCP napojení** | žijí v `~/.claude.json` v domově; na cizí napojení ani jeho token se nedá dosáhnout |
+| **Domovy mají 0700** | prostory běží pod jedním systémovým účtem `hub`, takže práva je nedělí — tohle je druhá vrstva pro případ, že by sandbox někdo obešel |
+| **`accounts.db` má 0600** | otisky hesel a tajemství pro dvoufázové ověření; nadřazená složka je navíc 750 |
+
+**Na co to nestačí:** izolace stojí na bwrapu. Všechno běží pod týmž systémovým
+účtem, takže kdo by sandbox obešel, dostane se na všechny prostory i na
+databázi účtů. Práva 0700 to ztěžují, ale nenahradí oddělené systémové účty.
+Disk serveru navíc **není šifrovaný** — kdo získá snapshot disku, přečte si
+domovy i databázi. Hesla jsou v ní jen jako otisk (scrypt).
 
 ## Přístup z telefonu
 
