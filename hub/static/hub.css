@@ -211,6 +211,10 @@ body { display: flex; flex-direction: column; }
   transition: background .14s ease, color .14s ease;
 }
 .actionbtn:hover { background: var(--accent); color: var(--bg); }
+/* Firemní trezor má svou barvu, ať se nesplete s osobním: fialová je tu
+   všude stejná — tlačítko v panelu, tlačítko na uvítání i tab. */
+.actionbtn.firma { border-color: var(--firma); color: var(--firma); }
+.actionbtn.firma:hover { background: var(--firma); color: var(--bg); }
 
 .mem-summary {
   display: flex; gap: 10px; flex-wrap: wrap;
@@ -320,6 +324,9 @@ body { display: flex; flex-direction: column; }
 .tabplus.firma { color: var(--firma); }
 .tab.firma .tab-agent { background: var(--firma); }
 .tab.firma.active { box-shadow: inset 0 2px 0 var(--firma); }
+/* Uvnitř firemního tabu je barvou prostředí fialová — bublina pod
+   terminálem, tlačítka i rámečky ji berou odtud. */
+.pane.firma { --accent: var(--firma); }
 
 .panes { position: relative; flex: 1; min-height: 0; }
 .pane {
@@ -468,6 +475,8 @@ body { display: flex; flex-direction: column; }
 .btn:disabled { opacity: .45; cursor: default; filter: none; }
 .btn:disabled:hover { filter: none; background: none; }
 .btn.primary:disabled:hover { background: var(--accent); }
+.btn.primary.firma { background: var(--firma); border-color: var(--firma); }
+.btn.primary.firma:disabled:hover { background: var(--firma); }
 
 /* ── toast ───────────────────────────────────────────────────────────────── */
 /* Hláška vypadá jako karta v panelu — jen s barevným proužkem vlevo, stejně
@@ -885,7 +894,11 @@ body { display: flex; flex-direction: column; }
   display: flex; align-items: center; gap: 14px;
   padding: 20px 22px 14px; border-bottom: 1px solid var(--border);
 }
+/* Značka appky v hlavičce oken se skládá z <use> bez vlastní barvy. Bez
+   `fill` je černá jako výchozí SVG — v tmavém motivu ji pak nebylo vidět.
+   Takhle jde s barvou textu, a ta se řídí motivem i prostředím. */
 .onb-mark { color: var(--accent); display: flex; }
+.onb-mark svg { fill: currentColor; }
 .onb-title { font-size: 17px; font-weight: 700; color: var(--fg-bright); }
 .onb-sub { font-size: 12px; color: var(--dim); margin-top: 2px; }
 .onb-dots { margin-left: auto; display: flex; gap: 6px; }
@@ -1303,6 +1316,8 @@ body { display: flex; flex-direction: column; }
   margin-top: 22px;
 }
 .welcome-actions .btn { display: inline-flex; align-items: center; gap: 7px; }
+/* Zalomení řádku uvnitř flexu: nad ním se otevírá práce, pod ním nastavení. */
+.welcome-break { flex-basis: 100%; height: 0; }
 .welcome-facts { margin-top: 18px; font-size: 12px; color: var(--dim); }
 
 /* Verze v patičce vede rovnou do nastavení — jinak by to bylo jen číslo. */

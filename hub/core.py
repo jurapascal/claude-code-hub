@@ -432,6 +432,17 @@ LIGHT = {
 }
 
 
+def hex_rgb(color):
+    """#4c97f0 → "76;151;240" — barva pro escape sekvenci v terminálu."""
+    h = str(color or "").lstrip("#")
+    if len(h) != 6:
+        return ""
+    try:
+        return ";".join(str(int(h[i:i + 2], 16)) for i in (0, 2, 4))
+    except ValueError:
+        return ""
+
+
 # ── Data gathering ───────────────────────────────────────────────────────────
 # Složky projektů, do kterých hub při posledním skenu nesměl (macOS bez
 # povolení k Ploše či Dokumentům). Ukážou se na úvodní obrazovce (doctor).
@@ -2557,6 +2568,16 @@ def cmd_agent(path, agent_id="", slash="", model="", resume="", fork=False, vaul
     script = (f'cd {p} && bash {w}{args}; '
               f'echo; echo "[ session ukončena — tab zůstává jako shell ]"; exec bash')
     env = agents.env_for(spec, model)
+    # Barva úvodní hlavičky v tabu říká totéž co tečka na tabu: KDE se píše.
+    # Nad firemním trezorem fialově, v prostoru na serveru modře, na počítači
+    # jantarově. Jiný než výchozí agent si drží svou barvu — podle ní se pozná.
+    accent = ""
+    if firma:
+        accent = DARK["FIRMA"]
+    elif on_gateway() and (spec.get("id") or "") == default_agent():
+        accent = DARK["CLOUD"]
+    if accent:
+        env["HUB_AGENT_RGB"] = hex_rgb(accent)
     if bypass:
         env["HUB_AGENT_BYPASS"] = "1"     # tab ví, že bypass v něm jde zapnout
     if resume and spec.get("resume_arg"):

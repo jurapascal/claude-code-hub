@@ -53,7 +53,13 @@ PYEOF
 [ -z "$BRAIN" ] && BRAIN="$HOME/Obsidian/Claude-Brain"
 
 # ── Colors ──
+# Barva hlavičky: HUB_AGENT_RGB (barva prostředí z hubu — modrá v prostoru,
+# fialová nad firemním trezorem) má přednost před barvou agenta z katalogu.
 A="\033[38;5;${AGENT_ANSI}m"  # barva agenta (primary)
+case "$HUB_AGENT_RGB" in
+    *[!0-9\;]*|"") ;;                       # nic nebo podezřelý text = beze změny
+    *) A="\033[38;2;${HUB_AGENT_RGB}m" ;;
+esac
 G="\033[38;5;114m"  # soft green
 Y="\033[38;5;180m"  # warm peach
 D="\033[2m"         # dim

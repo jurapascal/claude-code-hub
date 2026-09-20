@@ -102,11 +102,26 @@ const CSS_VARS = {
 
 function palette() { return DARK ? STATE.palette.dark : STATE.palette.light; }
 
-function termTheme() {
-  const p = palette(), t = p.TERM_PALETTE;
+/* Barva tabu: nad firemním trezorem fialová, jinak barva prostředí — na
+   počítači jantarová, v prostoru na serveru modrá. Kurzor, výběr i to, co si
+   Claude Code kreslí sám, se řídí odsud, ať je celý tab v jedné barvě. */
+function accentHex(tab) {
+  const p = palette();
+  if (tab && tab.vault === 'firma') return p.FIRMA;
+  return onServer() ? p.CLOUD : p.AMBER;
+}
+
+function rgbOf(hex) {
+  const h = String(hex || '').replace('#', '');
+  if (h.length !== 6) return '';
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)).join(';');
+}
+
+function termTheme(tab) {
+  const p = palette(), t = p.TERM_PALETTE, accent = accentHex(tab);
   return {
-    background: p.BG, foreground: p.FG, cursor: p.AMBER, cursorAccent: p.BG,
-    selectionBackground: DARK ? 'rgba(224,132,60,.30)' : 'rgba(188,92,28,.22)',
+    background: p.BG, foreground: p.FG, cursor: accent, cursorAccent: p.BG,
+    selectionBackground: `rgba(${rgbOf(accent).replace(/;/g, ',')},${DARK ? '.30' : '.22'})`,
     black: t[0], red: t[1], green: t[2], yellow: t[3], blue: t[4],
     magenta: t[5], cyan: t[6], white: t[7],
     brightBlack: t[8], brightRed: t[9], brightGreen: t[10], brightYellow: t[11],
@@ -125,8 +140,8 @@ function applyTheme() {
     '--chart', onServer() ? p.CHART_CLOUD : p.CHART);
   $('btn-theme').firstElementChild.firstElementChild
     .setAttribute('href', DARK ? '#i-moon' : '#i-sun');
-  const theme = termTheme();
-  for (const tab of TABS) tab.term.options.theme = theme;
+  // Každý tab má svou barvu — firemní je fialový i vedle modrého osobního.
+  for (const tab of TABS) tab.term.options.theme = termTheme(tab);
 }
 
 function setTheme(dark, remember) {
@@ -445,6 +460,14 @@ let firmaCard = null;
 const firmaLater = new Set();          // „Později": do obnovení stránky se neukáže
 const firmaWarned = new Set();         // o zadrženém návrhu stačí říct jednou
 let firmaBusy = false;                 // nahrávání z firemního tabu běží
+
+/* Firemní tab: Claude v něm pracuje nad firemním Obsidianem a zapisuje do něj
+   rovnou — souhlas dal uživatel tím, že tab otevřel. Otevírá se ze dvou míst
+   (lišta tabů i uvítání), tak ať obě dělají doopravdy totéž. */
+function openFirmaTab() {
+  return openTab({kind: 'project', path: STATE.home, title: 'Server firemní',
+                  agent: 'claude', vault: 'firma'});
+}
 
 function renderFirma() {
   const on = !!(STATE.firma && STATE.firma.vault);
@@ -964,9 +987,13 @@ async function switchPlace() {
   if (badge) badge.disabled = true;
   try {
     if (onServer()) {
-      // Zpátky na počítač jde jen okno, které z počítače přišlo.
-      if (HubServer.backTo('local')) return;
-      toast('Tohle okno se na serveru neotevřelo z počítače — spusť hub na něm.');
+      // Zpátky na počítač jde jen okno, které z počítače přišlo. Z prohlížeče
+      // to nejde vůbec — a otvírat místo toho nastavení je matoucí: člověk
+      // klikl na „server", ne na ozubené kolo.
+      if (!HubServer.backTo('local')) {
+        toast('Tohle okno se na serveru neotevřelo z počítače — spusť hub na něm.');
+      }
+      return;
     } else {
       const res = await HubServer.go(hubIO()).catch((e) => ({error: e.message}));
       if (res && res.ok) return;
@@ -1104,25 +1131,40 @@ function renderWelcome() {
   const box = $('welcome-actions');
   box.textContent = '';
   const cfg = STATE.config.newtab || {};
+  const firma = !!(STATE.firma && STATE.firma.vault);
   const actions = [];
   if (cfg.agent !== false && cfg.claude !== false) {
     const a = agentById(STATE.default_agent) || agentList(true)[0];
     if (a) {
       // Stejné pojmenování jako v liště tabů: kde se bude pracovat.
-      actions.push(['i-terminal', 'Otevřít ' + newTabLabel(), true,
+      actions.push(['i-terminal', 'Otevřít ' + newTabLabel(), 'primary',
         () => openTab({kind: 'project', path: STATE.home, title: newTabLabel(),
                        agent: a.id})]);
+      // Firemní trezor má vlastní tlačítko i tady, ne jen v liště tabů — a
+      // fialové, ať je hned vidět, že se v něm píše do firemního Obsidianu.
+      if (firma) {
+        actions.push(['i-terminal', 'Otevřít Server firemní', 'primary firma',
+          () => openFirmaTab()]);
+      }
     }
   }
   if (cfg.shell !== false && STATE.config.dev_mode) {
-    actions.push(['i-terminal', 'Otevřít terminál', false,
+    actions.push(['i-terminal', 'Otevřít terminál', 'ghost',
       () => openTab({kind: 'shell', path: '', title: 'terminál'})]);
   }
-  actions.push(['i-gear', 'Nastavení', false,
+  // Nastavení patří o řádek níž: nahoře se otevírá práce, pod ní se nastavuje.
+  actions.push(['break']);
+  actions.push(['i-gear', 'Nastavení', 'ghost',
     () => HubSettings.open({...hubIO(), state: STATE})]);
-  for (const [ico, label, primary, run] of actions) {
+  for (const [ico, label, kind, run] of actions) {
+    if (ico === 'break') {
+      const br = document.createElement('div');
+      br.className = 'welcome-break';
+      box.appendChild(br);
+      continue;
+    }
     const b = document.createElement('button');
-    b.className = 'btn ' + (primary ? 'primary' : 'ghost');
+    b.className = 'btn ' + kind;
     b.innerHTML = icon(ico) + '<span></span>';
     b.querySelector('span').textContent = label;
     b.onclick = run;
@@ -1433,7 +1475,7 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
     scrollback: 100000,
     cursorBlink: true,
     allowProposedApi: true,
-    theme: termTheme(),
+    theme: termTheme({vault}),   // firemní tab je fialový od prvního znaku
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
@@ -1565,7 +1607,39 @@ function dotColor(tab, a) {
   return (a && a.id !== (STATE.default_agent || 'claude')) ? a.color : 'var(--accent)';
 }
 
+/* Claude Code si svou oranžovou píše napevno (truecolor 215;119;87), takže na
+   ni motiv terminálu nedosáhne. Přepisuje se proto rovnou v proudu, než výpis
+   dojde do terminálu: tab pak celý mluví barvou prostředí — v prostoru modře,
+   nad firemním trezorem fialově. Na počítači se nepřepisuje nic, tam je
+   oranžová doma. */
+const CC_ORANGE = /(3|4)8;2;215;119;87/g;
+
+function recolor(tab, data) {
+  let s = (tab.cut || '') + data;
+  tab.cut = '';
+  clearTimeout(tab.cutTimer);
+  const rgb = onServer() ? rgbOf(accentHex(tab)) : '';
+  if (!rgb) return s;
+  /* Sekvence může přijít rozpůlená mezi dvěma zprávami. Konec, který na
+     začátek sekvence vypadá, počká na zbytek — a když nic nepřijde, vypíše se
+     sám, ať se terminál nezasekne na půlce escape sekvence. */
+  const half = s.match(/\x1b(?:\[[0-9;]*)?$/);
+  if (half) {
+    tab.cut = half[0];
+    s = s.slice(0, -half[0].length);
+    tab.cutTimer = setTimeout(() => {
+      const rest = tab.cut;
+      tab.cut = '';
+      if (rest) tab.term.write(rest);
+    }, 60);
+  }
+  return s.replace(CC_ORANGE, (_m, kind) => kind + '8;2;' + rgb);
+}
+
 function paintAgent(tab) {
+  // Firemní tab je fialový celý — bublina, tlačítka i rámečky uvnitř. Stačí na
+  // jeho panelu přebít barvu prostředí, ostatní styly si ji čtou samy.
+  if (tab.pane) tab.pane.classList.toggle('firma', tab.vault === 'firma');
   const badge = tab.el && tab.el.querySelector('.tab-agent');
   if (!badge) return;
   const a = agentById(tab.agent || (tab.kind === 'shell' ? '' : STATE.default_agent));
@@ -2028,7 +2102,7 @@ function handle(msg) {
   if (msg.t === 'out') {
     const tab = TABS.find(t => t.id === msg.id);
     if (tab) {
-      tab.term.write(msg.d);
+      tab.term.write(recolor(tab, msg.d));
       const now = Date.now();
       if (now - (tab.lastInput || 0) > 400) {
         (tab.outTimes = tab.outTimes || []).push(now);
@@ -2166,6 +2240,8 @@ function restore(list) {
  * pro každé spojení zvlášť a nové spojení ho ještě nezná. */
 function attachTab(tab) {
   tab.term.reset();          // the replay below is the full scrollback
+  clearTimeout(tab.cutTimer);
+  tab.cut = '';              // půlka sekvence z minulého spojení už nepatří nikam
   send({t: 'attach', id: tab.id});
   tab.sentCols = tab.sentRows = null;
   refit(tab);
@@ -2296,11 +2372,7 @@ async function main() {
     openTab({kind: 'project', path: STATE.home, title: newTabLabel(), agent: a.id});
   };
   $('btn-new-agent').oncontextmenu = (ev) => { ev.preventDefault(); newAgentMenu(ev); };
-  // Firemní tab: Claude v něm pracuje nad firemním Obsidianem a zapisuje do něj
-  // rovnou — souhlas dal uživatel tím, že tab otevřel.
-  $('btn-new-firma').onclick = () =>
-    openTab({kind: 'project', path: STATE.home, title: 'Server firemní',
-             agent: 'claude', vault: 'firma'});
+  $('btn-new-firma').onclick = () => openFirmaTab();
   $('btn-brain').onclick = () => (vaultPreview() ? openVault() : openExternal('', 'brain'));
   $('modal-close').onclick = closePicker;
   $('modal-cancel').onclick = closePicker;
