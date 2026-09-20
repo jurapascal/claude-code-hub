@@ -1489,6 +1489,9 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
          hned, tak si ho tu rovnou přepíšeme: další tab pak ukáže to samé. */
       // Kdo běží v tomhle tabu — bublina si podle toho vybere, co umí.
       agent: () => agentById(tab.agent || STATE.default_agent),
+      // Tečka v bublině je tatáž tečka jako na tabu — ať se v prostoru
+      // nekouká na modrý tab s jantarovou tečkou pod ním.
+      agentColor: (a) => dotColor(tab, a),
       agents: (ready) => agentList(!!ready),
       /* Přepnout agenta ani model v běžícím tabu nejde: je to jiný program,
          případně jiný startovací argument. Otevře se proto nový tab nad tímtéž
@@ -1553,6 +1556,15 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
 
 /* Odznak agenta na tabu: barevná tečka vždy, jméno navíc u toho, kdo není
    výchozí — jinak by u každého tabu svítilo totéž slovo. */
+/* Barva tečky u tabu i v bublině pod terminálem. Tečka říká, KDE se píše:
+   na počítači jantarová, v prostoru na serveru modrá, nad firemním trezorem
+   fialová. Agent má svou barvu jen tam, kde je vedle ní i jeho jméno —
+   u výchozího agenta by jinak barva neřekla nic, co už není vidět. */
+function dotColor(tab, a) {
+  if (tab && tab.vault === 'firma') return 'var(--firma)';
+  return (a && a.id !== (STATE.default_agent || 'claude')) ? a.color : 'var(--accent)';
+}
+
 function paintAgent(tab) {
   const badge = tab.el && tab.el.querySelector('.tab-agent');
   if (!badge) return;
@@ -1569,8 +1581,7 @@ function paintAgent(tab) {
   // Samotná tečka (výchozí agent) nese barvu prostředí — na počítači
   // jantarová, v prostoru modrá, nad firemním trezorem fialová. Odznak se
   // jménem si drží barvu agenta, jinak by se agenti mezi sebou nerozeznali.
-  badge.style.setProperty('--agent-color',
-    tab.vault === 'firma' ? 'var(--firma)' : (jiny ? a.color : 'var(--accent)'));
+  badge.style.setProperty('--agent-color', dotColor(tab, a));
   tab.el.title = a.label + (tab.model ? ' · ' + tab.model : '');
 }
 

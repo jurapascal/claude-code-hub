@@ -1496,7 +1496,12 @@
     agentBtn.querySelector('.val').textContent = AG.label;
     if (io.agent) {
       const a = io.agent();
-      if (a) agentBtn.querySelector('.composer-dot').style.background = a.color;
+      // Barvu dodává hostitel: tečka v bublině má říkat totéž co tečka na
+      // tabu nad ní (prostředí, případně firemní trezor), ne co agent.
+      if (a) {
+        agentBtn.querySelector('.composer-dot').style.background =
+          io.agentColor ? io.agentColor(a) : a.color;
+      }
     }
     input.placeholder = 'Napiš, co má ' + AG.label +
       ' udělat… (Enter odešle, Shift+Enter nový řádek)';
