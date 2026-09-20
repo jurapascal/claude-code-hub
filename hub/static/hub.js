@@ -987,12 +987,9 @@ async function switchPlace() {
   if (badge) badge.disabled = true;
   try {
     if (onServer()) {
-      // Zpátky na počítač jde jen okno, které z počítače přišlo. Z prohlížeče
-      // to nejde vůbec — a otvírat místo toho nastavení je matoucí: člověk
-      // klikl na „server", ne na ozubené kolo.
-      if (!HubServer.backTo('local')) {
-        toast('Tohle okno se na serveru neotevřelo z počítače — spusť hub na něm.');
-      }
+      // Zpátky na počítač jde jen okno, které z počítače přišlo. V prohlížeči
+      // se odznak nedá ani zmáčknout (renderPlace), takže se tu nic neohlašuje.
+      HubServer.backTo('local');
       return;
     } else {
       const res = await HubServer.go(hubIO()).catch((e) => ({error: e.message}));
@@ -1024,10 +1021,16 @@ function renderPlace() {
   badge.textContent = u ? 'SERVER' : 'PC';
   badge.setAttribute('aria-label', 'Claude Code ' + placeName());
   badge.classList.toggle('on-server', !!u);
+  /* Přepnout jde jen z appky: okno v prohlížeči se na počítač vrátit nemá kam.
+     Tam je odznak pouhá cedulka — po kliknutí se nestane nic a netváří se, že
+     by mělo. Dřív otvíral nastavení, což s nápisem „server" nesouvisí. */
+  const lzePrepnout = !u || !!(window.HubServer && HubServer.localBack());
+  badge.classList.toggle('plain', !lzePrepnout);
+  badge.onclick = lzePrepnout ? switchPlace : null;
   badge.title = u
-    ? `Claude Code server · ${u.name || u.email} — přepnout na počítač`
+    ? `Claude Code server · ${u.name || u.email}` +
+      (lzePrepnout ? ' — přepnout na počítač' : '')
     : 'Claude Code PC — přepnout do prostoru na serveru';
-  badge.onclick = switchPlace;
   // Počítač, na který Claude z prostoru dosáhne (hub/pocitac.py).
   if (u) HubPocitac.chip(hubIO());
   // Připojené předplatné, které běžící prostor ještě nemá — jednou za načtení.

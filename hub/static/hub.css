@@ -79,6 +79,10 @@ body { display: flex; flex-direction: column; }
 }
 .topbar-badge:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .topbar-badge:disabled { cursor: default; opacity: .8; }
+/* Cedulka, ne tlačítko: v prohlížeči se přepnout nedá, tak ať to ani
+   nenabízí — jen říká, kde jsem. */
+.topbar-badge.plain { cursor: default; }
+.topbar-badge.plain:hover { background: none; }
 .topbar-badge:disabled:hover { background: none; }
 .topbar-badge .ico { font-size: 11px; opacity: .85; }
 /* Počítač, na který Claude z prostoru dosáhne (pocitac.js). */
@@ -1042,6 +1046,9 @@ body { display: flex; flex-direction: column; }
 .vault-modal .onb-box { width: min(1180px, 100%); height: min(860px, 94vh); }
 .vault-modal .onb-head { padding: 14px 18px 12px; }
 .vault-modal .onb-mark .ico { width: 26px; height: 26px; }
+/* Okno firemního Obsidianu jede celé fialově: značka, vybraná poznámka,
+   přepínač čtení i odkazy si barvu berou z --accent. */
+.vault-modal.firma { --accent: var(--firma); }
 .vault-modal .spacer { flex: 1; }
 .vault-modal .set-nav { width: 290px; gap: 8px; padding: 12px 10px; }
 .vault-search {

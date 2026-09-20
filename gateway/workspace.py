@@ -550,6 +550,18 @@ def ensure(user):
     safefs.write_text(home, ".claude/hub-config.json",
                       json.dumps(_hub_config(user, home), ensure_ascii=False, indent=2))
 
+    # Wrapper, kterým se v prostoru spouští agent, patří k běžícímu hubu, ne
+    # k době, kdy domov vznikl. Bez tohohle si každý starší domov nesl svou
+    # kopii z instalace dál a nová verze hubu se v tabu vůbec neprojevila —
+    # hub sahá nejdřív po ~/.claude/agent-wrapper.sh, teprve pak po zdroji.
+    try:
+        with open(os.path.join(REPO_DIR, "agent-wrapper.sh"), encoding="utf-8") as fh:
+            wrapper = fh.read()
+    except OSError:
+        wrapper = ""
+    if wrapper and safefs.read_text(home, ".claude/agent-wrapper.sh") != wrapper:
+        safefs.write_text(home, ".claude/agent-wrapper.sh", wrapper, mode=0o755)
+
     # Přihlášení Claude Code přichází v prostředí (session_env) a předschválí
     # ho hub v prostoru sám (hub/predplatne.py) — do ~/.claude.json brána
     # nesahá. Symlink na sdílené přihlášení z dřívějšího central se ruší:

@@ -861,7 +861,10 @@
   async function open(opts) {
     close();
     io = opts;
-    box = node('div', 'onb set-modal vault-modal');
+    // Firemní trezor je fialový jako všude jinde — třída přebije barvu
+    // prostředí uvnitř celého okna, ať se osobní a firemní nespletou.
+    box = node('div', 'onb set-modal vault-modal' +
+                      (io && io.vault === 'firma' ? ' firma' : ''));
     box.innerHTML = `
       <div class="onb-box">
         <div class="onb-head">
