@@ -2072,14 +2072,16 @@ function newTabMenu(btn) {
 
 function topbarMenu(btn) {
   const drawer = window.HubMobile;
-  const onChats = !$('chats-view').hidden;
   const open = (view) => {
     sidebarView(view);
     if (drawer) drawer.openDrawer();
   };
+  /* Bez fajfky a bez zvýraznění: „Projekty" tu nejsou zapnutá volba, ale
+     místo, kam se jde. Modrá s fajfkou vypadala, jako by na ně bylo právě
+     kliknuto. */
   const items = [
-    {icon: 'i-folder', label: 'Projekty', on: !onChats, run: () => open('projects')},
-    {icon: 'i-note', label: 'Konverzace', on: onChats, run: () => open('chats')},
+    {icon: 'i-folder', label: 'Projekty', run: () => open('projects')},
+    {icon: 'i-note', label: 'Konverzace', run: () => open('chats')},
   ];
   // Obsidiany jen tam, kde nějaké jsou — prázdná položka neřekne nic.
   const mem = STATE.memory || {};

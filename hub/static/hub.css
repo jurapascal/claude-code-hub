@@ -1587,7 +1587,9 @@ body { display: flex; flex-direction: column; }
   /* Horní lišta na telefonu: vlevo značka a kde jsem, vpravo jedna ikona
      s nabídkou. Čtyři ikony vedle sebe se sem nevešly — lišta se lámala do
      dvou řádků a na poslední se nedalo trefit. */
-  .topbar { padding: 0 8px; gap: 8px; }
+  /* Levý okraj drží jednu svislici: značka v liště, „+" pod ní i název tabu
+     začínají na stejném místě (.tabplus i .tab mají vlevo 10 px). */
+  .topbar { padding: 0 8px 0 10px; gap: 8px; }
   .topbar-title { min-width: 0; gap: 7px; }
   .topbar-title strong { display: none; }   /* odznak říká totéž a kratčeji */
   .drawer-toggle { display: none; }         /* projekty jsou v nabídce */
@@ -1625,7 +1627,7 @@ body { display: flex; flex-direction: column; }
   /* Tři „+" s popiskem zabraly celou lištu a na otevřené taby nezbylo
      místo — na telefonu je z nich jedno „+" a nabídka pod ním. */
   #btn-new-agent, #btn-new-firma, #btn-new-shell { display: none; }
-  .tabplus-one { display: inline-flex; justify-content: center; min-width: 42px; }
+  .tabplus-one { display: inline-flex; justify-content: flex-start; min-width: 40px; }
   .tabplus-one[hidden] { display: none; }
   .topbar { height: 48px; padding-top: env(safe-area-inset-top); }
 
