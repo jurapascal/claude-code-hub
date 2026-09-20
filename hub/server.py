@@ -120,7 +120,7 @@ class Session:
     """A pty running one bash session, plus the scrollback we replay on reload."""
 
     def __init__(self, sid, title, kind, path, argv, cwd, cols, rows,
-                 agent="", model="", env=None):
+                 agent="", model="", env=None, vault=""):
         self.id = sid
         self.title = title
         self.kind = kind
@@ -129,6 +129,12 @@ class Session:
         # ze serveru, takže bez toho by tab po F5 zapomněl, kdo v něm běží.
         self.agent = agent
         self.model = model
+        # Nad kterým trezorem tab běží. Drží se to tu ze stejného důvodu jako
+        # agent: po reloadu (nebo když proxy zavře nečinné spojení) se taby
+        # obnovují ze serveru a firemní tab by jinak zapomněl, že je firemní —
+        # v liště by přestal svítit fialově, což je jediné, podle čeho se
+        # pozná, že se píše do trezoru celého týmu.
+        self.vault = vault
         self.started = time.time()
         # Spustil se agent s možností bypassu? Bez ní ho v tabu zapnout nejde.
         self.bypass = (env or {}).get("HUB_AGENT_BYPASS") == "1"
@@ -248,7 +254,7 @@ class Session:
         return {"id": self.id, "title": self.title, "kind": self.kind,
                 "path": self.path, "exited": self.exited,
                 "agent": self.agent, "model": self.model, "bypass": self.bypass,
-                "resume": self.resume}
+                "resume": self.resume, "vault": self.vault}
 
 
 class Hub:
@@ -295,7 +301,7 @@ class Hub:
         # a zavření tabu pak uloží do paměti právě ji.
         env = {**env, "HUB_TAB": core.tab_tag(sid)}
         session = Session(sid, title, kind, path, core.bash_argv(script), cwd,
-                          cols, rows, agent=agent, model=model, env=env)
+                          cols, rows, agent=agent, model=model, env=env, vault=vault)
         self.sessions[sid] = session
         return session
 

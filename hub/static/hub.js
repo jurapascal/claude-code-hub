@@ -2145,9 +2145,16 @@ function restore(list) {
     if (!tab) {
       tab = createTab({kind: info.kind, path: info.path, title: info.title,
                        id: info.id, agent: info.agent, model: info.model,
-                       bypass: info.bypass, resume: info.resume, background: true});
+                       bypass: info.bypass, resume: info.resume,
+                       // Trezor drží server (Session.info) — bez něj by
+                       // firemní tab po obnově přestal být fialový.
+                       vault: info.vault, background: true});
     }
     tab.bypass = !!info.bypass;
+    if (info.vault !== undefined && tab.vault !== info.vault) {
+      tab.vault = info.vault || '';
+      paintAgent(tab);
+    }
     attachTab(tab);
   }
   const keep = before && TABS.includes(before) ? before : TABS[TABS.length - 1];
