@@ -148,6 +148,7 @@ jedno a totéž a liší se jen dvě věci pod ním:
 | [Claude Code CLI](https://code.claude.com/docs/en/setup) | vlastní účet, viz níže | všude |
 | [Git for Windows](https://git-scm.com/downloads/win) | dodává `bash.exe` — bez něj se tab neotevře | **Windows (povinné)** |
 | `pywinpty` | ConPTY terminál; instalačka ho doinstaluje sama | Windows |
+| `truststore` | certifikát serveru ověří samotné Windows, ne kopie úložiště v Pythonu; instalačka ho doinstaluje sama | Windows, volitelné |
 | chromium / WebKitGTK | okno bez adresního řádku (jinak se hub otevře jako záložka) | Linux, macOS |
 | Node.js 20+ | jen pro volitelný Playwright MCP | všude |
 | [Obsidian](https://obsidian.md/download) | paměť (`/save`, `/learn`, `/project`) a panel poznámek | volitelné, všude |
@@ -193,6 +194,7 @@ neotevírá černá konzole; kdyby okno zůstalo prázdné, důvod je v
 |---|---|
 | **Git for Windows** | dodává `bash.exe`, na kterém stojí každý tab a všechny slash příkazy — bez něj se tab neotevře |
 | **pywinpty** | ConPTY terminál; instalačka ho doinstaluje sama |
+| **truststore** | certifikát serveru nechá ověřit Windows. Bez něj se Python drží kopie úložiště z okamžiku startu a jedna propadlá kotva (stará kopie ISRG Root X2 — stejné jméno jako ta platná) shodí i platný certifikát — hub hlásí „certificate has expired“ tam, kde prohlížeč stránku otevře |
 | **Python 3.9+** | běh aplikace |
 
 Zástupce **Claude Code** v nabídce Start spouští `pythonw.exe`, takže se vedle

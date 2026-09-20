@@ -64,6 +64,9 @@ def doctor():
     print("  " + "─" * 42)
     for label, value in [
         ("platforma", info["platform"]),
+        # Bez kořenových certifikátů se hub nepřihlásí na server, i když tatáž
+        # adresa v prohlížeči chodí — prohlížeč si důvěru vede zvlášť.
+        ("certifikáty", account.ca_state()),
         ("bash", info["bash"] or "CHYBÍ"),
         ("git", info["git"] or "chybí"),
         ("AI agenti", _agents_summary(info)),

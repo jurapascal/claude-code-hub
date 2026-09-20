@@ -27,7 +27,10 @@ Když je server nedostupný, hub se netváří jako odhlášený — vrátí pos
 známý účet s `offline: True`. Odhlášení kvůli výpadku sítě by znamenalo psát
 heslo znovu pokaždé, když je vlak v tunelu.
 """
+import datetime
+import email.utils
 import json
+import os
 import socket
 import ssl
 import urllib.error
@@ -73,6 +76,259 @@ def _host(base):
     return urllib.parse.urlsplit(base).netloc or base
 
 
+# Ověření certifikátu: nejdřív úložištěm systému, pak teprve po svém.
+_CTX = None
+_CTX_OS = False
+
+
+def _context():
+    """Jak se ověřuje certifikát brány.
+
+    Python si při startu udělá kopii seznamu důvěryhodných certifikátů a dál
+    se drží jí: stačí v úložišti jeden propadlý kořen a spojení skončí na
+    „certificate has expired", i když prohlížeč na tomtéž stroji tutéž adresu
+    otevře bez mrknutí — ten se ptá Windows a ty si cestu najdou jinudy.
+    S balíčkem `truststore` se ptáme stejně jako prohlížeč. Když není,
+    zůstává výchozí ověření (a `--doctor` to řekne).
+    """
+    global _CTX, _CTX_OS
+    if _CTX is None:
+        try:
+            import truststore
+            _CTX = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            _CTX_OS = True
+        except Exception:
+            _CTX = ssl.create_default_context()
+            _CTX_OS = False
+    return _CTX
+
+
+def _ca_store_hint():
+    """Kde tenhle počítač bere důvěryhodné certifikáty — a co s tím, když je nemá.
+
+    Ta samá adresa chodí v prohlížeči a v hubu ne, protože Python si důvěru
+    nebere z prohlížeče. Na Macu ji build z python.org nemá vůbec, dokud
+    nespustíš Install Certificates.command; na Windows kořeny doplňují
+    aktualizace; na Linuxu je nese balíček ca-certificates.
+    """
+    for name in ("SSL_CERT_FILE", "SSL_CERT_DIR"):
+        path = os.environ.get(name)
+        if path and not os.path.exists(path):
+            return (f"proměnná {name} ukazuje na {path}, což tu není. "
+                    "Smaž ji, nebo ji naveď na skutečný seznam certifikátů.")
+    try:
+        empty = not ssl.create_default_context().cert_store_stats().get("x509_ca")
+    except Exception:
+        empty = False
+    if empty:
+        if core.IS_MAC:
+            return ("tenhle Python nemá žádné důvěryhodné certifikáty. Otevři "
+                    "složku Applications/Python 3.x a spusť "
+                    "Install Certificates.command.")
+        if core.IS_WINDOWS:
+            return ("tenhle Python nemá žádné důvěryhodné certifikáty — "
+                    "přeinstaluj ho z python.org.")
+        return ("tenhle počítač nemá žádné důvěryhodné certifikáty: "
+                "sudo apt install --reinstall ca-certificates.")
+    if core.IS_MAC:
+        return ("doinstaluj aktualizace systému, nebo v Applications/Python 3.x "
+                "spusť Install Certificates.command.")
+    if core.IS_WINDOWS:
+        return ("doinstaluj aktualizace Windows (doplňují kořenové certifikáty) "
+                "a zkus v antiviru vypnout kontrolu HTTPS.")
+    return "aktualizuj certifikáty: sudo apt install --reinstall ca-certificates."
+
+
+# Časy v certifikátu: UTCTime (do roku 2049) a GeneralizedTime, každý pevné
+# délky — podle toho se v DER poznají.
+_TIME_TAGS = {0x17: (13, "%y%m%d%H%M%SZ"), 0x18: (15, "%Y%m%d%H%M%SZ")}
+
+
+def _der_validity(der):
+    """Od kdy do kdy certifikát platí — vyčtené přímo z DER.
+
+    Platnost sedí v certifikátu před rozšířeními, takže první dva časy, na
+    které se v bajtech narazí, jsou právě notBefore a notAfter. Je to málo
+    kódu a nepotřebuje to knihovnu navíc; když se netrefí, vrátí (None, None)
+    a hláška zůstane obecná.
+    """
+    found = []
+    i = 0
+    while i < len(der) - 2 and len(found) < 2:
+        size, fmt = _TIME_TAGS.get(der[i], (0, ""))
+        if size and der[i + 1] == size:
+            raw = der[i + 2:i + 2 + size].decode("ascii", "ignore")
+            try:
+                found.append(datetime.datetime.strptime(raw, fmt)
+                             .replace(tzinfo=datetime.timezone.utc))
+                i += 2 + size
+                continue
+            except ValueError:
+                pass
+        i += 1
+    return (found[0], found[1]) if len(found) == 2 else (None, None)
+
+
+def _peer_validity(host, timeout=5):
+    """Platnost certifikátu, který server ukazuje — jen pro text chyby.
+
+    Ověření je tady schválně vypnuté: ptáme se právě proto, že neprošlo.
+    Spojení se nepoužije na nic dalšího a nic se po něm neposílá.
+    """
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    name, _, port = host.partition(":")
+    try:
+        with socket.create_connection((name, int(port or 443)), timeout) as raw:
+            with ctx.wrap_socket(raw, server_hostname=name) as tls:
+                der = tls.getpeercert(True)
+    except Exception:
+        return None, None
+    return _der_validity(der or b"")
+
+
+def _den(stamp):
+    """8. 12. 2026 — v UTC, jak je datum napsané v certifikátu, a bez %-d
+    (to na Windows není)."""
+    return f"{stamp.day}. {stamp.month}. {stamp.year}"
+
+
+def _clock_drift(host, timeout=5):
+    """O kolik jdou hodiny v počítači vedle proti serveru — nebo None.
+
+    Ptáme se bez ověření certifikátu schválně: voláme to právě proto, že
+    ověření neprošlo, a z odpovědi čteme jedinou věc — hlavičku `Date`.
+    Nic se neposílá (HEAD bez tokenu) a odpověď se nikam nepromítne než do
+    textu chyby. Bez tohohle nejde odlišit propadlý certifikát od počítače,
+    který si myslí, že je jiný rok.
+    """
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    req = urllib.request.Request(f"https://{host}/gw/info", method="HEAD")
+    req.add_header("User-Agent", UA)
+    try:
+        try:
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as res:
+                stamp = res.headers.get("Date") or ""
+        except urllib.error.HTTPError as exc:
+            stamp = exc.headers.get("Date") or ""
+        there = email.utils.parsedate_to_datetime(stamp)
+    except Exception:
+        return None
+    if there is None:
+        return None
+    return datetime.datetime.now(datetime.timezone.utc) - there
+
+
+def _kolik(count, one, few, many):
+    """3 dny, ne 3 dní — čeština počítá do čtyř jinak."""
+    return f"{count} " + (one if count == 1 else few if 2 <= count <= 4 else many)
+
+
+def _drift_words(drift):
+    """„3 měsíce napřed" — o kolik a kterým směrem, lidsky."""
+    seconds = abs(drift.total_seconds())
+    days = seconds / 86400
+    if days >= 60:
+        size = _kolik(round(days / 30), "měsíc", "měsíce", "měsíců")
+    elif days >= 2:
+        size = _kolik(round(days), "den", "dny", "dní")
+    else:
+        size = _kolik(round(seconds / 3600), "hodinu", "hodiny", "hodin")
+    return size + (" napřed" if drift.total_seconds() > 0 else " pozadu")
+
+
+def ca_state():
+    """Čím se ověřuje certifikát brány — řádek do `--doctor`.
+
+    Nula kořenů znamená, že na server přes HTTPS nedosáhne nic, i když
+    v prohlížeči na tomtéž stroji adresa chodí.
+    """
+    _context()
+    if _CTX_OS:
+        return "úložiště systému (truststore)"
+    try:
+        count = ssl.create_default_context().cert_store_stats().get("x509_ca", 0)
+    except Exception as exc:
+        return f"nejdou načíst ({exc})"
+    if not count:
+        return "ŽÁDNÉ — " + _ca_store_hint()
+    hint = ("  (kopie z úložiště Windows; propadlý kořen v ní shodí i platný "
+            "certifikát — spolehlivější je pip install truststore)"
+            if core.IS_WINDOWS else "")
+    return _kolik(count, "kořen", "kořeny", "kořenů") + hint
+
+
+def _stale_root_hint():
+    """Propadlý kořen v úložišti — jak ho na téhle platformě obejít."""
+    if core.IS_WINDOWS:
+        if not _CTX_OS:
+            return ("Spusť pip install truststore — cestu pak hledají samotné "
+                    "Windows, stejně jako prohlížeči, a propadlou kotvu obejdou. "
+                    "Nebo ji smaž v certmgr.msc.")
+        return ("Pusť aktualizace Windows; když to nepomůže, otevři certmgr.msc "
+                "→ Důvěryhodné kořenové certifikační autority a smaž propadlé "
+                "(typicky DST Root CA X3).")
+    if core.IS_MAC:
+        return ("Pusť aktualizace systému a v Applications/Python 3.x spusť "
+                "Install Certificates.command.")
+    return "Obnov je: sudo apt install --reinstall ca-certificates."
+
+
+def _tls_reason(err, host):
+    """Certifikát neprošel — čí je to chyba a co se s tím dá dělat.
+
+    Věta „nemá platný certifikát" sváděla na server. Jenže když tatáž adresa
+    jinde chodí, je server v pořádku a nedůvěřuje mu jen tenhle počítač —
+    proto se rozlišuje podle důvodu, který vrátí OpenSSL.
+    """
+    code = getattr(err, "verify_code", 0)
+    msg = (getattr(err, "verify_message", "") or str(err) or "").lower()
+    if code in (9, 10) or "expired" in msg or "not yet valid" in msg:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        start, end = _peer_validity(host)
+        # Papír serveru platí, a přesto „propadlý": propadlo něco v řetězu
+        # důvěry na tomhle počítači, ne na serveru.
+        if start and end and start <= now <= end:
+            return (f"Certifikát {host} platí ({_den(start)} – {_den(end)}), ale "
+                    "tenhle počítač ho odmítá kvůli propadlému certifikátu ve "
+                    "svém úložišti. " + _stale_root_hint())
+        # Hodiny napřed nebo pozadu vypadají přesně jako propadlý certifikát,
+        # tak se server rovnou zeptáme, kolik je u něj hodin.
+        drift = _clock_drift(host)
+        if drift is not None and abs(drift.total_seconds()) > 43200:
+            return (f"Hodiny v tomhle počítači jdou o {_drift_words(drift)} proti "
+                    f"serveru — proto mu certifikát {host} připadá neplatný. "
+                    "Srovnej v počítači datum a čas.")
+        if end and now > end:
+            return (f"Certifikát pro {host} propadl {_den(end)}. Obnov ho na "
+                    "serveru: sudo certbot renew.")
+        if start and now < start:
+            return f"Certifikát pro {host} začne platit až {_den(start)}."
+        return (f"Certifikát pro {host} neplatí. Jestli jinde chodí, má tenhle "
+                "počítač špatné datum — zkontroluj hodiny.")
+    if code == 62 or "hostname mismatch" in msg or "doesn't match" in msg:
+        return (f"Certifikát na {host} je vydaný na jinou adresu. Zkontroluj, "
+                "jestli je adresa napsaná správně.")
+    # Kód z OpenSSL rozlišuje, kde v řetězu to prasklo; text se čte jen tehdy,
+    # když kód nepřišel (jiná knihovna, starší Python).
+    signed = msg.replace("-", " ")
+    if code == 19 or (not code and "self signed certificate in" in signed):
+        return (f"Certifikát {host} vede ke kořeni, kterému tenhle počítač nevěří. "
+                "Obvykle to dělá antivirus s kontrolou HTTPS nebo firemní firewall — "
+                f"vypni u něj kontrolu HTTPS. Jinak {_ca_store_hint()}")
+    if code == 18 or (not code and "self signed certificate" in signed):
+        return (f"Certifikát na {host} si server vystavil sám, nikdo za něj neručí. "
+                "Nasaď na bránu certifikát od Let's Encrypt (gateway/install.sh).")
+    if code in (2, 20, 21) or "local issuer" in msg or "unable to get" in msg:
+        return (f"Vydavatele certifikátu {host} tenhle počítač nezná. Server je "
+                f"nejspíš v pořádku — {_ca_store_hint()}")
+    detail = getattr(err, "verify_message", "") or "ověření selhalo"
+    return f"Certifikát {host} neprošel ověřením: {detail}."
+
+
 def _offline_reason(exc, base):
     """Proč se k serveru nedá dostat — tak, aby se podle toho dalo něco udělat."""
     host = _host(base)
@@ -80,7 +336,7 @@ def _offline_reason(exc, base):
     if isinstance(reason, socket.gaierror):
         return f"Adresu {host} se nepodařilo najít. Je správně napsaná?"
     if isinstance(reason, ssl.SSLCertVerificationError):
-        return f"{host} nemá platný certifikát, spojení není bezpečné."
+        return _tls_reason(reason, host)
     if isinstance(reason, ConnectionRefusedError):
         return f"{host} odmítl spojení. Server asi neběží."
     if isinstance(reason, (socket.timeout, TimeoutError)):
@@ -104,7 +360,7 @@ def _call(path, token="", payload=None, method=None, base=None, timeout=TIMEOUT)
     if token:
         req.add_header("Authorization", "Bearer " + token)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as res:
+        with urllib.request.urlopen(req, timeout=timeout, context=_context()) as res:
             body = res.read().decode("utf-8", "replace")
         return (json.loads(body) if body else {}), "", ""
     except urllib.error.HTTPError as exc:

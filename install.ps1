@@ -143,6 +143,28 @@ if ($hasPty) {
     Write-Dim "$Python -m pip install --user pywinpty"
 }
 
+# ── 2b. truststore — certifikáty nechá rozsoudit Windows ─────────────────────
+# Python si jinak udělá kopii úložiště a drží se jí: jedna propadlá kotva
+# (v praxi stará kopie ISRG Root X2) shodí i platný certifikát a přihlášení
+# na server skončí na „certificate has expired", zatímco prohlížeč tutéž
+# adresu otevře. Není to povinné, hub bez něj ověřuje po staru.
+try {
+    & $Python -c "import truststore" 2>$null
+    $hasTrust = ($LASTEXITCODE -eq 0)
+} catch { $hasTrust = $false }
+if (-not $hasTrust) {
+    & $Python -m pip install --user --disable-pip-version-check --quiet truststore
+    try {
+        & $Python -c "import truststore" 2>$null
+        $hasTrust = ($LASTEXITCODE -eq 0)
+    } catch { $hasTrust = $false }
+}
+if ($hasTrust) {
+    Write-Ok 'truststore (certifikáty ověřují Windows)'
+} else {
+    Write-Dim 'truststore není — certifikáty ověří Python po svém'
+}
+
 # ── 3. Git for Windows — dodává bash, na kterém stojí wrapper i slash příkazy ─
 $GitBash = $null
 $bashCandidates = @(
