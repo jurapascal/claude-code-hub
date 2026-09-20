@@ -978,13 +978,24 @@ async function switchPlace() {
   }
 }
 
+/* Jak se tomuhle prostředí říká: „PC" na počítači, „server" v prostoru.
+   Stojí to nahoře v liště, na uvítací obrazovce i v titulku okna — ať je
+   z každého místa poznat, kde se to, co napíšu, odehraje. */
+function placeName() {
+  return onServer() ? 'server' : 'PC';
+}
+
 function renderPlace() {
   const badge = $('btn-place');
   if (!badge) return;
   const u = STATE.config.gateway_user;
+  document.title = 'Claude Code ' + placeName();
+  const big = $('welcome-place');
+  if (big) big.textContent = placeName();
   // Barva celé appky se odvozuje odsud: počítač jantarově, prostor modře.
   document.documentElement.dataset.place = u ? 'server' : 'pc';
   badge.textContent = u ? 'SERVER' : 'PC';
+  badge.setAttribute('aria-label', 'Claude Code ' + placeName());
   badge.classList.toggle('on-server', !!u);
   badge.title = u
     ? `Claude Code server · ${u.name || u.email} — přepnout na počítač`
@@ -1551,13 +1562,15 @@ function paintAgent(tab) {
     return;
   }
   badge.hidden = false;
-  // Firemní trezor přebíjí barvu agenta: nad čím tab běží je důležitější
-  // než kdo v něm běží — do firemního Obsidianu se zapisuje celému týmu.
-  tab.el.classList.toggle('firma', tab.vault === 'firma');
-  badge.style.setProperty('--agent-color',
-                          tab.vault === 'firma' ? 'var(--firma)' : a.color);
-  badge.textContent = a.id === (STATE.default_agent || 'claude') ? '' : a.short;
+  const jiny = a.id !== (STATE.default_agent || 'claude');
+  badge.textContent = jiny ? a.short : '';
   badge.classList.toggle('named', !!badge.textContent);
+  tab.el.classList.toggle('firma', tab.vault === 'firma');
+  // Samotná tečka (výchozí agent) nese barvu prostředí — na počítači
+  // jantarová, v prostoru modrá, nad firemním trezorem fialová. Odznak se
+  // jménem si drží barvu agenta, jinak by se agenti mezi sebou nerozeznali.
+  badge.style.setProperty('--agent-color',
+    tab.vault === 'firma' ? 'var(--firma)' : (jiny ? a.color : 'var(--accent)'));
   tab.el.title = a.label + (tab.model ? ' · ' + tab.model : '');
 }
 
