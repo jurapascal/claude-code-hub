@@ -518,13 +518,14 @@
   function chip(io) {
     const host = document.querySelector('.topbar-title');
     if (!host || host.querySelector('.topbar-pc')) return;
-    const b = el('button', 'topbar-pc');
-    b.type = 'button';
+    const b = el('span', 'topbar-pc plain');
     b.hidden = true;
     b.appendChild(icon('i-laptop'));
     const label = el('span');
     b.appendChild(label);
-    b.onclick = () => global.HubSettings.open({...io, state: io.state, tab: 'ucet'});
+    /* Cedulka, ne tlačítko: říká, na který počítač Claude z prostoru
+       dosáhne. Klikalo se tu do nastavení, což s tím jménem nesouvisí —
+       podrobnosti jsou v popisku, který se ukáže po najetí. */
     host.appendChild(b);
 
     let timer = null;

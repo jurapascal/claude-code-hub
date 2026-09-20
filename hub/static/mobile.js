@@ -58,6 +58,9 @@
     };
   }
   if (scrim) scrim.onclick = closeDrawer;
+  // Křížek v hlavičce šuplíku: klika, která ho otevřela, je pod ním.
+  const closeBtn = $('btn-drawer-close');
+  if (closeBtn) closeBtn.onclick = closeDrawer;
 
   // Klik na projekt otevře tab — šuplík už jen překáží.
   for (const id of ['projects', 'memory', 'actions']) {

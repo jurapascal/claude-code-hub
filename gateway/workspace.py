@@ -543,12 +543,22 @@ def ensure(user):
         safefs.makedirs(home, rel)
     safefs.create_text(home, os.path.join(vault_rel, "memory", "MEMORY.md"), EMPTY_MEMORY)
 
-    # hub-config.json přepisujeme vždy: e-mail/jméno/vault se mohly změnit ve
-    # správě účtů a hub si je čte odsud. Ostatní stav (projekty, MCP) si hub
-    # drží jinde, tohle mu jen řekne, kde má paměť a projekty. Když je ~/.claude
-    # odkaz, odloží se stranou — hub bez vlastní konfigurace nenastartuje.
+    # hub-config.json doplňujeme při každém přihlášení: e-mail, jméno i vault
+    # se mohly změnit ve správě účtů a hub si je čte odsud. Co si v prostoru
+    # nastavil člověk sám (vývojářský režim, výchozí agent, archiv, …), ale
+    # musí zůstat — dřív se celý soubor přepsal a každé přihlášení nastavení
+    # vrátilo do výchozího stavu, takže se přepínače „samy překlikávaly".
+    # Když je ~/.claude odkaz, odloží se stranou — hub bez vlastní
+    # konfigurace nenastartuje.
+    try:
+        stary = json.loads(safefs.read_text(home, ".claude/hub-config.json") or "{}")
+    except ValueError:
+        stary = {}
+    if not isinstance(stary, dict):
+        stary = {}
     safefs.write_text(home, ".claude/hub-config.json",
-                      json.dumps(_hub_config(user, home), ensure_ascii=False, indent=2))
+                      json.dumps({**stary, **_hub_config(user, home)},
+                                 ensure_ascii=False, indent=2))
 
     # Wrapper, kterým se v prostoru spouští agent, patří k běžícímu hubu, ne
     # k době, kdy domov vznikl. Bez tohohle si každý starší domov nesl svou

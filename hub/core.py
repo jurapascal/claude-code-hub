@@ -77,7 +77,11 @@ def load_config():
         # utf-8-sig: PowerShell 5.1 rád píše BOM a json.load by na něm spadl
         with open(CONFIG_PATH, encoding="utf-8-sig") as fh:
             raw = json.load(fh)
-        cfg.update({k: v for k, v in raw.items() if v})
+        # `if v` tu drží prázdné hodnoty stranou, ať se nezahodí výchozí cesta
+        # kvůli klíči, který v souboru zbyl prázdný. Na `false` to ale platit
+        # nesmí: vypnutý přepínač se tím zahodil jako „nic" a příště se načetl
+        # zase zapnutý — v nastavení to vypadalo, že se odkliknutí neudrželo.
+        cfg.update({k: v for k, v in raw.items() if v or isinstance(v, bool)})
     except Exception:
         pass  # no config yet → defaults; the app must never fail to start on this
     # Vývojářský režim přibyl ve 2.1.0 a výchozí vypnuto platí jen pro nové
