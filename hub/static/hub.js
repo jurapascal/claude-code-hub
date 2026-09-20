@@ -2015,6 +2015,13 @@ function showMenu(x, y, items, opts) {
     el.innerHTML = icon(item.on ? 'i-check' : item.icon) + '<span></span>';
     if (item.on) el.classList.add('on');
     el.querySelector('span').textContent = item.label;
+    /* Vlastní barva položky — v prostoru je osobní modrý a firemní fialový,
+       stejně jako tlačítka v liště a tečka na tabu. V nabídce to musí být
+       poznat taky, jinak se do firemního trezoru klikne omylem. */
+    if (item.color) {
+      el.style.color = item.color;
+      el.querySelector('.ico').style.color = item.color;
+    }
     el.onclick = (ev) => {
       if (Date.now() - menuArmedAt < MENU_ARM_MS) {
         ev.preventDefault();
@@ -2049,12 +2056,13 @@ function newTabMenu(btn) {
   const items = [];
   const a = agentById(STATE.default_agent) || agentList(true)[0];
   if (a && cfg.agent !== false && cfg.claude !== false) {
-    items.push({icon: 'i-terminal', label: newTabLabel(),
+    items.push({icon: 'i-terminal', label: newTabLabel(), color: 'var(--accent)',
                 run: () => openTab({kind: 'project', path: STATE.home,
                                     title: newTabLabel(), agent: a.id})});
   }
   if (STATE.firma && STATE.firma.vault) {
-    items.push({icon: 'i-terminal', label: 'Server firemní', run: () => openFirmaTab()});
+    items.push({icon: 'i-terminal', label: 'Server firemní', color: 'var(--firma)',
+                run: () => openFirmaTab()});
   }
   if (cfg.shell !== false && STATE.config.dev_mode) {
     items.push({icon: 'i-terminal', label: 'Terminál',
@@ -2087,10 +2095,11 @@ function topbarMenu(btn) {
   const mem = STATE.memory || {};
   if (mem.enabled) {
     items.push({icon: 'i-book', label: 'Otevřít ' + (onServer() ? 'osobní' : 'PC') + ' Obsidian',
+                color: 'var(--accent)',
                 run: () => (vaultPreview() ? openVault() : openExternal('', 'brain'))});
   }
   if (STATE.firma && STATE.firma.vault) {
-    items.push({icon: 'i-book', label: 'Otevřít firemní Obsidian',
+    items.push({icon: 'i-book', label: 'Otevřít firemní Obsidian', color: 'var(--firma)',
                 run: () => openVault('', 'firma')});
   }
   items.push(
