@@ -96,7 +96,7 @@ const CSS_VARS = {
   AMBER: '--amber', BG: '--bg', BG_SIDEBAR: '--bg-sidebar', BG_CARD: '--bg-card',
   FG: '--fg', FG_BRIGHT: '--fg-bright', DIM: '--dim', GREEN: '--green',
   RED: '--red', CARD_HOVER: '--card-hover', BORDER: '--border', SECTION: '--section',
-  CHART: '--chart',
+  CLOUD: '--cloud', FIRMA: '--firma', CHART: '--chart',
 };
 
 function palette() { return DARK ? STATE.palette.dark : STATE.palette.light; }
@@ -838,6 +838,11 @@ function renderMemory() {
   const mem = STATE.memory;
   $('memory-section').hidden = !mem.enabled;
   if (!mem.enabled) return;
+  // Na počítači je to prostě Obsidian toho počítače. V prostoru na serveru
+  // stojí vedle firemního, a tam dává smysl „osobní".
+  const svuj = onServer() ? 'osobní' : 'PC';
+  $('memory-head').textContent = (onServer() ? 'OSOBNÍ' : 'PC') + ' OBSIDIAN';
+  $('btn-brain-text').textContent = 'Otevřít ' + svuj + ' Obsidian';
   const c = mem.counts;
   $('memory-summary').innerHTML =
     `<span class="learnings">${icon('i-bulb')} ${c.learnings || 0}</span>
@@ -945,15 +950,41 @@ function renderFooter() {
 
 /* Kde se pracuje. Okno vypadá na počítači i na serveru stejně, tak to říká
    štítek v hlavičce — a klik na něj vede do Účtu, odkud se přepíná. */
+/* Přepnutí prostředí jedním kliknutím. Dřív se na to muselo přes
+   Nastavení → Účet, což je na věc, která se dělá několikrát denně, schovaná
+   cesta. Když přepnout nejde (není adresa serveru, vypršelo přihlášení,
+   prostor se neotevřel z počítače), otevře se účet — tam se to dá spravit. */
+async function switchPlace() {
+  const badge = $('btn-place');
+  if (badge) badge.disabled = true;
+  try {
+    if (onServer()) {
+      // Zpátky na počítač jde jen okno, které z počítače přišlo.
+      if (HubServer.backTo('local')) return;
+      toast('Tohle okno se na serveru neotevřelo z počítače — spusť hub na něm.');
+    } else {
+      const res = await HubServer.go(hubIO()).catch((e) => ({error: e.message}));
+      if (res && res.ok) return;
+      if (res && res.error) toast(res.error);
+    }
+    HubSettings.open({...hubIO(), state: STATE, tab: 'ucet'});
+  } finally {
+    if (badge) badge.disabled = false;
+  }
+}
+
 function renderPlace() {
-  const badge = document.querySelector('.topbar-badge');
+  const badge = $('btn-place');
   if (!badge) return;
   const u = STATE.config.gateway_user;
-  badge.textContent = u ? 'SERVER' : 'HUB';
+  // Barva celé appky se odvozuje odsud: počítač jantarově, prostor modře.
+  document.documentElement.dataset.place = u ? 'server' : 'pc';
+  badge.textContent = u ? 'SERVER' : 'PC';
   badge.classList.toggle('on-server', !!u);
-  badge.title = u ? `Prostor na serveru · ${u.name || u.email}` : '';
-  badge.onclick = u
-    ? () => HubSettings.open({...hubIO(), state: STATE, tab: 'ucet'}) : null;
+  badge.title = u
+    ? `Claude Code server · ${u.name || u.email} — přepnout na počítač`
+    : 'Claude Code PC — přepnout do prostoru na serveru';
+  badge.onclick = switchPlace;
   // Počítač, na který Claude z prostoru dosáhne (hub/pocitac.py).
   if (u) HubPocitac.chip(hubIO());
   // Připojené předplatné, které běžící prostor ještě nemá — jednou za načtení.
@@ -992,7 +1023,7 @@ function dayScene(part) {
 
   const noc = part === 'noc';
   const y = {rano: 60, den: 34, vecer: 62, noc: 40}[part];
-  const disc = noc ? 'var(--dim)' : 'var(--amber)';
+  const disc = noc ? 'var(--dim)' : 'var(--sun)';
 
   // záře kolem tělesa
   const glow = add('radialGradient', {id: 'dayglow'});
@@ -1061,12 +1092,13 @@ function renderWelcome() {
   if (cfg.agent !== false && cfg.claude !== false) {
     const a = agentById(STATE.default_agent) || agentList(true)[0];
     if (a) {
-      actions.push(['i-terminal', 'Otevřít ' + a.label, true,
-        () => openTab({kind: 'project', path: STATE.home, title: a.label,
+      // Stejné pojmenování jako v liště tabů: kde se bude pracovat.
+      actions.push(['i-terminal', 'Otevřít ' + newTabLabel(), true,
+        () => openTab({kind: 'project', path: STATE.home, title: newTabLabel(),
                        agent: a.id})]);
     }
   }
-  if (cfg.shell !== false) {
+  if (cfg.shell !== false && STATE.config.dev_mode) {
     actions.push(['i-terminal', 'Otevřít terminál', false,
       () => openTab({kind: 'shell', path: '', title: 'terminál'})]);
   }
@@ -1256,22 +1288,34 @@ function renderDoctor() {
 /* Které „+" tlačítko se ukazuje. Kdo jede jen v agentovi, nechce vedle sebe
    pořád tlačítko na holý shell — a naopak. Klíč `claude` je tu z verzí do 1.6,
    kde se tlačítko tak jmenovalo; starý konfig se tím pádem nemusí přepisovat. */
+function newTabLabel() {
+  // Tlačítko říká, KDE se bude pracovat, ne kdo to odpracuje — to je vidět
+  // na odznaku agenta a v popisku. Na počítači „PC", v prostoru „Server";
+  // kde je firemní trezor, je potřeba rozlišit i nad čím Claude pojede.
+  const firma = !!(STATE.firma && STATE.firma.vault);
+  if (!onServer()) return 'PC';
+  return firma ? 'Server osobní' : 'Server';
+}
+
 function renderNewTabButtons() {
   const cfg = STATE.config.newtab || {};
   const btn = $('btn-new-agent');
   btn.hidden = cfg.agent === false || cfg.claude === false;
-  $('btn-new-shell').hidden = cfg.shell === false;
-  // Tlačítko se jmenuje po tom, koho doopravdy spustí. Kde je firemní Obsidian,
-  // jsou tlačítka dvě — osobní a firemní — ať je vidět, nad čím Claude pojede.
+  // Holý terminál je vývojářská věc. Kdo hub používá na psaní s agentem, má
+  // vedle tabů tlačítko, které nikdy nezmáčkne — a když ho zmáčkne omylem,
+  // kouká do shellu a neví, kde je.
+  $('btn-new-shell').hidden = cfg.shell === false || !STATE.config.dev_mode;
   const firma = !!(STATE.firma && STATE.firma.vault);
   $('btn-new-firma').hidden = !firma;
   const a = agentById(STATE.default_agent) || agentList(true)[0];
   const label = btn.querySelector('span');
   if (a && label) {
-    label.textContent = firma ? a.label + ' osobní' : a.label;
-    btn.title = firma ? 'Otevřít ' + a.label + ' nad osobním Obsidianem'
-      : (agentList(true).length > 1
-        ? 'Otevřít agenta (šipka dolů = výběr)' : 'Otevřít ' + a.label);
+    label.textContent = newTabLabel();
+    const kde = onServer() ? (firma ? ' nad osobním Obsidianem v prostoru'
+                                    : ' v prostoru na serveru')
+                           : ' na tomhle počítači';
+    btn.title = 'Otevřít ' + a.label + kde +
+      (agentList(true).length > 1 ? ' (pravé tlačítko = výběr agenta)' : '');
   }
 }
 
@@ -1341,7 +1385,7 @@ function newAgentMenu(ev) {
 
 /* ── tabs ─────────────────────────────────────────────────────────────────── */
 function openTab({kind, path, title, agent, model, mode, resume, fork, vault}) {
-  const tab = createTab({kind, path, title, agent, model, mode, resume});
+  const tab = createTab({kind, path, title, agent, model, mode, resume, vault});
   const dims = measure(tab);
   send({t: 'open', ref: tab.ref, kind, path, title, agent: agent || '',
         model: model || '', resume: resume || '', fork: !!fork,
@@ -1355,7 +1399,7 @@ function openWith(agentId, {path, title}) {
   return openTab({kind: 'project', path, title, agent: agentId});
 }
 
-function createTab({kind, path, title, id, agent, model, background, bypass, mode, resume}) {
+function createTab({kind, path, title, id, agent, model, background, bypass, mode, resume, vault}) {
   const ref = ++refSeq;
   const pane = document.createElement('div');
   pane.className = 'pane';
@@ -1389,7 +1433,9 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
                // A režim, do kterého se má tab po startu přepnout sám.
                bypass: !!bypass, wantMode: mode || '',
                // Ve které uložené konverzaci tab pokračuje (seznam konverzací).
-               resume: resume || ''};
+               resume: resume || '',
+               // Nad kterým trezorem tab běží — firemní se kreslí fialově.
+               vault: vault || ''};
   const toPty = (d) => {
     tab.lastInput = Date.now();          // ozvěna psaní není „agent pracuje"
     if (tab.id) send({t: 'in', id: tab.id, d});
@@ -1500,7 +1546,11 @@ function paintAgent(tab) {
     return;
   }
   badge.hidden = false;
-  badge.style.setProperty('--agent-color', a.color);
+  // Firemní trezor přebíjí barvu agenta: nad čím tab běží je důležitější
+  // než kdo v něm běží — do firemního Obsidianu se zapisuje celému týmu.
+  tab.el.classList.toggle('firma', tab.vault === 'firma');
+  badge.style.setProperty('--agent-color',
+                          tab.vault === 'firma' ? 'var(--firma)' : a.color);
   badge.textContent = a.id === (STATE.default_agent || 'claude') ? '' : a.short;
   badge.classList.toggle('named', !!badge.textContent);
   tab.el.title = a.label + (tab.model ? ' · ' + tab.model : '');
@@ -2205,13 +2255,15 @@ async function main() {
     if (ready.length > 1 && (ev.altKey || !def || !def.path)) return newAgentMenu(ev);
     const a = (def && def.path) ? def : ready[0];
     if (!a) return HubSettings.open({...hubIO(), state: STATE, tab: 'agenti'});
-    openTab({kind: 'project', path: STATE.home, title: a.label, agent: a.id});
+    // Tab se jmenuje po prostředí, ne po agentovi — v liště pak jde poznat,
+    // co běží na počítači a co v prostoru na serveru.
+    openTab({kind: 'project', path: STATE.home, title: newTabLabel(), agent: a.id});
   };
   $('btn-new-agent').oncontextmenu = (ev) => { ev.preventDefault(); newAgentMenu(ev); };
   // Firemní tab: Claude v něm pracuje nad firemním Obsidianem a zapisuje do něj
   // rovnou — souhlas dal uživatel tím, že tab otevřel.
   $('btn-new-firma').onclick = () =>
-    openTab({kind: 'project', path: STATE.home, title: 'Claude Code firemní',
+    openTab({kind: 'project', path: STATE.home, title: 'Server firemní',
              agent: 'claude', vault: 'firma'});
   $('btn-brain').onclick = () => (vaultPreview() ? openVault() : openExternal('', 'brain'));
   $('modal-close').onclick = closePicker;

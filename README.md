@@ -58,8 +58,14 @@ dělá jednu aplikaci:
 - **Průvodce prvním spuštěním** — vzhled, složky s projekty, kde bydlí paměť
   a jak se zálohuje. Umí napojit **existující Obsidian vault** (najde si ho sám,
   Obsidian si seznam vede) i stáhnout ho z gitu. Kdykoli později totéž pod ⚙.
-- **Dvě „+" tlačítka** — nový tab s Claude Code, nebo holý terminál. V nastavení
-  se dá kterékoli schovat.
+- **Kde právě jsem** — odznak vedle názvu říká prostředí a zároveň ho přepíná:
+  **PC** jede v jantarové, **SERVER** (prostor na bráně) v modré jako cloud.
+  Jedno kliknutí přehodí počítač a server, celé okno se obarví podle toho, kam
+  se to, co napíšu, uloží.
+- **„+" tlačítka podle prostředí** — na počítači **PC**, v prostoru na serveru
+  **Server osobní** a **Server firemní** (fialově, jako firemní Obsidian, do
+  kterého zapisuje celý tým). Holý terminál se ukazuje jen ve vývojářském
+  režimu; v nastavení se dá schovat i zbytek.
 - **Správa projektů** — u každého `⋯` s možnostmi: přejmenovat, zařadit do
   skupiny, dát fotku, přiřadit GitHub repo (samo se načte z `git remote`),
   archivovat, odebrat z panelu (složka na disku zůstane). Přidat se dá i složka

@@ -273,18 +273,18 @@
   const theme = EditorView.theme({
     '&': {height: '100%', fontSize: '14px', color: 'var(--fg)', backgroundColor: 'transparent'},
     '.cm-content': {padding: '4px 0 40vh', fontFamily: 'inherit', lineHeight: '1.7',
-                    caretColor: 'var(--amber)', maxWidth: '820px'},
+                    caretColor: 'var(--accent)', maxWidth: '820px'},
     '.cm-scroller': {fontFamily: 'inherit', overflow: 'auto'},
     '&.cm-focused': {outline: 'none'},
     '.cm-line': {padding: '0 2px'},
     '.cm-activeLine': {backgroundColor: 'transparent'},
     '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection': {
-      backgroundColor: 'color-mix(in srgb, var(--amber) 28%, transparent)'},
-    '.cm-cursor, .cm-dropCursor': {borderLeftColor: 'var(--amber)', borderLeftWidth: '2px'},
+      backgroundColor: 'color-mix(in srgb, var(--accent) 28%, transparent)'},
+    '.cm-cursor, .cm-dropCursor': {borderLeftColor: 'var(--accent)', borderLeftWidth: '2px'},
     '.cm-tooltip': {background: 'var(--bg-card)', border: '1px solid var(--border)',
                     borderRadius: '8px', color: 'var(--fg)'},
     '.cm-tooltip-autocomplete ul li[aria-selected]': {
-      background: 'color-mix(in srgb, var(--amber) 25%, transparent)', color: 'var(--fg-bright)'},
+      background: 'color-mix(in srgb, var(--accent) 25%, transparent)', color: 'var(--fg-bright)'},
     '.cm-panels': {background: 'var(--bg-card)', color: 'var(--fg)', border: '1px solid var(--border)'},
     '.cm-panels input, .cm-panels button': {font: 'inherit', background: 'var(--bg)',
                                             color: 'var(--fg)', border: '1px solid var(--border)',

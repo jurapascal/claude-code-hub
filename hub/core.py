@@ -401,6 +401,10 @@ DARK = {
     "BG_CARD": "#1b2129", "FG": "#d0d0d0", "FG_BRIGHT": "#e6edf3",
     "DIM": "#8b949e", "GREEN": "#3fb950", "RED": "#f85149",
     "CARD_HOVER": "#242b35", "BORDER": "#30363d", "SECTION": "#6e7681",
+    # Kde se pracuje a nad čím: počítač si drží jantarovou, prostor na serveru
+    # jede v modré jako cloud a firemní trezor ve fialové. Ať je na první pohled
+    # vidět, kam se to, co tu napíšu, uloží.
+    "CLOUD": "#4c97f0", "FIRMA": "#a371f7",
     # Krok pro grafy: prošel pásem světlosti i kontrastem na tmavém podkladu.
     "CHART": "#cf752e",
     # 16-colour terminal palette (Afterglow)
@@ -415,6 +419,7 @@ LIGHT = {
     "BG_CARD": "#ffffff", "FG": "#24292f", "FG_BRIGHT": "#1f2328",
     "DIM": "#656d76", "GREEN": "#1a7f37", "RED": "#cf222e",
     "CARD_HOVER": "#eef1f4", "BORDER": "#d0d7de", "SECTION": "#8c959f",
+    "CLOUD": "#0969da", "FIRMA": "#8250df",
     "CHART": "#bc5c1c",
     # 16-colour terminal palette (GitHub Light)
     "TERM_PALETTE": [
@@ -2510,7 +2515,8 @@ FIRMA_TAB_PROMPT = """Jsi ve firemním tabu Claude Code Hubu (HUB_VAULT=firma).
 - Do firemního Obsidianu **nikdy** nedávej hesla, klíče, tokeny, přístupy ani
   nastavení napojení (MCP, Google, účty) — ani když o to uživatel požádá
   mimochodem; nejdřív se zeptej a napiš, proč to tam nepatří.
-- Osobní Obsidian uživatele je jeho — pro práci s ním má vedle tab „osobní"."""
+- Osobní Obsidian uživatele je jeho — pro práci s ním má vedle tab
+  „Server osobní"."""
 
 
 def firma_tab_prompt():

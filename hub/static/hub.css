@@ -3,7 +3,15 @@
    these custom properties, so Python stays the single source of truth. */
 
 :root {
+  /* Jantarová je barva počítače a zároveň slunce na uvítací obrazovce.
+     `--accent` je „barva prostředí, ve kterém právě jsem": na počítači
+     jantarová, v prostoru na serveru modrá jako cloud. Kdo přidává styl,
+     sahá po `--accent`, ne po `--amber`. */
   --amber: #e0843c;
+  --accent: var(--amber);
+  --sun: var(--amber);
+  --cloud: #4c97f0;
+  --firma: #a371f7;
   --bg: #0d1117;
   --bg-sidebar: #161b22;
   --bg-card: #1b2129;
@@ -19,6 +27,10 @@
   --sidebar-w: 310px;
   --bar-w: 190px;
 }
+
+/* Prostor na serveru je modrý až po drobnosti — je to jiné místo než počítač
+   a nemá se splést, ve kterém se zrovna píše. */
+html[data-place="server"] { --accent: var(--cloud); }
 
 * { box-sizing: border-box; }
 
@@ -55,13 +67,20 @@ body { display: flex; flex-direction: column; }
   border-bottom: 1px solid var(--border);
 }
 .topbar-title { display: flex; align-items: center; gap: 8px; color: var(--fg-bright); }
-.brand-ico { color: var(--amber); font-size: 19px; }
+.brand-ico { color: var(--accent); font-size: 19px; }
+/* Odznak prostředí je zároveň přepínač: jedno kliknutí sem přehodí počítač
+   a prostor na serveru. Dřív se na to muselo přes nastavení. */
 .topbar-badge {
-  color: var(--amber); font-size: 9.5px; font-weight: 800; letter-spacing: 1.2px;
-  border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
-  border-radius: 5px; padding: 1px 5px 2px; line-height: 1;
+  display: inline-flex; align-items: center; gap: 5px;
+  background: none; font: inherit; font-size: 9.5px; font-weight: 800;
+  letter-spacing: 1.2px; color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 5px; padding: 2px 6px 3px; line-height: 1; cursor: pointer;
 }
-.topbar-badge.on-server { cursor: pointer; }
+.topbar-badge:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.topbar-badge:disabled { cursor: default; opacity: .8; }
+.topbar-badge:disabled:hover { background: none; }
+.topbar-badge .ico { font-size: 11px; opacity: .85; }
 /* Počítač, na který Claude z prostoru dosáhne (pocitac.js). */
 .topbar-pc {
   display: inline-flex; align-items: center; gap: 5px; max-width: 14rem;
@@ -117,7 +136,7 @@ body { display: flex; flex-direction: column; }
   border-bottom: 2px solid transparent;
 }
 .side-tab:hover { color: var(--fg-bright); }
-.side-tab.on { color: var(--fg-bright); border-bottom-color: var(--amber); }
+.side-tab.on { color: var(--fg-bright); border-bottom-color: var(--accent); }
 .chats { display: flex; flex-direction: column; }
 .chat-item {
   display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: left; cursor: pointer;
@@ -125,7 +144,7 @@ body { display: flex; flex-direction: column; }
   background: none; color: inherit; font: inherit;
 }
 .chat-item:hover { background: var(--card-hover); border-color: var(--border); }
-.chat-item:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
+.chat-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .chat-title {
   color: var(--fg-bright); font-size: 12.5px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -151,7 +170,7 @@ body { display: flex; flex-direction: column; }
   font: inherit;
   -webkit-user-select: text; user-select: text;
 }
-#search:focus, #chats-search:focus { outline: none; border-color: var(--amber); }
+#search:focus, #chats-search:focus { outline: none; border-color: var(--accent); }
 #search::-webkit-search-cancel-button,
 #chats-search::-webkit-search-cancel-button { filter: grayscale(1) opacity(.6); }
 
@@ -186,12 +205,12 @@ body { display: flex; flex-direction: column; }
   display: flex; align-items: center; gap: 8px;
   margin: 6px 8px; padding: 9px 11px;
   background: var(--bg-card);
-  border: 1px solid var(--amber); border-radius: var(--radius);
-  color: var(--amber); font: inherit; font-weight: 700;
+  border: 1px solid var(--accent); border-radius: var(--radius);
+  color: var(--accent); font: inherit; font-weight: 700;
   cursor: pointer;
   transition: background .14s ease, color .14s ease;
 }
-.actionbtn:hover { background: var(--amber); color: var(--bg); }
+.actionbtn:hover { background: var(--accent); color: var(--bg); }
 
 .mem-summary {
   display: flex; gap: 10px; flex-wrap: wrap;
@@ -199,7 +218,7 @@ body { display: flex; flex-direction: column; }
   margin: 4px 12px 6px;
 }
 .mem-summary span { display: inline-flex; align-items: center; gap: 4px; }
-.mem-summary .learnings { color: var(--amber); }
+.mem-summary .learnings { color: var(--accent); }
 .mem-summary .errors { color: var(--red); }
 .mem-summary .wins { color: var(--green); }
 .mem-summary .mem-auto { flex-basis: 100%; color: var(--section); font-size: 10px; }
@@ -220,8 +239,8 @@ body { display: flex; flex-direction: column; }
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 11px;
 }
-.mem-card.learnings { border-left-color: var(--amber); }
-.mem-card.learnings .ico { color: var(--amber); }
+.mem-card.learnings { border-left-color: var(--accent); }
+.mem-card.learnings .ico { color: var(--accent); }
 .mem-card.errors { border-left-color: var(--red); }
 .mem-card.errors .ico { color: var(--red); }
 .mem-card.wins { border-left-color: var(--green); }
@@ -253,30 +272,30 @@ body { display: flex; flex-direction: column; }
   cursor: pointer; white-space: nowrap;
 }
 .tab:hover { background: var(--card-hover); }
-.tab.active { background: var(--bg); color: var(--fg-bright); box-shadow: inset 0 2px 0 var(--amber); }
+.tab.active { background: var(--bg); color: var(--fg-bright); box-shadow: inset 0 2px 0 var(--accent); }
 .tab.exited .tab-title { text-decoration: line-through; opacity: .65; }
 /* Odznak agenta: tečka v jeho barvě. Jméno se dopisuje jen u toho, kdo není
    výchozí — jinak by u každého tabu svítilo totéž slovo a nic to neřeklo. */
 .tab-agent {
   flex: none; width: 7px; height: 7px; border-radius: 50%;
-  background: var(--agent-color, var(--amber));
+  background: var(--agent-color, var(--accent));
 }
 .composer-dot {
   display: inline-block; width: 7px; height: 7px; border-radius: 50%;
   margin-right: 5px; vertical-align: middle;
-  background: var(--amber);
+  background: var(--accent);
 }
 .tab-agent.named {
   width: auto; height: auto; border-radius: 4px;
   padding: 1px 5px; font-size: 10px; line-height: 1.5;
-  background: color-mix(in srgb, var(--agent-color, var(--amber)) 22%, transparent);
-  color: var(--agent-color, var(--amber));
+  background: color-mix(in srgb, var(--agent-color, var(--accent)) 22%, transparent);
+  color: var(--agent-color, var(--accent));
 }
 .tab.exited .tab-agent { opacity: .45; }
 .tab-title { overflow: hidden; text-overflow: ellipsis; flex: 1; text-align: left; }
 .tab-title input {
   width: 100%; background: var(--bg); color: var(--fg-bright);
-  border: 1px solid var(--amber); border-radius: 4px;
+  border: 1px solid var(--accent); border-radius: 4px;
   font: inherit; padding: 1px 4px;
   -webkit-user-select: text; user-select: text;
 }
@@ -293,9 +312,14 @@ body { display: flex; flex-direction: column; }
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 36px; flex: none; padding: 0 10px; gap: 2px;
   background: none; border: none;
-  color: var(--amber); font-size: 15px; cursor: pointer; white-space: nowrap;
+  color: var(--accent); font-size: 15px; cursor: pointer; white-space: nowrap;
 }
 .tabplus:hover { background: var(--card-hover); }
+/* Firemní trezor je fialový všude, kde se o něm rozhoduje — na tlačítku
+   i na tabu, který nad ním běží. */
+.tabplus.firma { color: var(--firma); }
+.tab.firma .tab-agent { background: var(--firma); }
+.tab.firma.active { box-shadow: inset 0 2px 0 var(--firma); }
 
 .panes { position: relative; flex: 1; min-height: 0; }
 .pane {
@@ -323,7 +347,7 @@ body { display: flex; flex-direction: column; }
   gap: 6px; text-align: center;
   padding: 20px 20px calc(20px + env(safe-area-inset-bottom));
 }
-.welcome-ico { font-size: 42px; color: var(--amber); opacity: .9; }
+.welcome-ico { font-size: 42px; color: var(--accent); opacity: .9; }
 .welcome-big { color: var(--fg-bright); font-weight: 700; font-size: 26px; margin-top: 6px; }
 .welcome-sub { color: var(--dim); font-size: 13px; }
 .welcome-warn {
@@ -336,7 +360,7 @@ body { display: flex; flex-direction: column; }
 .welcome-warn code {
   display: inline-block; margin-top: 4px;
   background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
-  padding: 2px 6px; font-size: 11px; color: var(--amber);
+  padding: 2px 6px; font-size: 11px; color: var(--accent);
 }
 
 /* ── quick actions ───────────────────────────────────────────────────────── */
@@ -361,7 +385,7 @@ body { display: flex; flex-direction: column; }
   cursor: pointer; text-align: left;
   transition: background .14s ease, color .14s ease, border-color .14s ease;
 }
-.barbtn:hover { background: var(--amber); color: var(--bg); border-color: var(--amber); }
+.barbtn:hover { background: var(--accent); color: var(--bg); border-color: var(--accent); }
 .barbtn:disabled { opacity: .4; cursor: default; }
 .barbtn:disabled:hover { background: var(--bg-card); color: var(--fg-bright); border-color: var(--border); }
 
@@ -383,10 +407,10 @@ body { display: flex; flex-direction: column; }
   cursor: pointer; text-align: left;
 }
 .ctxmenu button:hover { background: var(--card-hover); }
-.ctxmenu .ico { color: var(--amber); }
+.ctxmenu .ico { color: var(--accent); }
 /* Zaškrtnutá volba (vybraný model, aktuální režim) — fajfka i sytější text,
    ať se pozná i bez barvy. */
-.ctxmenu button.on { color: var(--amber); font-weight: 600; }
+.ctxmenu button.on { color: var(--accent); font-weight: 600; }
 
 /* ── folder picker ───────────────────────────────────────────────────────── */
 .modal {
@@ -411,7 +435,7 @@ body { display: flex; flex-direction: column; }
   color: var(--fg-bright); font: inherit; font-size: 11px;
   padding: 4px 10px; cursor: pointer;
 }
-.modal-roots button:hover { border-color: var(--amber); color: var(--amber); }
+.modal-roots button:hover { border-color: var(--accent); color: var(--accent); }
 .modal-path {
   padding: 6px 12px; color: var(--dim); font-size: 11px;
   word-break: break-all;
@@ -426,7 +450,7 @@ body { display: flex; flex-direction: column; }
   cursor: pointer; text-align: left;
 }
 .modal-list button:hover { background: var(--card-hover); }
-.modal-list .ico { color: var(--amber); }
+.modal-list .ico { color: var(--accent); }
 .modal-foot {
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 10px 12px; border-top: 1px solid var(--border);
@@ -437,13 +461,13 @@ body { display: flex; flex-direction: column; }
 }
 .btn.ghost { background: none; border: 1px solid var(--border); color: var(--fg-bright); }
 .btn.ghost:hover { background: var(--card-hover); }
-.btn.primary { background: var(--amber); border: 1px solid var(--amber); color: var(--bg); }
+.btn.primary { background: var(--accent); border: 1px solid var(--accent); color: var(--bg); }
 .btn.primary:hover { filter: brightness(1.08); }
 /* Nepoužitelné tlačítko musí být poznat i naslepo — jinak vypadá zapnutí
    přístupu z telefonu jako by šlo zmáčknout i bez přihlášeného Tailscalu. */
 .btn:disabled { opacity: .45; cursor: default; filter: none; }
 .btn:disabled:hover { filter: none; background: none; }
-.btn.primary:disabled:hover { background: var(--amber); }
+.btn.primary:disabled:hover { background: var(--accent); }
 
 /* ── toast ───────────────────────────────────────────────────────────────── */
 /* Hláška vypadá jako karta v panelu — jen s barevným proužkem vlevo, stejně
@@ -458,7 +482,7 @@ body { display: flex; flex-direction: column; }
   z-index: 60; max-width: 70vw;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--amber);
+  border-left: 3px solid var(--accent);
   border-radius: var(--radius);
   box-shadow: 0 8px 22px rgba(0, 0, 0, .28);   /* stejný i ve světlém režimu */
   color: var(--fg-bright); font-size: 12px;
@@ -498,8 +522,8 @@ body { display: flex; flex-direction: column; }
    ten živý prvek okna a přitom drží paletu zbytku hubu. */
 .composer.on .composer-box {
   display: block;
-  background: color-mix(in srgb, var(--amber) 5%, var(--bg-card));
-  border: 1px solid color-mix(in srgb, var(--amber) 26%, var(--border));
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg-card));
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
   border-radius: var(--radius);
   padding: 7px 9px 6px;
   transition: border-color .12s ease, background .12s ease;
@@ -507,8 +531,8 @@ body { display: flex; flex-direction: column; }
 /* Že se do bubliny zrovna píše, řekne ohraničení — to je práce, kterou tu
    předtím zastával stín. Stejnou barvou svítí i hledání v panelu. */
 .composer.on .composer-box:focus-within {
-  border-color: var(--amber);
-  background: color-mix(in srgb, var(--amber) 9%, var(--bg-card));
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-card));
 }
 .composer.on .composer-peek { display: none; }
 /* Rozbalená bublina si dotaz obsluhuje sama — dvakrát tytéž volby nemají smysl. */
@@ -558,7 +582,7 @@ body { display: flex; flex-direction: column; }
   position: absolute; top: -7px; right: -7px; width: 18px; height: 18px;
   border-radius: 50%; background: var(--bg-card); border: 1px solid var(--border);
 }
-.composer-att.img .composer-att-x:hover { color: var(--fg-bright); border-color: var(--amber); }
+.composer-att.img .composer-att-x:hover { color: var(--fg-bright); border-color: var(--accent); }
 
 .composer-input {
   display: block; width: 100%; border: none; outline: none; resize: none;
@@ -587,15 +611,15 @@ body { display: flex; flex-direction: column; }
 .composer-chip .ico { color: inherit; }
 /* Vybraná hodnota (model, režim) svítí víc než popisek před ní — barvou, ať
    je na první pohled poznat, co je zapnuté, bez čtení celého chipu. */
-.composer-chip .val { color: var(--amber); font-weight: 600; }
+.composer-chip .val { color: var(--accent); font-weight: 600; }
 /* Normální režim je ten nezajímavý stav, tomu stačí obyčejné písmo. */
 .composer-chip[data-act=mode].normal .val { color: var(--fg-bright); font-weight: 400; }
-.composer-chip.ghost:hover { color: var(--amber); border-color: var(--amber); }
+.composer-chip.ghost:hover { color: var(--accent); border-color: var(--accent); }
 
 .composer-send {
   display: inline-flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; flex: none; border-radius: 8px; cursor: pointer;
-  background: var(--amber); border: none; color: #fff; font-size: 14px;
+  background: var(--accent); border: none; color: #fff; font-size: 14px;
   opacity: .45; transition: opacity .12s ease;
 }
 /* Jediná barevná plocha v bublině — ať svítí, jen když je co odeslat. */
@@ -618,7 +642,7 @@ body { display: flex; flex-direction: column; }
   display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
   margin-bottom: 5px; padding: 6px 8px;
   background: var(--bg-card);
-  border: 1px solid color-mix(in srgb, var(--amber) 30%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
   border-radius: var(--radius);
 }
 .composer-answer[hidden] { display: none; }
@@ -630,9 +654,9 @@ body { display: flex; flex-direction: column; }
   color: var(--fg-bright); font: inherit; font-size: 11.5px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.composer-answer-btn:hover { background: var(--card-hover); border-color: var(--amber); }
+.composer-answer-btn:hover { background: var(--card-hover); border-color: var(--accent); }
 /* Na kterou volbu ukazuje ❯ v terminálu — tam padne Enter. */
-.composer-answer-btn.sel { border-color: var(--amber); color: var(--amber); }
+.composer-answer-btn.sel { border-color: var(--accent); color: var(--accent); }
 .composer-answer-btn.ghost { color: var(--dim); }
 
 /* ── odkazy z terminálu jako tlačítka (links.js) ─────────────────────────── */
@@ -662,9 +686,9 @@ body { display: flex; flex-direction: column; }
   background: var(--bg-card); border: 1px solid var(--border);
   color: var(--fg-bright); font: inherit; font-size: 12px; line-height: 1;
 }
-.link-open:hover { background: var(--card-hover); border-color: var(--amber); }
-.link-open.primary { background: var(--amber); border-color: var(--amber); color: var(--bg); }
-.link-open.primary:hover { background: var(--amber); filter: brightness(1.08); }
+.link-open:hover { background: var(--card-hover); border-color: var(--accent); }
+.link-open.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.link-open.primary:hover { background: var(--accent); filter: brightness(1.08); }
 .link-label { flex: none; font-weight: 600; white-space: nowrap; }
 .link-copy {
   display: inline-flex; align-items: center; justify-content: center;
@@ -696,8 +720,8 @@ body { display: flex; flex-direction: column; }
 .svc-login {
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
   margin: 6px 0; padding: 10px 12px; border-radius: var(--radius);
-  background: color-mix(in srgb, var(--amber) 6%, var(--bg));
-  border: 1px solid color-mix(in srgb, var(--amber) 30%, var(--border));
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
 }
 .svc-step { font-size: 12.5px; color: var(--fg); }
 .svc-paste { display: flex; gap: 6px; align-self: stretch; }
@@ -731,8 +755,8 @@ body { display: flex; flex-direction: column; }
   display: inline-flex; align-items: center; gap: 6px; pointer-events: auto;
   padding: 4px 10px; border-radius: 8px; cursor: pointer;
   background: var(--bg-card);
-  border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--border));
-  color: var(--amber); font: inherit; font-size: 11.5px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  color: var(--accent); font: inherit; font-size: 11.5px;
 }
 .ask.peek .ask-back:hover { background: var(--card-hover); }
 /* Proužek bubliny by kartě jen překážel — psát se stejně nedá, dokud dotaz
@@ -745,8 +769,8 @@ body { display: flex; flex-direction: column; }
   /* Ve světlém motivu je výplň karty stejně bílá jako pozadí okna, takže by
      karta zmizela. Nádech hlavní barvy ji drží nad plochou v obou motivech —
      stejně jako u bubliny, se kterou se střídá. */
-  background: color-mix(in srgb, var(--amber) 5%, var(--bg-card));
-  border: 1px solid color-mix(in srgb, var(--amber) 30%, var(--border));
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg-card));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
   border-radius: var(--radius);
   -webkit-user-select: text; user-select: text;
 }
@@ -784,13 +808,13 @@ body { display: flex; flex-direction: column; }
   background: var(--bg); border: 1px solid var(--border);
   color: var(--fg-bright); font: inherit; font-size: 13px;
 }
-.ask-opt:hover { background: var(--card-hover); border-color: var(--amber); }
+.ask-opt:hover { background: var(--card-hover); border-color: var(--accent); }
 /* Na kterou volbu ukazuje ❯ v terminálu — tam padne Enter. */
 .ask-opt.sel {
-  border-color: var(--amber);
-  background: color-mix(in srgb, var(--amber) 10%, var(--bg));
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
 }
-.ask-opt.sel .ico { margin-left: auto; color: var(--amber); }
+.ask-opt.sel .ico { margin-left: auto; color: var(--accent); }
 .ask-opt-label { flex: 1; }
 .ask-num {
   display: inline-flex; align-items: center; justify-content: center;
@@ -798,7 +822,7 @@ body { display: flex; flex-direction: column; }
   background: var(--bg-card); border: 1px solid var(--border);
   color: var(--dim); font-size: 11px; font-weight: 700;
 }
-.ask-opt.sel .ask-num { color: var(--amber); border-color: var(--amber); }
+.ask-opt.sel .ask-num { color: var(--accent); border-color: var(--accent); }
 
 .ask-foot {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
@@ -822,9 +846,9 @@ body { display: flex; flex-direction: column; }
   content: "Pusť sem obrázek nebo soubor — přiloží se k promptu";
   position: absolute; inset: 6px; z-index: 6;
   display: flex; align-items: center; justify-content: center;
-  border: 2px dashed var(--amber); border-radius: var(--radius);
+  border: 2px dashed var(--accent); border-radius: var(--radius);
   background: color-mix(in srgb, var(--bg) 78%, transparent);
-  color: var(--amber); font-size: 13px; pointer-events: none;
+  color: var(--accent); font-size: 13px; pointer-events: none;
 }
 
 /* ── composition preview ─────────────────────────────────────────────────── */
@@ -833,7 +857,7 @@ body { display: flex; flex-direction: column; }
 .ime-preview {
   position: absolute; z-index: 5;
   padding: 0 1px;
-  background: var(--amber); color: var(--bg);
+  background: var(--accent); color: var(--bg);
   font-family: inherit; font-size: inherit;
   white-space: pre; pointer-events: none;
 }
@@ -861,7 +885,7 @@ body { display: flex; flex-direction: column; }
   display: flex; align-items: center; gap: 14px;
   padding: 20px 22px 14px; border-bottom: 1px solid var(--border);
 }
-.onb-mark { color: var(--amber); display: flex; }
+.onb-mark { color: var(--accent); display: flex; }
 .onb-title { font-size: 17px; font-weight: 700; color: var(--fg-bright); }
 .onb-sub { font-size: 12px; color: var(--dim); margin-top: 2px; }
 .onb-dots { margin-left: auto; display: flex; gap: 6px; }
@@ -869,8 +893,8 @@ body { display: flex; flex-direction: column; }
   width: 7px; height: 7px; border-radius: 50%;
   background: var(--border); transition: background .15s;
 }
-.onb-dot.on { background: var(--amber); }
-.onb-dot.done { background: color-mix(in srgb, var(--amber) 45%, transparent); }
+.onb-dot.on { background: var(--accent); }
+.onb-dot.done { background: color-mix(in srgb, var(--accent) 45%, transparent); }
 
 .onb-body { padding: 20px 22px; overflow-y: auto; }
 .onb-lead { font-size: 13px; line-height: 1.6; color: var(--fg); margin: 0 0 14px; }
@@ -892,7 +916,7 @@ body { display: flex; flex-direction: column; }
   border: 1px solid var(--border); border-radius: var(--radius);
 }
 .onb-tile:hover { background: var(--card-hover); }
-.onb-tile.on { border-color: var(--amber); color: var(--fg-bright); }
+.onb-tile.on { border-color: var(--accent); color: var(--fg-bright); }
 /* Dlaždice s popiskem pod nadpisem — volba režimu na uvítanou. Text vlevo,
    ne na střed jako u barevných dlaždic vzhledu: čte se to jako věta. */
 .onb-tile-t { display: block; font-weight: 600; }
@@ -915,7 +939,7 @@ body { display: flex; flex-direction: column; }
 }
 .onb-row:hover { background: var(--bg-card); }
 .onb-row.off { opacity: .45; cursor: not-allowed; }
-.onb-row input { margin-top: 2px; accent-color: var(--amber); }
+.onb-row input { margin-top: 2px; accent-color: var(--accent); }
 .onb-col { display: flex; flex-direction: column; gap: 2px; }
 .onb-col small { color: var(--dim); font-size: 12px; line-height: 1.5; }
 
@@ -952,7 +976,7 @@ body { display: flex; flex-direction: column; }
 .set-tab:hover { background: var(--bg-card); color: var(--fg-bright); }
 .set-tab .ico { color: var(--dim); }
 .set-tab.on { background: var(--bg-card); color: var(--fg-bright); font-weight: 600; }
-.set-tab.on .ico { color: var(--amber); }
+.set-tab.on .ico { color: var(--accent); }
 .set-panel { flex: 1; min-width: 0; padding: 20px 22px; overflow-y: auto; }
 /* V panelu je jedna sekce, takže dělicí linka pod ní nemá co oddělovat. */
 .set-panel .set-sec { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
@@ -978,7 +1002,7 @@ body { display: flex; flex-direction: column; }
 .set-row small { color: var(--dim); font-size: 12px; word-break: break-all; }
 .set-row .spacer { flex: 1; }
 .set-ok   { color: var(--green); font-weight: 600; }
-.set-warn { color: var(--amber); font-weight: 600; }
+.set-warn { color: var(--accent); font-weight: 600; }
 .set-ver  { font-family: ui-monospace, monospace; color: var(--fg-bright); }
 .set-x {
   background: none; border: none; cursor: pointer; font-size: 18px; line-height: 1;
@@ -992,7 +1016,7 @@ body { display: flex; flex-direction: column; }
 }
 .set-status.busy, .set-status.ok, .set-status.warn { display: block; }
 .set-status.ok   { border-color: var(--green); color: var(--green); }
-.set-status.warn { border-color: var(--amber); color: var(--amber); }
+.set-status.warn { border-color: var(--accent); color: var(--accent); }
 /* Tlačítko Aktualizovat si tu kdysi vynucovalo hlavní barvu textu přes
    `!important` — jenže tu má `.actionbtn` sama a `!important` navíc přebilo
    i hover, kde se text obarvuje na pozadí. Po najetí tak zbyl oranžový nápis
@@ -1011,7 +1035,7 @@ body { display: flex; flex-direction: column; }
   width: 100%; padding: 8px 10px; border-radius: 8px; font: inherit; font-size: 13px;
   background: var(--bg-card); color: var(--fg-bright); border: 1px solid var(--border);
 }
-.vault-search:focus { outline: none; border-color: var(--amber); }
+.vault-search:focus { outline: none; border-color: var(--accent); }
 .vault-list { overflow-y: auto; flex: 1; min-height: 0; font-size: 13px; }
 .vault-list details > summary {
   list-style: none; cursor: pointer; padding: 5px 8px; border-radius: 6px; user-select: none;
@@ -1031,7 +1055,7 @@ body { display: flex; flex-direction: column; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .vault-item:hover { background: var(--bg-card); color: var(--fg-bright); }
-.vault-item.on { background: var(--bg-card); color: var(--amber); font-weight: 600; }
+.vault-item.on { background: var(--bg-card); color: var(--accent); font-weight: 600; }
 .vault-item small {
   display: block; margin-top: 2px; white-space: normal;
   color: var(--dim); font-size: 11.5px; font-weight: 400; line-height: 1.4;
@@ -1080,7 +1104,7 @@ body { display: flex; flex-direction: column; }
 .vault-md blockquote { margin: 0 0 1em; padding: 2px 14px; border-left: 3px solid var(--border); color: var(--dim); }
 .vault-callout {
   margin: 0 0 1em; padding: 10px 14px; border-radius: 8px;
-  background: var(--bg-card); border-left: 3px solid var(--amber);
+  background: var(--bg-card); border-left: 3px solid var(--accent);
 }
 .vault-callout > :last-child { margin-bottom: 0; }
 .vault-callout-title { font-weight: 700; color: var(--fg-bright); margin-bottom: 4px; }
@@ -1091,21 +1115,21 @@ body { display: flex; flex-direction: column; }
 .vault-md th, .vault-md td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
 .vault-md th { background: var(--bg-card); color: var(--fg-bright); }
 .vault-md hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }
-.vault-md mark { background: color-mix(in srgb, var(--amber) 35%, transparent); color: inherit; padding: 0 2px; border-radius: 3px; }
+.vault-md mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; padding: 0 2px; border-radius: 3px; }
 .vault-md .vault-img { max-width: 100%; border-radius: 8px; }
 .vault-link, .vault-ext {
-  color: var(--amber); cursor: pointer; text-decoration: none;
-  border-bottom: 1px solid color-mix(in srgb, var(--amber) 40%, transparent);
+  color: var(--accent); cursor: pointer; text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
 }
-.vault-link:hover, .vault-ext:hover { border-bottom-color: var(--amber); }
+.vault-link:hover, .vault-ext:hover { border-bottom-color: var(--accent); }
 .vault-link.missing { color: var(--dim); border-bottom: 1px dashed var(--border); }
 .vault-tag {
-  color: var(--amber); font-size: .9em; padding: 0 7px; border-radius: 999px;
-  background: color-mix(in srgb, var(--amber) 12%, transparent);
+  color: var(--accent); font-size: .9em; padding: 0 7px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 /* Úpravy poznámky (editor.js) a graf (graph.js). */
 .vault-state { font-size: 11.5px; color: var(--dim); }
-.vault-state.warn { color: var(--amber); }
+.vault-state.warn { color: var(--accent); }
 .vault-state.bad { color: var(--red); }
 .vault-modes { display: flex; gap: 2px; margin-left: auto; padding: 2px; border-radius: 8px; background: var(--bg-card); }
 .vault-bar .vault-date + .vault-modes { margin-left: 10px; }
@@ -1114,8 +1138,8 @@ body { display: flex; flex-direction: column; }
   padding: 3px 12px; border-radius: 6px; cursor: pointer;
 }
 .vault-mode:hover { color: var(--fg-bright); }
-.vault-mode.on { background: var(--bg); color: var(--amber); font-weight: 600; }
-.vault-graph-btn.on { color: var(--amber); border-color: var(--amber); }
+.vault-mode.on { background: var(--bg); color: var(--accent); font-weight: 600; }
+.vault-graph-btn.on { color: var(--accent); border-color: var(--accent); }
 .vault-modal .onb-body { position: relative; }
 .vault-modal .vault-panel { display: flex; flex-direction: column; }
 .vault-modal .vault-md { flex: none; }
@@ -1131,11 +1155,11 @@ body { display: flex; flex-direction: column; }
 .cm-b { font-weight: 700; color: var(--fg-bright); }
 .cm-i { font-style: italic; }
 .cm-strike { text-decoration: line-through; color: var(--dim); }
-.cm-wiki { color: var(--amber); cursor: pointer; }
-.cm-url { color: var(--amber); }
+.cm-wiki { color: var(--accent); cursor: pointer; }
+.cm-url { color: var(--accent); }
 .cm-code { font-family: ui-monospace, monospace; font-size: .9em; color: var(--fg-bright); }
-.cm-tag { color: var(--amber); }
-.cm-mark { background: color-mix(in srgb, var(--amber) 35%, transparent); border-radius: 3px; }
+.cm-tag { color: var(--accent); }
+.cm-mark { background: color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 3px; }
 .cm-quote { color: var(--dim); }
 .cm-syntax { color: var(--dim); opacity: .7; }
 .cm-task { margin: 0 6px 0 0; vertical-align: -1px; }
@@ -1160,13 +1184,13 @@ body { display: flex; flex-direction: column; }
 .graph-side .graph-row > span {
   display: inline; flex: 1; margin: 0; font-size: 12.5px; font-weight: 400; color: var(--fg);
 }
-.graph-row input[type=range] { width: 108px; accent-color: var(--amber); }
+.graph-row input[type=range] { width: 108px; accent-color: var(--accent); }
 .graph-row select {
   font: inherit; font-size: 12px; padding: 2px 6px; border-radius: 6px;
   background: var(--bg-card); color: var(--fg); border: 1px solid var(--border);
 }
 .graph-check { cursor: pointer; }
-.graph-check input { accent-color: var(--amber); }
+.graph-check input { accent-color: var(--accent); }
 .graph-find { margin-bottom: 9px; }
 .graph-legend { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; color: var(--fg); }
 .graph-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--dim); }
@@ -1187,8 +1211,8 @@ body { display: flex; flex-direction: column; }
 .firma-target { display: flex; align-items: baseline; gap: 10px; font-size: 13px; color: var(--dim); }
 .firma-target code { font-family: ui-monospace, monospace; color: var(--fg-bright); word-break: break-all; }
 .firma-warn {
-  font-size: 12.5px; color: var(--amber); padding: 8px 12px;
-  border: 1px solid var(--amber); border-radius: 8px;
+  font-size: 12.5px; color: var(--accent); padding: 8px 12px;
+  border: 1px solid var(--accent); border-radius: 8px;
 }
 .vault-md.firma-preview {
   max-width: none; max-height: 46vh; overflow-y: auto; padding: 14px 16px;
@@ -1197,7 +1221,7 @@ body { display: flex; flex-direction: column; }
 .firma-preview a { pointer-events: none; }
 #firma-section { margin-top: 10px; }
 .firma-people { font-size: 13px; color: var(--fg); white-space: pre-line; line-height: 1.5; }
-.firma-people.danger { color: var(--amber); }
+.firma-people.danger { color: var(--accent); }
 /* Sdílené Obsidiany v panelu. */
 #shared-section { margin-top: 10px; }
 .shared-item {
@@ -1209,7 +1233,7 @@ body { display: flex; flex-direction: column; }
 .shared-name { color: var(--fg-bright); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .shared-meta { color: var(--dim); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .shared-item.pending { border-style: dashed; }
-.shared-item.pending .shared-meta { color: var(--amber); }
+.shared-item.pending .shared-meta { color: var(--accent); }
 .shared-hint { line-height: 1.5; }
 
 /* Telefon: seznam nahoře (svisle, ne řádek ikon jako v nastavení), poznámka pod ním. */
@@ -1245,7 +1269,7 @@ body { display: flex; flex-direction: column; }
   margin-bottom: 10px; padding: 10px 12px;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--amber);
+  border-left: 3px solid var(--accent);
   border-radius: var(--radius);
   font-size: 13px; color: var(--fg-bright);
 }
@@ -1265,14 +1289,14 @@ body { display: flex; flex-direction: column; }
   color: var(--fg-bright); font-size: 12.5px;
   font-family: ui-monospace, monospace;
 }
-.mcp-form input:focus { outline: none; border-color: var(--amber); }
+.mcp-form input:focus { outline: none; border-color: var(--accent); }
 
 /* Dvě „+" tlačítka vedle sebe potřebují popisek, jinak se nepozná, které je které. */
 .tabplus span { font-size: 12px; margin-left: 5px; }
 .tabplus[hidden] { display: none; }
 
 /* ── uvítání ─────────────────────────────────────────────────────────────── */
-.welcome-big b { color: var(--amber); font-weight: 800; }
+.welcome-big b { color: var(--accent); font-weight: 800; }
 .welcome-greet { font-size: 14px; color: var(--fg); margin-top: 6px; }
 .welcome-actions {
   display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;
@@ -1287,7 +1311,7 @@ body { display: flex; flex-direction: column; }
   color: var(--dim); font: inherit;
   border-bottom: 1px dotted color-mix(in srgb, var(--dim) 55%, transparent);
 }
-.footer-ver:hover { color: var(--amber); border-bottom-color: var(--amber); }
+.footer-ver:hover { color: var(--accent); border-bottom-color: var(--accent); }
 
 /* ── správa projektů ─────────────────────────────────────────────────────── */
 
@@ -1297,8 +1321,8 @@ body { display: flex; flex-direction: column; }
   width: 15px; height: 15px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   font-size: 9px; font-weight: 800; font-style: italic;
-  background: color-mix(in srgb, var(--amber) 22%, transparent);
-  color: var(--amber);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
 }
 .projects-foot {
   display: flex; gap: 12px; flex-wrap: wrap;
@@ -1308,7 +1332,7 @@ body { display: flex; flex-direction: column; }
   background: none; border: none; padding: 0; cursor: pointer;
   color: var(--dim); font-size: 11.5px;
 }
-.linkbtn:hover { color: var(--amber); }
+.linkbtn:hover { color: var(--accent); }
 
 .ed-label, .ed-brief {
   width: 100%; box-sizing: border-box;
@@ -1317,7 +1341,7 @@ body { display: flex; flex-direction: column; }
   padding: 9px 11px; font-size: 13px; font-family: inherit;
 }
 .ed-brief { resize: vertical; line-height: 1.55; }
-.ed-label:focus, .ed-brief:focus { outline: none; border-color: var(--amber); }
+.ed-label:focus, .ed-brief:focus { outline: none; border-color: var(--accent); }
 .set-note code {
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 4px; padding: 0 4px; font-size: 11.5px;
@@ -1325,7 +1349,7 @@ body { display: flex; flex-direction: column; }
 
 /* ── karta projektu ──────────────────────────────────────────────────────── */
 .card { position: relative; cursor: pointer; }
-.card:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
+.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .card-path {
   display: block; color: var(--section); font-size: 10.5px; margin-top: 2px;
   font-family: ui-monospace, monospace; white-space: nowrap;
@@ -1386,7 +1410,7 @@ body { display: flex; flex-direction: column; }
   border: 1px solid var(--border); border-radius: 8px;
   padding: 9px 11px; font-size: 13px; font-family: inherit;
 }
-.onb-body input[type="text"]:focus { outline: none; border-color: var(--amber); }
+.onb-body input[type="text"]:focus { outline: none; border-color: var(--accent); }
 .ed-photo { display: flex; align-items: center; gap: 12px; }
 .ed-thumb {
   width: 76px; height: 76px; flex: none; border-radius: 9px; overflow: hidden;
@@ -1452,7 +1476,7 @@ body { display: flex; flex-direction: column; }
   border-radius: 10px; padding: 9px 14px; cursor: pointer;
   display: flex; flex-direction: column; gap: 1px; min-width: 96px;
 }
-.wst-tile:hover { border-color: var(--amber); }
+.wst-tile:hover { border-color: var(--accent); }
 .wst-value { font-size: 16px; font-weight: 700; color: var(--fg-bright); }
 .wst-label { font-size: 10.5px; color: var(--dim); }
 .wst-spark {
@@ -1473,7 +1497,7 @@ body { display: flex; flex-direction: column; }
 }
 .log-line { display: block; }
 .log-line.err { color: var(--red); }
-.log-line.warn { color: var(--amber); }
+.log-line.warn { color: var(--accent); }
 
 /* ── potvrzení před zavřením ──────────────────────────────────────────────── */
 .confirm-box { width: min(460px, 92vw); }
@@ -1487,7 +1511,7 @@ body { display: flex; flex-direction: column; }
 .topbar-update {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 10px; margin-right: 4px;
-  background: var(--amber); border: 1px solid var(--amber); border-radius: 999px;
+  background: var(--accent); border: 1px solid var(--accent); border-radius: 999px;
   color: var(--bg); font: inherit; font-size: 12px; font-weight: 600;
   cursor: pointer;
 }
@@ -1512,7 +1536,7 @@ body { display: flex; flex-direction: column; }
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
   padding: 8px 10px; cursor: pointer; color: var(--fg);
 }
-.phone-url:hover { border-color: var(--amber); color: var(--fg-bright); }
+.phone-url:hover { border-color: var(--accent); color: var(--fg-bright); }
 .set-input {
   width: 92px; padding: 5px 8px; border-radius: 7px; font-size: 13px;
   background: var(--bg-card); border: 1px solid var(--border); color: var(--fg);
@@ -1585,7 +1609,7 @@ body { display: flex; flex-direction: column; }
   border-radius: 8px; color: var(--fg); font: inherit; font-size: 13px;
   cursor: pointer; -webkit-user-select: none; user-select: none;
 }
-.composer-key:active { background: var(--amber); color: #16150f; border-color: var(--amber); }
+.composer-key:active { background: var(--accent); color: #16150f; border-color: var(--accent); }
 
 /* ── katalog napojení: pole a původ ─────────────────────────────────────── */
 .mcp-form { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
@@ -1598,7 +1622,7 @@ body { display: flex; flex-direction: column; }
   padding: 7px 9px; border-radius: 7px; font: inherit; font-size: 13px;
   background: var(--bg-card); border: 1px solid var(--border); color: var(--fg);
 }
-.mcp-field input:focus { outline: none; border-color: var(--amber); }
+.mcp-field input:focus { outline: none; border-color: var(--accent); }
 /* Odkud server je. U cizího kódu, který se bude spouštět, to má být vidět
    dřív, než se na něj klikne — ne až v nějakém odkazu na dokumentaci. */
 .mcp-meta {
@@ -1646,13 +1670,13 @@ body { display: flex; flex-direction: column; }
 .mcp-step .set-note { margin-bottom: 0; }
 /* Co člověka na cestě čeká a vypadá to jako chyba, ale není. */
 .mcp-warn {
-  border-left: 2px solid var(--amber); border-radius: 0 6px 6px 0;
-  background: color-mix(in srgb, var(--amber) 8%, transparent);
+  border-left: 2px solid var(--accent); border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
   padding: 8px 11px; font-size: 12px; color: var(--fg); line-height: 1.55;
 }
 .mcp-tag.guide {
-  background: color-mix(in srgb, var(--amber) 16%, transparent);
-  color: var(--amber);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
 }
 
 /* Účet na serveru — kdo jsi a kde se zrovna pracuje. */
@@ -1670,13 +1694,13 @@ body { display: flex; flex-direction: column; }
   font-size: 13px; font-family: inherit;
   background: var(--bg-card); border: 1px solid var(--border); color: var(--fg-bright);
 }
-.srv-input:focus { outline: none; border-color: var(--amber); }
+.srv-input:focus { outline: none; border-color: var(--accent); }
 .srv-creds { display: flex; flex-direction: column; margin-top: 6px; }
 .srv-actions { margin-top: 16px; }
 .srv-status { font-size: 12.5px; line-height: 1.5; margin-top: 8px; }
 .srv-status.ok   { color: var(--green); font-weight: 600; }
 .srv-status.err  { color: var(--red); }
-.srv-status.warn { color: var(--amber); margin: 0 0 14px; }
+.srv-status.warn { color: var(--accent); margin: 0 0 14px; }
 /* Dvoufázové ověření: druhý krok přihlášení a záložní kódy. */
 .srv-second { display: flex; flex-direction: column; }
 .srv-note { font-size: 12.5px; color: var(--dim); line-height: 1.55; margin: 6px 0 8px; }
@@ -1739,7 +1763,7 @@ body { display: flex; flex-direction: column; }
 .pd-line { font-size: 13px; line-height: 1.5; margin: 4px 0 12px; color: var(--dim); }
 .pd-line.busy::before {
   content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 8px;
-  border: 2px solid var(--amber); border-right-color: transparent; border-radius: 50%;
+  border: 2px solid var(--accent); border-right-color: transparent; border-radius: 50%;
   vertical-align: -1px; animation: pd-spin .8s linear infinite;
 }
 .pd-line.ok { color: var(--green); font-weight: 600; }
@@ -1761,29 +1785,29 @@ body { display: flex; flex-direction: column; }
   color: var(--fg-bright); font: inherit; font-size: 12px;
 }
 .clk-note::placeholder { color: var(--fg-dim); }
-.clk-pick:focus, .clk-note:focus { outline: none; border-color: var(--amber); }
+.clk-pick:focus, .clk-note:focus { outline: none; border-color: var(--accent); }
 
 .clk-start { justify-content: center; }
 /* Běžící měření má mít jinou barvu než ostatní tlačítka — ať je na první
    pohled vidět, že se někde točí čas, i když je okno na jiném projektu. */
 .clk-stop {
   justify-content: center;
-  border-color: var(--amber); color: var(--amber);
+  border-color: var(--accent); color: var(--accent);
 }
-.clk-stop:hover { background: var(--amber); color: var(--bg); }
+.clk-stop:hover { background: var(--accent); color: var(--bg); }
 
 .clk-run { display: flex; align-items: center; gap: 7px; padding: 6px 2px 2px; }
 .clk-proj {
   flex: 1; min-width: 0; font-size: 12px; font-weight: 700; color: var(--fg-bright);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.clk-time { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--amber); }
+.clk-time { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--accent); }
 .clk-desc {
   padding: 0 2px 4px; font-size: 11px; color: var(--fg-dim);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .clk-dot {
-  width: 7px; height: 7px; border-radius: 50%; background: var(--amber);
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
   animation: clk-pulse 1.6s ease-in-out infinite;
 }
 @keyframes clk-pulse { 50% { opacity: .25; } }

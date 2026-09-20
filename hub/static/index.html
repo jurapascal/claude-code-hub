@@ -67,7 +67,7 @@
     <svg class="ico"><use href="#i-hub"/></svg></button>
   <div class="topbar-title">
     <svg class="ico brand-ico"><use href="#i-hub"/></svg>
-    <strong>Claude Code</strong><span class="topbar-badge">HUB</span>
+    <strong>Claude Code</strong><button id="btn-place" class="topbar-badge"></button>
   </div>
   <div class="topbar-actions">
     <button id="btn-update" class="topbar-update" hidden>
@@ -110,9 +110,11 @@
     </div>
 
     <div id="memory-section" hidden>
-      <div class="section">OSOBNÍ OBSIDIAN</div>
+      <!-- Popisky nese renderMemory: na počítači „PC Obsidian", v prostoru na
+           serveru „osobní Obsidian" — proti firemnímu. -->
+      <div class="section" id="memory-head">PC OBSIDIAN</div>
       <button id="btn-brain" class="actionbtn">
-        <svg class="ico"><use href="#i-book"/></svg> Otevřít osobní Obsidian
+        <svg class="ico"><use href="#i-book"/></svg> <span id="btn-brain-text">Otevřít PC Obsidian</span>
       </button>
       <div id="memory-summary" class="mem-summary"></div>
       <div id="memory" class="cards"></div>
@@ -138,8 +140,8 @@
     <div class="tabbar" id="tabbar">
       <button id="btn-new-agent" class="tabplus" title="Otevřít AI agenta">
         <svg class="ico"><use href="#i-plus"/></svg><span>Claude Code</span></button>
-      <button id="btn-new-firma" class="tabplus" title="Claude Code nad firemním Obsidianem" hidden>
-        <svg class="ico"><use href="#i-plus"/></svg><span>Claude Code firemní</span></button>
+      <button id="btn-new-firma" class="tabplus firma" title="Claude Code nad firemním Obsidianem" hidden>
+        <svg class="ico"><use href="#i-plus"/></svg><span>Server firemní</span></button>
       <button id="btn-new-shell" class="tabplus" title="Otevřít terminál">
         <svg class="ico"><use href="#i-plus"/></svg><span>Terminál</span></button>
     </div>

@@ -201,8 +201,9 @@
 
   function taby() {
     const box = section('Tlačítka nových tabů',
-      'Co má být vedle tabů. Kdo jede jen v agentovi, nechce vedle sebe ' +
-      'pořád tlačítko na holý shell — a naopak.');
+      'Co má být vedle tabů. Terminál se ukazuje jen ve vývojářském režimu — ' +
+      'kdo jede jen v agentovi, nemá vedle tabů tlačítko, které nikdy ' +
+      'nezmáčkne.');
     const cfg = state.config.newtab || {};
     const def = (state.agents || []).find((a) => a.id === state.default_agent);
     const list = el('div', 'onb-list');
