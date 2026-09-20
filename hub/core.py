@@ -406,7 +406,9 @@ DARK = {
     # vidět, kam se to, co tu napíšu, uloží.
     "CLOUD": "#4c97f0", "FIRMA": "#a371f7",
     # Krok pro grafy: prošel pásem světlosti i kontrastem na tmavém podkladu.
-    "CHART": "#cf752e",
+    # Druhý je pro prostor na serveru — sloupce tam nemají zůstat jantarové,
+    # když je podle nich celé okno modré.
+    "CHART": "#cf752e", "CHART_CLOUD": "#4c97f0",
     # 16-colour terminal palette (Afterglow)
     "TERM_PALETTE": [
         "#151515", "#ac4142", "#7e8e50", "#e5b567", "#6c99bb", "#9f4e85",
@@ -420,7 +422,7 @@ LIGHT = {
     "DIM": "#656d76", "GREEN": "#1a7f37", "RED": "#cf222e",
     "CARD_HOVER": "#eef1f4", "BORDER": "#d0d7de", "SECTION": "#8c959f",
     "CLOUD": "#0969da", "FIRMA": "#8250df",
-    "CHART": "#bc5c1c",
+    "CHART": "#bc5c1c", "CHART_CLOUD": "#0969da",
     # 16-colour terminal palette (GitHub Light)
     "TERM_PALETTE": [
         "#24292e", "#cf222e", "#116329", "#953800", "#0969da", "#8250df",

@@ -59,7 +59,8 @@ function openLink(url) {
 /* Hub běží na serveru (brána)? Pak schránka i prohlížeč serveru nejsou toho,
  * kdo se dívá — co sahá ven, musí jít přes jeho prohlížeč. */
 function onServer() {
-  return !!STATE.config.gateway_user;
+  // Volá se i z applyTheme, které běží dřív, než je stav načtený.
+  return !!(STATE && STATE.config && STATE.config.gateway_user);
 }
 
 /* Do schránky toho, kdo se dívá. Na serveru přes prohlížeč: /api/clipboard by
@@ -118,6 +119,10 @@ function applyTheme() {
   for (const [key, cssVar] of Object.entries(CSS_VARS)) {
     document.documentElement.style.setProperty(cssVar, p[key]);
   }
+  // Sloupce ve statistikách jdou s prostředím jako zbytek okna. Vlastní krok
+  // mají proto, že samotná barva prostředí je na graf málo kontrastní.
+  document.documentElement.style.setProperty(
+    '--chart', onServer() ? p.CHART_CLOUD : p.CHART);
   $('btn-theme').firstElementChild.firstElementChild
     .setAttribute('href', DARK ? '#i-moon' : '#i-sun');
   const theme = termTheme();
