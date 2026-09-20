@@ -418,10 +418,15 @@
     current = note.path;
     const out = render(note.text, {resolve: resolveNote, image: resolveImage, current});
 
+    // Na telefonu se seznam a poznámka nevejdou vedle sebe: otevřená
+    // poznámka seznam překryje a šipka zpět se vrací na něj.
+    box.classList.add('reading');
+
     q('.vault-path').textContent = note.path;
     q('.vault-date').textContent = note.mtime
       ? 'upraveno ' + new Date(note.mtime * 1000).toLocaleString('cs-CZ') : '';
-    q('.vault-back').hidden = !back.length;
+    // Na úzké obrazovce je šipka i cestou zpět na seznam, tak je vidět vždy.
+    q('.vault-back').hidden = !back.length && !window.matchMedia('(max-width: 720px)').matches;
     const props = q('.vault-props');
     props.textContent = '';
     for (const [key, value] of out.props) {
@@ -916,7 +921,22 @@
     box.addEventListener('pointerdown', (ev) => { downOutside = ev.target === box; });
     box.addEventListener('click', (ev) => { if (ev.target === box && downOutside) close(); });
     q('.vault-close').onclick = close;
-    q('.vault-back').onclick = () => { if (back.length) load(back.pop(), {remember: false}); };
+    /* Šipka zpět: nejdřív se vrací po odkazech, kterými se člověk proklikal,
+       a když už žádné nejsou, vrátí na telefonu seznam poznámek. Na počítači
+       je seznam pořád vedle, tam tedy jen mizí. */
+    q('.vault-back').onclick = () => {
+      if (back.length) return load(back.pop(), {remember: false});
+      box.classList.remove('reading');
+      current = '';
+      renderList();
+    };
+    /* Na úzkém telefonu se pět tlačítek do hlavičky nevejde a láme se do
+       druhého řádku. Přejmenovat a Smazat patří k otevřené poznámce, ne
+       k trezoru — tak se stěhují dolů k ní, do řádku s cestou a režimem.
+       Posunutím prvku se nic neodpojí, tlačítka fungují dál. */
+    if (window.matchMedia('(max-width: 520px)').matches) {
+      q('.vault-bar').append(q('.vault-rename'), q('.vault-del'));
+    }
     q('.vault-new').hidden = !canEdit();
     q('.vault-new').onclick = newNote;
     q('.vault-rename').onclick = renameNote;
@@ -973,8 +993,13 @@
       return;
     }
     const has = (p) => notes.some((n) => n.path === p);
-    const start = (opts.path && has(opts.path)) ? opts.path
-      : ['memory/MEMORY.md', 'README.md'].find(has)
+    /* Na telefonu se otevírá seznam, ne rovnou poznámka: vidí se vždycky jen
+       jedno a začít u rozcestníku by znamenalo hned klepnout zpět. Když si
+       ale o konkrétní poznámku někdo řekl (odkaz z paměti), otevře se ta. */
+    const uzky = window.matchMedia('(max-width: 720px)').matches;
+    if (opts.path && has(opts.path)) return load(opts.path, {remember: false});
+    if (uzky) return;
+    const start = ['memory/MEMORY.md', 'README.md'].find(has)
         || notes.slice().sort((a, b) => b.mtime - a.mtime)[0].path;
     load(start, {remember: false});
   }
