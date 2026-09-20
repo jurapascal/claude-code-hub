@@ -1368,6 +1368,8 @@ function renderNewTabButtons() {
   $('btn-new-shell').hidden = cfg.shell === false || !STATE.config.dev_mode;
   const firma = !!(STATE.firma && STATE.firma.vault);
   $('btn-new-firma').hidden = !firma;
+  // Jedno „+" na telefonu: schová se jen tehdy, když by pod ním nic nebylo.
+  $('btn-new-menu').hidden = btn.hidden && !firma && $('btn-new-shell').hidden;
   const a = agentById(STATE.default_agent) || agentList(true)[0];
   const label = btn.querySelector('span');
   if (a && label) {
@@ -2036,6 +2038,72 @@ function showMenu(x, y, items, opts) {
 
 function hideMenu() { $('ctxmenu').hidden = true; }
 
+/* Nabídka lišty na telefonu. Čtyři ikony vedle sebe se na úzkou obrazovku
+   nevejdou a na to, co která dělá, se palcem netrefí — tak je všechno pod
+   jednou: kam se dívat (projekty, konverzace, Obsidiany) a čím to obsloužit
+   (nastavení, vzhled, statistiky, načíst znovu). */
+/* Co se dá otevřít — na telefonu pod jedním „+". Stejné volby jako tlačítka
+   v liště na počítači, jen pod sebou a s místem pro palec. */
+function newTabMenu(btn) {
+  const cfg = STATE.config.newtab || {};
+  const items = [];
+  const a = agentById(STATE.default_agent) || agentList(true)[0];
+  if (a && cfg.agent !== false && cfg.claude !== false) {
+    items.push({icon: 'i-terminal', label: newTabLabel(),
+                run: () => openTab({kind: 'project', path: STATE.home,
+                                    title: newTabLabel(), agent: a.id})});
+  }
+  if (STATE.firma && STATE.firma.vault) {
+    items.push({icon: 'i-terminal', label: 'Server firemní', run: () => openFirmaTab()});
+  }
+  if (cfg.shell !== false && STATE.config.dev_mode) {
+    items.push({icon: 'i-terminal', label: 'Terminál',
+                run: () => openTab({kind: 'shell', path: '', title: 'terminál'})});
+  }
+  // Víc agentů = ať jde vybrat i jiný než výchozí; na počítači je to pravé
+  // tlačítko, kterým se na telefonu klepnout nedá.
+  if (agentList(true).length > 1) {
+    items.push({icon: 'i-gear', label: 'Jiným agentem…',
+                run: () => newAgentMenu({clientX: 12, clientY: 60, preventDefault() {}})});
+  }
+  const box = btn.getBoundingClientRect();
+  showMenu(box.left, box.bottom, items);
+}
+
+function topbarMenu(btn) {
+  const drawer = window.HubMobile;
+  const onChats = !$('chats-view').hidden;
+  const open = (view) => {
+    sidebarView(view);
+    if (drawer) drawer.openDrawer();
+  };
+  const items = [
+    {icon: 'i-folder', label: 'Projekty', on: !onChats, run: () => open('projects')},
+    {icon: 'i-note', label: 'Konverzace', on: onChats, run: () => open('chats')},
+  ];
+  // Obsidiany jen tam, kde nějaké jsou — prázdná položka neřekne nic.
+  const mem = STATE.memory || {};
+  if (mem.enabled) {
+    items.push({icon: 'i-book', label: 'Otevřít ' + (onServer() ? 'osobní' : 'PC') + ' Obsidian',
+                run: () => (vaultPreview() ? openVault() : openExternal('', 'brain'))});
+  }
+  if (STATE.firma && STATE.firma.vault) {
+    items.push({icon: 'i-book', label: 'Otevřít firemní Obsidian',
+                run: () => openVault('', 'firma')});
+  }
+  items.push(
+    {icon: 'i-gear', label: 'Nastavení',
+     run: () => HubSettings.open({...hubIO(), state: STATE})},
+    {icon: DARK ? 'i-sun' : 'i-moon', label: DARK ? 'Světlý vzhled' : 'Tmavý vzhled',
+     run: () => setTheme(!DARK, true)},
+    {icon: 'i-chart', label: 'Statistiky', run: () => HubStats.open(hubIO())},
+    {icon: 'i-refresh', label: 'Načíst znovu', run: () => reload()},
+  );
+  const box = btn.getBoundingClientRect();
+  // Zprava: nabídka se otevírá pod ikonou a nesmí přetéct za okraj.
+  showMenu(box.right - 230, box.bottom - 3, items);
+}
+
 /* ── folder picker ────────────────────────────────────────────────────────── */
 let pickerPath = '';
 let pickerResolve = null;
@@ -2360,6 +2428,7 @@ async function main() {
   $('btn-theme').onclick = () => setTheme(!DARK, true);
   $('btn-settings').onclick = () => HubSettings.open({...hubIO(), state: STATE});
   $('btn-stats').onclick = () => HubStats.open(hubIO());
+  $('btn-menu').onclick = (ev) => topbarMenu(ev.currentTarget);
   initChats();
   $('btn-new-shell').onclick = () => openTab({kind: 'shell', path: '', title: 'terminál'});
   // Levý klik = výchozí agent, pravý klik nebo delší podržení = výběr.
@@ -2376,6 +2445,7 @@ async function main() {
   };
   $('btn-new-agent').oncontextmenu = (ev) => { ev.preventDefault(); newAgentMenu(ev); };
   $('btn-new-firma').onclick = () => openFirmaTab();
+  $('btn-new-menu').onclick = (ev) => newTabMenu(ev.currentTarget);
   $('btn-brain').onclick = () => (vaultPreview() ? openVault() : openExternal('', 'brain'));
   $('modal-close').onclick = closePicker;
   $('modal-cancel').onclick = closePicker;

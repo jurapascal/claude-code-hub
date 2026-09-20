@@ -1313,6 +1313,9 @@ body { display: flex; flex-direction: column; }
 /* Dvě „+" tlačítka vedle sebe potřebují popisek, jinak se nepozná, které je které. */
 .tabplus span { font-size: 12px; margin-left: 5px; }
 .tabplus[hidden] { display: none; }
+/* Jedno „+" s nabídkou je jen pro úzkou obrazovku. */
+.tabplus-one { display: none; }
+.tabplus-one .ico { font-size: 15px; }
 
 /* ── uvítání ─────────────────────────────────────────────────────────────── */
 .welcome-big b { color: var(--accent); font-weight: 800; }
@@ -1568,6 +1571,9 @@ body { display: flex; flex-direction: column; }
    Na telefonu se z prvního sloupce stane šuplík přes obsah a třetí se do něj
    přestěhuje (mobile.js), takže zbyde jediný sloupec s taby přes celou šířku. */
 .drawer-toggle { display: none; }
+/* Nabídka lišty je jen pro úzkou obrazovku — na počítači jsou ikony vedle
+   sebe a nabídka navíc by k nim přidala jen klik. */
+.topbar-menu { display: none; }
 /* Křížek v hlavičce šuplíku — na širokém okně panel nezavírá nic. */
 .drawer-close { display: none; margin: -4px -4px -4px 0; }
 .drawer-scrim {
@@ -1576,18 +1582,22 @@ body { display: flex; flex-direction: column; }
 }
 
 @media (max-width: 820px) {
-  .drawer-toggle { display: inline-flex; }
   .layout { grid-template-columns: 1fr; }
 
-  /* Horní lišta se na telefonu lámala do dvou řádků a poslední ikona zůstala
-     za okrajem. Je to jeden řádek, který se nikdy nezalomí: název ustoupí
-     (klika šuplíku nese tutéž značku), odznak a ikony zůstanou. */
-  .topbar { padding: 0 6px; gap: 8px; }
-  .topbar-title { min-width: 0; gap: 6px; }
-  .topbar-title strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .brand-ico { display: none; }          /* klika šuplíku je tatáž značka */
+  /* Horní lišta na telefonu: vlevo značka a kde jsem, vpravo jedna ikona
+     s nabídkou. Čtyři ikony vedle sebe se sem nevešly — lišta se lámala do
+     dvou řádků a na poslední se nedalo trefit. */
+  .topbar { padding: 0 8px; gap: 8px; }
+  .topbar-title { min-width: 0; gap: 7px; }
+  .topbar-title strong { display: none; }   /* odznak říká totéž a kratčeji */
+  .drawer-toggle { display: none; }         /* projekty jsou v nabídce */
   .topbar-actions { flex: none; }
-  .iconbtn { width: 34px; height: 30px; }
+  .topbar-menu { display: inline-flex; }
+  #btn-refresh, #btn-theme, #btn-stats, #btn-settings { display: none; }
+  .iconbtn { width: 36px; height: 32px; }
+  /* Položky nabídky musí unést palec, ne kurzor. */
+  .ctxmenu { min-width: 232px; }
+  .ctxmenu button { padding: 11px 12px; font-size: 13.5px; }
 
   .sidebar {
     position: fixed; z-index: 40;
@@ -1612,6 +1622,11 @@ body { display: flex; flex-direction: column; }
   .barbtn { padding: 11px 12px; }
   .tab { min-width: 92px; max-width: 168px; padding: 0 4px 0 10px; }
   .tabbar { height: 40px; }
+  /* Tři „+" s popiskem zabraly celou lištu a na otevřené taby nezbylo
+     místo — na telefonu je z nich jedno „+" a nabídka pod ním. */
+  #btn-new-agent, #btn-new-firma, #btn-new-shell { display: none; }
+  .tabplus-one { display: inline-flex; justify-content: center; min-width: 42px; }
+  .tabplus-one[hidden] { display: none; }
   .topbar { height: 48px; padding-top: env(safe-area-inset-top); }
 
   /* Výřez a gesta na spodní hraně nesmí ležet na bublině. */
@@ -1658,9 +1673,11 @@ body { display: flex; flex-direction: column; }
    Do 520 px se vedle sebe nevejdou ani dvě tlačítka: co bylo v řádku, jde
    pod sebe a přes celou šířku, ať se to dá zmáčknout palcem. */
 @media (max-width: 520px) {
-  .topbar-title strong { display: none; }   /* zbyde odznak: kde jsem */
   /* Na 390 px se počet vedle dvou záložek nevejde; seznam je hned pod ním. */
   .section-count { display: none; }
+  /* Štítek počítače je jen informace — na telefonu si bere místo, které
+     potřebuje značka a nabídka. Zůstává v popisku v nabídce. */
+  .topbar-pc { display: none; }
   .topbar-update span { display: none; }    /* zbyde šipka nahoru */
   .topbar-update { padding: 6px 8px; margin-right: 0; }
 

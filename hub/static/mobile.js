@@ -58,6 +58,8 @@
     };
   }
   if (scrim) scrim.onclick = closeDrawer;
+  // Šuplík otevírá i nabídka v liště (hub.js) — odsud na ni sahá.
+  window.HubMobile = {openDrawer, closeDrawer};
   // Křížek v hlavičce šuplíku: klika, která ho otevřela, je pod ním.
   const closeBtn = $('btn-drawer-close');
   if (closeBtn) closeBtn.onclick = closeDrawer;
