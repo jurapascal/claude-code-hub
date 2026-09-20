@@ -606,6 +606,16 @@ body { display: flex; flex-direction: column; }
 .composer-input::placeholder { color: var(--dim); }
 
 .composer-bar { display: flex; align-items: center; gap: 4px; }
+/* Nástroje v jedné řadě: když se nevejdou, posouvají se do strany (prstem na
+   telefonu, kolečkem se shiftem na počítači) — místo aby se lámaly do dalšího
+   řádku a bublina přerostla výpis. Odeslat a Esc stojí mimo posuv. */
+.composer-tools {
+  display: flex; align-items: center; gap: 4px;
+  flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.composer-tools::-webkit-scrollbar { display: none; }
+.composer-tools .composer-chip { flex: none; }
 .composer-bar .spacer { flex: 1; }
 /* Nástroje pod textem mají být po ruce, ne na očích: bez výplně a bez
    ohraničení, to se ozve až pod myší. Pět plných pilulek v řadě přebíjelo
@@ -1659,10 +1669,9 @@ body { display: flex; flex-direction: column; }
      pořádně trefit ani poznat, že řádek pokračuje. */
   .composer-keys { padding-right: 10px; }
 
-  /* Nástroje pod textem se do jedné řady nevejdou: místo aby přetekly za
-     okraj (a Odeslat s nimi), zalomí se do druhého řádku. */
-  .composer-bar { flex-wrap: wrap; row-gap: 4px; }
-  .composer-bar .spacer { flex: 1 0 auto; }
+  /* Na dotyk mají nástroje o kousek větší plochu — posouvá se mezi nimi
+     prstem, tak se nesmí trefovat do 4 px mezery. */
+  .composer-tools .composer-chip { padding: 6px 10px; font-size: 12px; }
 
   /* Pod 16 px si Safari na iPhonu při ťuknutí do pole přiblíží celou stránku
      a z rozvržení zbude výřez, ze kterého není cesty ven. */

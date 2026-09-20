@@ -442,6 +442,9 @@
         <textarea class="composer-input" rows="1" spellcheck="false"
                   placeholder="Napiš, co má agent udělat… (Enter odešle, Shift+Enter nový řádek)"></textarea>
         <div class="composer-bar">
+          <!-- Nástroje jedou v jedné řadě a na úzké obrazovce se posouvají
+               prstem. Odeslat a Esc zůstávají mimo posuv, pořád na očích. -->
+          <div class="composer-tools">
           <button class="composer-chip" data-act="agent"
                   title="Čím tenhle tab jede. Přepnout se dá jen novým tabem — agent běží jako vlastní program.">
             <span class="composer-dot"></span><span class="val"></span> ▾</button>
@@ -453,7 +456,7 @@
           <button class="composer-chip" data-act="file">${icon('i-image')} Příloha</button>
           <button class="composer-chip" data-act="mode"
                   title="Režim oprávnění (Shift+Tab) — normální / auto-accept / plán / auto / bypass">Režim: <span class="val"></span> ▾</button>
-          <span class="spacer"></span>
+          </div>
           <button class="composer-chip ghost" data-act="esc" title="Přeruší, co Claude právě dělá (Esc)">Esc</button>
           <button class="composer-send" title="Odeslat (Enter)">${icon('i-up')}</button>
         </div>
