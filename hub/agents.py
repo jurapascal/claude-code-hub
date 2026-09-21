@@ -58,6 +58,10 @@ CATALOG = {
         # konverzace, která možná ještě běží jinde.
         "resume_arg": "--resume {id}",
         "fork_arg": "--fork-session",
+        # Id konverzace si volí hub, ne Claude Code. Díky tomu ví, do kterého
+        # přepisu tab píše, hned — a nemusí ho hádat podle času souborů.
+        # Čtení (hub/cteni.py) z toho přepisu skládá konverzaci v okně.
+        "session_arg": "--session-id {id}",
         "slash": ["/clear", "/compact", "/context", "/model", "/status",
                   "/resume", "/cost", "/help"],
         "skills": True,      # umí naše ~/.claude/skills
@@ -487,15 +491,19 @@ def bypass_arg(spec):
     return arg if _knows_flag(spec, arg) else ""
 
 
-def launch_args(spec, model="", prompt="", bypass=True, resume="", fork=False):
+def launch_args(spec, model="", prompt="", bypass=True, resume="", fork=False,
+                session=""):
     """Argumenty za jméno binárky: bypass v nabídce (když `bypass` a agent ho
     umí), pokračování v konverzaci (`resume`, s `fork` jako kopie), model
-    a úvodní prompt."""
+    a úvodní prompt. `session` = id nové konverzace, které si hub zvolil sám."""
     args = [bypass_arg(spec)] if bypass and bypass_arg(spec) else []
     if resume and spec.get("resume_arg"):
         args += [part.replace("{id}", resume) for part in spec["resume_arg"].split(" ") if part]
         if fork and spec.get("fork_arg"):
             args.append(spec["fork_arg"])
+    elif session and spec.get("session_arg"):
+        args += [part.replace("{id}", session)
+                 for part in spec["session_arg"].split(" ") if part]
     model = resolved_model(spec, model)
     if model:
         # `ollama run <model>` je celý příkaz, ne přepínač

@@ -30,8 +30,8 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import (account, chats, clockify, connect, core, pocitac, predplatne, pty_backend,
-               qr, remote, restart, stats)
+from . import (account, chats, clockify, connect, core, cteni, pocitac, predplatne,
+               pty_backend, qr, remote, restart, stats)
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -140,6 +140,10 @@ class Session:
         self.bypass = (env or {}).get("HUB_AGENT_BYPASS") == "1"
         # V které uložené konverzaci tab pokračuje (seznam konverzací).
         self.resume = (env or {}).get("HUB_AGENT_RESUME", "")
+        # Konverzace, do které tab píše. Nové id volí hub sám (--session-id),
+        # u pokračování je to ta, ve které se pokračuje — čtení (cteni.py) pak
+        # ví, který přepis číst, aniž by ho hledalo podle času souborů.
+        self.chat_id = (env or {}).get("HUB_SESSION_ID", "") or self.resume
         child = core.child_env()
         child.update(env or {})
         self.pty = pty_backend.spawn(argv, cwd=cwd, env=child,
@@ -520,6 +524,23 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 return self._json({"error": str(exc)}, 400)
             return self._json({"ok": True})
+        if name == "cteni":
+            # Konverzace jako text (hub/cteni.py). Buď z tabu, který běží,
+            # nebo ze starého přepisu podle id konverzace.
+            try:
+                start = int((query.get("from") or ["0"])[0] or 0)
+            except ValueError:
+                start = 0
+            chat = (query.get("chat") or [""])[0]
+            if chat:
+                path = cteni.path_for(chat)
+            else:
+                try:
+                    session = HUB.sessions.get(int((query.get("id") or ["0"])[0]))
+                except ValueError:
+                    session = None
+                path = core.transcript_for(session) if session else ""
+            return self._json(cteni.read(path, start, tail=not start))
         if name == "tab-model":
             try:
                 session = HUB.sessions.get(int((query.get("id") or ["0"])[0]))

@@ -828,6 +828,8 @@ function renderChats() {
   }
 }
 
+/* Klepnutí na konverzaci ji otevře ke čtení — rychle a nic to nespustí.
+   Pokračovat se v ní dá tlačítkem v okně, teprve to pustí Claude Code. */
 function openChat(c) {
   const running = c.tab && TABS.find((t) => t.id === c.tab);
   if (running) {
@@ -835,6 +837,17 @@ function openChat(c) {
     document.body.classList.remove('drawer-open');
     return;
   }
+  document.body.classList.remove('drawer-open');
+  if (window.HubCteni) {
+    const at = new Date(c.updated * 1000);
+    return HubCteni.open({api, notice: toast, resume: resumeChat},
+                         {...c, when: at.toLocaleString('cs-CZ')});
+  }
+  resumeChat(c);
+}
+
+/* Pokračovat v konverzaci: tohle už je nový tab s Claude Code. */
+function resumeChat(c) {
   if (!c.exists) {
     toast('Složka téhle konverzace už není: ' + (c.cwd || '?'));
     return;
@@ -1522,6 +1535,13 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
     ? HubLinks.install(tab, {open: openLink, copy: copyText, notice: toast}) : null;
   // Bublina jen tam, kde běží agent. V holém shellu, při deployi ani během
   // instalace není co překrývat — a odeslaný text by skončil v bashi.
+  /* Čtení: v tabu s Claude Code se na terminál kouká jen tehdy, když je na
+     co — jinak je přes něj konverzace jako text (cteni.js). Ostatní agenti
+     svůj přepis nepíšou, takže by nebylo z čeho číst. */
+  if (kind === 'project' && window.HubCteni &&
+      (agent || STATE.default_agent || 'claude') === 'claude') {
+    tab.cteni = HubCteni.install(tab, {api, notice: toast, aktivni: () => ACTIVE === tab});
+  }
   if (kind === 'project' || kind.startsWith('slash:')) {
     tab.composer = HubComposer.install(tab, {
       send,
@@ -1684,6 +1704,7 @@ function activate(tab) {
     refit(tab);
     claimSize(tab);
     if (tab.links) tab.links.update();      // skrytý tab odkazy nečetl
+    if (tab.cteni) tab.cteni.wake();        // a čtení je o dotaz pozadu
     tab.term.focus();
     // Když je vidět bublina, píše se do ní — fokus patří jí.
     if (tab.composer) tab.composer.focus();
@@ -1776,6 +1797,7 @@ function closeTab(tab, {remote = false} = {}) {
   if (tab.releaseIME) tab.releaseIME();
   if (tab.releaseClipboard) tab.releaseClipboard();
   if (tab.composer) tab.composer.release();
+  if (tab.cteni) tab.cteni.release();
   if (tab.keys) tab.keys.release();
   if (tab.links) tab.links.release();
   tab.term.dispose();

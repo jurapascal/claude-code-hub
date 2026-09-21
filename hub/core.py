@@ -18,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 
 from . import agents
 
@@ -346,6 +347,17 @@ def child_env():
     env.setdefault("PYTHONUTF8", "1")
     env.pop("LINES", None)
     env.pop("COLUMNS", None)
+    # Značky běžícího Claude Code. Když se hub spustí z jeho terminálu (nebo
+    # ho odtamtud pustí sám Claude), zdědí je každý tab — a Claude Code v tabu
+    # se pak tváří jako podsezení: vypne si ukládání přepisu („Transcript
+    # saving is off") a napojí se na cizí sezení. Tab je samostatná konverzace,
+    # tak do něj tyhle stopy nepatří; bez přepisu by navíc nebylo z čeho
+    # skládat čtení (hub/cteni.py).
+    for mark in ("CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID",
+                 "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_MESSAGING_SOCKET",
+                 "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_ENTRYPOINT",
+                 "CLAUDE_PID"):
+        env.pop(mark, None)
     return env
 
 
@@ -2372,6 +2384,33 @@ def _tab_transcript(sid, cwd, started):
     return found
 
 
+def transcript_path(cwd, chat_id):
+    """Kde Claude Code vede konverzaci `chat_id` spuštěnou ve složce `cwd`."""
+    if not chat_id:
+        return ""
+    folder = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd or HOME))
+    return os.path.join(CLAUDE_DIR, "projects", folder, chat_id + ".jsonl")
+
+
+def transcript_for(session):
+    """Přepis konverzace, kterou vede tab (nebo ''). Sezení zná server, cestu
+    k přepisu tenhle modul — čtení (hub/cteni.py) potřebuje obojí.
+
+    Když si id konverzace zvolil hub sám (--session-id), je cesta jistá hned
+    od prvního řádku. Jinak se hledá jako dosud: podle záznamu od Stop hooku,
+    nebo podle nejnovějšího přepisu ve složce projektu.
+    """
+    if not session:
+        return ""
+    cwd = session.path or HOME
+    chat_id = getattr(session, "chat_id", "")
+    if chat_id:
+        path = transcript_path(cwd, chat_id)
+        if os.path.isfile(path):
+            return path
+    return _tab_transcript(session.id, cwd, session.started)
+
+
 def _first_time(transcript):
     """Čas prvního záznamu přepisu (epoch), 0 = nevíme."""
     try:
@@ -2552,8 +2591,12 @@ def cmd_agent(path, agent_id="", slash="", model="", resume="", fork=False, vaul
     # se Claude Code při každém startu ptal a Enter by ho ukončil.
     bypass = bool(agents.bypass_arg(spec)) and bypass_accepted()
     resume = str(resume or "") if SESSION_ID.fullmatch(str(resume or "")) else ""
+    # Id nové konverzace si volí hub. Pak ví hned, do kterého přepisu tab píše,
+    # a čtení (hub/cteni.py) ho nemusí hádat podle času souborů. U pokračování
+    # i kopie si id volí Claude Code sám, tam se nic nevnucuje.
+    session = "" if resume else str(uuid.uuid4())
     argv = agents.launch_args(spec, model, slash or prompt, bypass=bypass, resume=resume,
-                              fork=fork)
+                              fork=fork, session=session)
     # Firemní tab: agent dostane pokyn pro tohle sezení a nástroj firma.py podle
     # HUB_VAULT pozná, že se nahrává rovnou.
     firma = vault == "firma" and bool(company_vault())
@@ -2588,6 +2631,8 @@ def cmd_agent(path, agent_id="", slash="", model="", resume="", fork=False, vaul
         env["HUB_AGENT_RESUME"] = resume  # ve které konverzaci tab pokračuje
     if firma:
         env["HUB_VAULT"] = "firma"
+    if session and spec.get("session_arg"):
+        env["HUB_SESSION_ID"] = session
     return script, env
 
 

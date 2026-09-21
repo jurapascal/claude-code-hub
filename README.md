@@ -27,6 +27,13 @@ dělá jednu aplikaci:
 - **Taby** — klik na projekt otevře **skutečný terminál** (pty + xterm.js), takže TUI
   Claude Code vypadá přesně jako v terminálu. Když session skončí, tab zůstane jako
   obyčejný shell. Taby jdou přejmenovat dvojklikem a přetáhnout myší.
+- **Čtení místo terminálu** — v tabu s Claude Code je přes terminál konverzace
+  jako text: co jsi napsal, co Claude odepsal, a každé volání nástroje jako
+  jeden složený řádek („✎ upravil hub.css · +12 −11", „◉ přečetl hub.js ·
+  240 ř."), který se klepnutím rozbalí. Čte se z přepisu, který si Claude Code
+  o konverzaci sám vede, takže přibývá živě, jak pracuje. Jakmile se Claude na
+  něco zeptá, čtení uhne a je vidět terminál i s kartou dotazu — a pak se zase
+  vrátí. Tlačítkem **Terminál** se dá podívat kdykoli.
 - **Bublina místo vstupního řádku** — spodek terminálu, kde Claude Code kreslí
   svoje vstupní pole, překryje chatovací bublina: pole na text, přepínač modelu,
   slash příkazy, příloha a režimy (Shift+Tab, Esc). Odeslané jde do stejného pty,
