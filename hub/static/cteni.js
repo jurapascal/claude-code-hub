@@ -253,6 +253,13 @@
         </div>
         <div class="onb-body">
           <div class="cteni-scroll"><div class="cteni-flow"></div></div>
+          <!-- Číst a nemoct odepsat je půlka věci: co se tu napíše, dostane
+               Claude jako první zprávu, jakmile se konverzace otevře. -->
+          <div class="cteni-write">
+            <textarea class="cteni-input" rows="1" spellcheck="false"
+                      placeholder="Napiš a Claude v konverzaci pokračuje… (Enter odešle)"></textarea>
+            <button class="cteni-send" title="Odeslat (Enter)">↑</button>
+          </div>
         </div>
       </div>`;
     document.body.appendChild(box);
@@ -271,6 +278,33 @@
     q('.cteni-close').onclick = zavrit;
     box.addEventListener('click', (ev) => { if (ev.target === box) zavrit(); });
     q('.cteni-go').onclick = () => { zavrit(); io.resume(chat); };
+
+    /* Napsat a pokračovat je jedno gesto: okno se zavře, konverzace se otevře
+       v tabu a Claude na napsané začne dělat hned. */
+    const pole = q('.cteni-input');
+    // Na telefonu se dlouhá výzva zalomí do dvou řádků a spodek se ořízne.
+    if (window.matchMedia('(max-width: 520px)').matches) {
+      pole.placeholder = 'Napiš zprávu…';
+    }
+    const odeslat = () => {
+      const text = pole.value.trim();
+      if (!text) return pole.focus();
+      zavrit();
+      io.resume(chat, text);
+    };
+    q('.cteni-send').onclick = odeslat;
+    pole.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) {
+        ev.preventDefault();
+        odeslat();
+      }
+    });
+    // Pole roste s textem, ale jen do výšky, po které je ještě vidět konverzace.
+    pole.addEventListener('input', () => {
+      pole.style.height = 'auto';
+      pole.style.height = Math.min(pole.scrollHeight, 160) + 'px';
+    });
+    setTimeout(() => pole.focus(), 0);
 
     const scroll = q('.cteni-scroll');
     const proud = flow(q('.cteni-flow'));

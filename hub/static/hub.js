@@ -846,8 +846,9 @@ function openChat(c) {
   resumeChat(c);
 }
 
-/* Pokračovat v konverzaci: tohle už je nový tab s Claude Code. */
-function resumeChat(c) {
+/* Pokračovat v konverzaci: tohle už je nový tab s Claude Code. `prompt` je
+   zpráva napsaná v okně se čtením — Claude na ní začne dělat hned po startu. */
+function resumeChat(c, prompt) {
   if (!c.exists) {
     toast('Složka téhle konverzace už není: ' + (c.cwd || '?'));
     return;
@@ -862,7 +863,7 @@ function resumeChat(c) {
     fork = true;
   }
   openTab({kind: 'project', path: c.cwd, title: c.title.slice(0, 40), agent: 'claude',
-           resume: c.id, fork});
+           resume: c.id, fork, prompt: prompt || ''});
   document.body.classList.remove('drawer-open');
   setTimeout(loadChats, 4000);
 }
@@ -1460,12 +1461,12 @@ function newAgentMenu(ev) {
 }
 
 /* ── tabs ─────────────────────────────────────────────────────────────────── */
-function openTab({kind, path, title, agent, model, mode, resume, fork, vault}) {
+function openTab({kind, path, title, agent, model, mode, resume, fork, vault, prompt}) {
   const tab = createTab({kind, path, title, agent, model, mode, resume, vault});
   const dims = measure(tab);
   send({t: 'open', ref: tab.ref, kind, path, title, agent: agent || '',
         model: model || '', resume: resume || '', fork: !!fork,
-        vault: vault || '', cols: dims.cols, rows: dims.rows});
+        vault: vault || '', prompt: prompt || '', cols: dims.cols, rows: dims.rows});
   return tab;
 }
 

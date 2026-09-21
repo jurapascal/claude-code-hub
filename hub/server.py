@@ -1166,7 +1166,10 @@ class Handler(BaseHTTPRequestHandler):
                                    model=str(msg.get("model", "") or ""),
                                    resume=str(msg.get("resume", "") or ""),
                                    fork=msg.get("fork") is True,
-                                   vault=str(msg.get("vault", "") or ""))
+                                   vault=str(msg.get("vault", "") or ""),
+                                   # Úvodní zpráva: z okna se čtením se dá
+                                   # rovnou napsat a konverzace s ní pokračuje.
+                                   prompt=str(msg.get("prompt", "") or "")[:20000])
             except (pty_backend.PtyUnavailable, core.BashMissing) as exc:
                 core.log_error("tab se nepodařilo otevřít", exc)
                 conn.send_json({"t": "error", "ref": msg.get("ref"), "d": str(exc)})
