@@ -817,6 +817,13 @@ function renderChats() {
       [c.project, when, c.tab ? 'otevřená' : ''].filter(Boolean).join('  ·  ');
     item.title = [c.prompt && c.prompt !== c.title ? c.prompt : '', c.cwd].filter(Boolean).join('\n\n');
     item.onclick = () => openChat(c);
+    item.oncontextmenu = (ev) => {
+      ev.preventDefault();
+      showMenu(ev.clientX, ev.clientY, [
+        {icon: 'i-terminal', label: 'Pokračovat v tabu', run: () => openChat(c)},
+        {icon: 'i-note', label: 'Jen přečíst', run: () => readChat(c)},
+      ]);
+    };
     box.appendChild(item);
   }
   if (list.length > chatsShown) {
@@ -828,22 +835,24 @@ function renderChats() {
   }
 }
 
-/* Klepnutí na konverzaci ji otevře ke čtení — rychle a nic to nespustí.
-   Pokračovat se v ní dá tlačítkem v okně, teprve to pustí Claude Code. */
+/* Klepnutí na konverzaci ji otevře rovnou v tabu: nahoře je vidět, o čem se
+   psalo (čtení z přepisu), dole se píše dál. Okno jen ke čtení bylo o krok
+   navíc — kdo konverzaci otevírá, chce v ní většinou pokračovat. To okno
+   zůstává v nabídce pravého tlačítka (dlouhého podržení) jako „Jen přečíst". */
 function openChat(c) {
   const running = c.tab && TABS.find((t) => t.id === c.tab);
-  if (running) {
-    activate(running);
-    document.body.classList.remove('drawer-open');
-    return;
-  }
   document.body.classList.remove('drawer-open');
-  if (window.HubCteni) {
-    const at = new Date(c.updated * 1000);
-    return HubCteni.open({api, notice: toast, resume: resumeChat},
-                         {...c, when: at.toLocaleString('cs-CZ')});
-  }
+  if (running) return activate(running);
   resumeChat(c);
+}
+
+/* Konverzace jen ke čtení, bez spouštění Claude Code. */
+function readChat(c) {
+  document.body.classList.remove('drawer-open');
+  if (!window.HubCteni) return resumeChat(c);
+  const at = new Date(c.updated * 1000);
+  HubCteni.open({api, notice: toast, resume: resumeChat},
+                {...c, when: at.toLocaleString('cs-CZ')});
 }
 
 /* Pokračovat v konverzaci: tohle už je nový tab s Claude Code. `prompt` je

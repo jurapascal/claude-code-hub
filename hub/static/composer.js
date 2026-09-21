@@ -518,6 +518,14 @@
     let draft = '';
     let hiddenByUser = false;
     let shown = false;
+    /* Čtení (cteni.js): terminál je pod ním schovaný, takže bublina tam nic
+       nezakrývá a je jediné místo, kam psát — ukazuje se pořád. Na to, jestli
+       Claude Code opravdu čeká na zadání, se pak nedá koukat přes `shown`;
+       drží se to zvlášť. `everIdle` = Claude Code už jednou naběhl, zpráva
+       napsaná dřív počká v `cekaZprava`. */
+    let idleNow = false;
+    let everIdle = false;
+    let cekaZprava = '';
     let codePrompt = false;  // Claude Code čeká na kód z přihlášení (LOGIN_CODE)
     let normalPlaceholder = '';
     /* Bublina se ukáže, když je dole klidný prompt — jenže tím, že se ukáže,
@@ -565,7 +573,16 @@
        rychlých akcí.) */
     function submit(text) {
       const body = text.replace(/\r/g, '');
-      if (!body.trim() || !tab.id) return;
+      if (!body.trim()) return;
+      /* Tab právě vznikl a Claude Code se ještě rozjíždí. Co by se teď poslalo
+         do terminálu, by se ztratilo v jeho startu — zpráva proto počká a
+         odejde sama, jakmile se objeví prompt. */
+      if (tab.cteni && (!tab.id || !everIdle)) {
+        cekaZprava = cekaZprava ? cekaZprava + '\n' + body : body;
+        if (io.notice) io.notice('Claude Code ještě startuje — zpráva odejde, jakmile naběhne.');
+        return;
+      }
+      if (!tab.id) return;
       // Víceřádkový text musí dorazit jako vložení, jinak by se každý řádek
       // odeslal zvlášť. Jednořádkový jde rovnou — bez uvozovacích sekvencí.
       toPty(body.includes('\n') ? '\x1b[200~' + body + '\x1b[201~' : body);
@@ -897,7 +914,9 @@
       if (!AG.full) return;
       const buf = term.buffer.active;
       // Odrolováno nahoru: dole je historie, ne živý dotaz.
-      const live = !shown && !tab.exited && buf.viewportY >= buf.baseY - 1;
+      // Klidný prompt = žádný dotaz. Ve čtení je bublina vidět pořád, takže
+      // se to pozná podle `idleNow`, ne podle toho, jestli je bublina ukázaná.
+      const live = !idleNow && !tab.exited && buf.viewportY >= buf.baseY - 1;
       const lines = live ? dialogLines(term, Math.min(term.rows, DIALOG_ROWS)) : [];
       const text = lines.join('\n');
       /* Číslovaný seznam se ve výpisu objeví i jen tak (kroky, poznámky).
@@ -1342,7 +1361,18 @@
     }
 
     function apply(force) {
-      const want = !hiddenByUser && looksIdle();
+      const idle = looksIdle();
+      idleNow = idle;
+      if (idle) everIdle = true;
+      // Zpráva napsaná, než Claude Code naběhl, odchází, jakmile čeká na zadání.
+      if (idle && cekaZprava) {
+        const zprava = cekaZprava;
+        cekaZprava = '';
+        submit(zprava);
+      }
+      const cteni = !!tab.cteni && !tab.pane.classList.contains('asking') &&
+                    !tab.pane.classList.contains('cteni-off');
+      const want = !hiddenByUser && (idle || cteni);
       if (want !== shown && (force || Date.now() - flippedAt >= DWELL_MS)) {
         flippedAt = Date.now();
         const hadTerm = tab.pane.contains(document.activeElement) &&

@@ -110,7 +110,7 @@
     document.addEventListener('touchstart', (ev) => {
       if (ev.touches.length !== 1) return cancel();
       const t = ev.touches[0];
-      const target = t.target.closest('.card, .tab, .barbtn');
+      const target = t.target.closest('.card, .tab, .barbtn, .chat-item');
       if (!target) return;
       start = {x: t.clientX, y: t.clientY};
       fired = false;
