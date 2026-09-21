@@ -8,7 +8,7 @@
  * Proč překryv a ne místo terminálu: xterm potřebuje mít pořád svoji velikost,
  * jinak by Claude Code psal do jinak širokého okna, než je vidět. Terminál se
  * proto nezmenšuje, jen se přes něj položí tahle vrstva — a uhne, jakmile se
- * Claude na něco zeptá (pane.asking, viz composer.js).
+ * Claude na něco zeptá (pane.asking, viz composer.js). Jiný přepínač není.
  *
  * Bloky chodí ze serveru (hub/cteni.py) po kouscích od bajtu, na kterém se
  * minule skončilo, takže při práci přibývají jen nové.
@@ -156,14 +156,11 @@
     const scroll = el('div', 'cteni-scroll');
     const mount = el('div', 'cteni-flow');
     const prazdno = el('div', 'cteni-empty', 'Zatím nic — napiš Claudovi dole.');
-    const term = el('button', 'cteni-term', 'Terminál');
-    term.title = 'Ukázat terminál tak, jak ho kreslí Claude Code';
-    const zpet = el('button', 'cteni-back', 'Čtení');
-    zpet.title = 'Zpátky ke čtení';
+    // Přepínač na terminál tu není: čtení je výchozí a terminál se ukáže sám,
+    // když se Claude na něco zeptá (karta dotazu má i vlastní „Terminál").
     scroll.append(mount, prazdno);
-    root.append(term, scroll);
+    root.append(scroll);
     tab.pane.appendChild(root);
-    tab.pane.appendChild(zpet);
     tab.pane.classList.add('cteni-on');
 
     const proud = flow(mount);
@@ -176,12 +173,6 @@
     scroll.addEventListener('scroll', () => {
       uDna = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < U_DNA;
     });
-
-    term.onclick = () => {
-      tab.pane.classList.add('cteni-off');
-      tab.term.focus();
-    };
-    zpet.onclick = () => tab.pane.classList.remove('cteni-off');
 
     async function tik() {
       if (ceka || !zivy) return;
@@ -228,8 +219,7 @@
         zivy = false;
         clearTimeout(timer);
         root.remove();
-        zpet.remove();
-        tab.pane.classList.remove('cteni-on', 'cteni-off');
+        tab.pane.classList.remove('cteni-on');
       },
       // Po přepnutí na tab se doptá hned, ať čtení není o vteřinu pozadu.
       wake() { if (zivy) { clearTimeout(timer); timer = setTimeout(tik, 60); } },

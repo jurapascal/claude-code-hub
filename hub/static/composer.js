@@ -1370,8 +1370,7 @@
         cekaZprava = '';
         submit(zprava);
       }
-      const cteni = !!tab.cteni && !tab.pane.classList.contains('asking') &&
-                    !tab.pane.classList.contains('cteni-off');
+      const cteni = !!tab.cteni && !tab.pane.classList.contains('asking');
       const want = !hiddenByUser && (idle || cteni);
       if (want !== shown && (force || Date.now() - flippedAt >= DWELL_MS)) {
         flippedAt = Date.now();

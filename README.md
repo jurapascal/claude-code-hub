@@ -33,7 +33,7 @@ dělá jednu aplikaci:
   240 ř."), který se klepnutím rozbalí. Čte se z přepisu, který si Claude Code
   o konverzaci sám vede, takže přibývá živě, jak pracuje. Jakmile se Claude na
   něco zeptá, čtení uhne a je vidět terminál i s kartou dotazu — a pak se zase
-  vrátí. Tlačítkem **Terminál** se dá podívat kdykoli. Bublina na psaní je
+  vrátí. Jiný přepínač na terminál není — čtení je výchozí. Bublina na psaní je
   vidět hned po otevření tabu; co napíšeš, než Claude Code naběhne, počká
   a odejde samo. Klepnutí na konverzaci v panelu ji otevře rovnou v tabu
   (s historií nahoře), jen přečíst ji jde pravým tlačítkem / podržením.
