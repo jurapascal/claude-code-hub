@@ -24,6 +24,17 @@
   // právě vznikl). Claude Code ho kreslí dřív, než doběhne start.
   const READY_MS = 1500;
 
+  /* Claude Code při práci kreslí nad vstupním polem řádek jako
+       ✽ Bloviating… (8s · ↓ 437 tokens · thinking with xhigh effort)
+     a do nápovědy pod ním přidá „esc to interrupt". Naměřeno na 2.1.278.
+     Hlavní je řádek s hvězdičkou: nápověda se na úzkém terminálu (telefon)
+     ořízne na „· es…" a „esc to interrupt" v ní vůbec není. Slovo je vždy
+     jedno anglické s velkým písmenem — podle toho se řádek neplete s textem
+     odpovědi, kde může odrážka taky začínat hvězdičkou. */
+  const WORKING = /esc to interrupt/i;
+  const SPINNER = /^\s*[·✢*✶✻✽∗]\s+([A-Z][A-Za-z-]+)…(?:\s*\((.*))?\s*$/;
+  const WORK_ROWS = 14;       // spinner je nad vstupním polem, i víceřádkovým
+
   /* Jak vypadá spodek Claude Code, když jen čeká na zadání (naměřeno, ne
      odhadnuto):
 
@@ -1450,6 +1461,31 @@
         }
       }
       renderAnswer();
+      sledujPraci();
+    }
+
+    /* Co Claude zrovna dělá — pro čtení, kde terminál není vidět a jinak by
+       se nepoznalo, jestli pracuje, nebo čeká. Hlásí se jen změna. */
+    let pracSig = '';
+    function sledujPraci() {
+      if (!io.prace || !AG.full) return;
+      let stav = {on: false};
+      if (!tab.exited) {
+        const dole = visibleBottom(term, WORK_ROWS);
+        const spin = dole.map((l) => SPINNER.exec(l)).filter(Boolean).pop();
+        if (spin || dole.some((l) => WORKING.test(l))) {
+          const zavorka = (spin && spin[2]) || '';
+          const sek = /(\d+)\s*s\b/.exec(zavorka);
+          const tok = /↓\s*([\d.,]+\s*k?)\s*tokens/i.exec(zavorka);
+          stav = {on: true, sloveso: spin ? spin[1] : '',
+                  sekund: sek ? Number(sek[1]) : null,
+                  tokeny: tok ? tok[1].replace(/\s/g, '') : ''};
+        }
+      }
+      const sig = JSON.stringify(stav);
+      if (sig === pracSig) return;
+      pracSig = sig;
+      io.prace(stav);
     }
 
     let pending = null;

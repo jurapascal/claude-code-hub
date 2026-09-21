@@ -1597,6 +1597,8 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
       // Tečka v bublině je tatáž tečka jako na tabu — ať se v prostoru
       // nekouká na modrý tab s jantarovou tečkou pod ním.
       agentColor: (a) => dotColor(tab, a),
+      // Co Claude zrovna dělá — čtení (cteni.js) z toho kreslí řádek práce.
+      prace: (stav) => { if (tab.cteni) tab.cteni.prace(stav); },
       agents: (ready) => agentList(!!ready),
       /* Přepnout agenta ani model v běžícím tabu nejde: je to jiný program,
          případně jiný startovací argument. Otevře se proto nový tab nad tímtéž

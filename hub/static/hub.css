@@ -2054,8 +2054,21 @@ body { display: flex; flex-direction: column; }
   max-height: 46vh; overflow: auto;
   -webkit-user-select: text; user-select: text;
 }
-.cteni-prace { color: var(--dim); font-size: 12.5px; animation: cteni-puls 1.4s ease-in-out infinite; }
-@keyframes cteni-puls { 50% { opacity: .4; } }
+/* Claude pracuje: hvězdička se točí a dýchá, vedle co dělá a jak dlouho. */
+.cteni-prace {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 2px 8px; color: var(--dim); font-size: 12.5px;
+}
+.cteni-spin {
+  display: inline-block; color: var(--accent); font-size: 15px; line-height: 1;
+  animation: cteni-toc 2.4s linear infinite, cteni-puls 1.2s ease-in-out infinite;
+}
+.cteni-slovo { color: var(--fg); font-weight: 600; }
+.cteni-cas, .cteni-tok { font-variant-numeric: tabular-nums; }
+.cteni-cas::before, .cteni-tok:not(:empty)::before { content: "· "; color: var(--section); }
+@keyframes cteni-toc { to { transform: rotate(360deg); } }
+@keyframes cteni-puls { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .cteni-spin { animation: cteni-puls 1.6s ease-in-out infinite; } }
 .cteni-empty { color: var(--dim); font-size: 13px; text-align: center; margin-top: 12vh; }
 
 /* Okno se starou konverzací: čte se v ní a dá se v ní rovnou psát dál. */

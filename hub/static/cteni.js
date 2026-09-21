@@ -148,19 +148,47 @@
       }
     }
 
+    /* Řádek „Claude pracuje": točící se hvězdička, co zrovna dělá (slovo si
+       vybírá Claude Code sám), jak dlouho a kolik napsal. Stav čte bublina
+       z terminálu (composer.js → io.prace); čas běží i mezi překresleními,
+       ať se neposouvá po skocích. */
+    let odKdy = 0, tikani = null;
+    function cas(ms) {
+      const s = Math.max(0, Math.round(ms / 1000));
+      return s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + (s % 60) + ' s';
+    }
+    function stav(st) {
+      if (!st || !st.on) {
+        if (prace) { prace.remove(); prace = null; }
+        clearInterval(tikani);
+        tikani = null;
+        odKdy = 0;
+        return;
+      }
+      if (!prace) {
+        prace = el('div', 'cteni-prace');
+        prace.append(el('span', 'cteni-spin', '✻'), el('span', 'cteni-slovo'),
+                     el('span', 'cteni-cas'), el('span', 'cteni-tok'));
+      }
+      mount.appendChild(prace);            // vždycky na konci konverzace
+      prace.querySelector('.cteni-slovo').textContent = (st.sloveso || 'Pracuje') + '…';
+      if (st.sekund !== null && st.sekund !== undefined) odKdy = Date.now() - st.sekund * 1000;
+      else if (!odKdy) odKdy = Date.now();
+      prace.querySelector('.cteni-tok').textContent = st.tokeny ? '↓ ' + st.tokeny + ' tokenů' : '';
+      const napis = () => {
+        if (prace) prace.querySelector('.cteni-cas').textContent = cas(Date.now() - odKdy);
+      };
+      napis();
+      if (!tikani) tikani = setInterval(napis, 1000);
+    }
+
     return {
-      add(bloky) { for (const b of bloky) pridej(b); },
-      prazdny() { return !mount.firstChild; },
-      /* „Claude pracuje…" — poslední nástroj ještě nemá výsledek, takže se
-         zrovna něco děje. Řádek je pořád tentýž, jen se přesouvá na konec. */
-      cinnost(on) {
-        if (!on) {
-          if (prace) { prace.remove(); prace = null; }
-          return;
-        }
-        if (!prace) prace = el('div', 'cteni-prace', 'Claude pracuje…');
-        mount.appendChild(prace);
+      add(bloky) {
+        for (const b of bloky) pridej(b);
+        if (prace) mount.appendChild(prace);   // nové bloky nad řádek práce
       },
+      prazdny() { return !mount.querySelector(':scope > :not(.cteni-prace)'); },
+      stav,
     };
   }
 
@@ -218,12 +246,9 @@
           proud.add(blocks);
           prazdno.hidden = true;
           prazdnych = 0;
-          const posledni = blocks[blocks.length - 1];
-          proud.cinnost(posledni.kind === 'tool');
           if (uDna) scroll.scrollTop = scroll.scrollHeight;
         } else if (konec) {
           prazdnych++;
-          if (prazdnych > 2) proud.cinnost(false);
           prazdno.hidden = !proud.prazdny();
         }
       } catch (_) {
@@ -252,11 +277,23 @@
       release() {
         zivy = false;
         clearTimeout(timer);
+        proud.stav(null);
         root.remove();
         tab.pane.classList.remove('cteni-on');
       },
       // Po přepnutí na tab se doptá hned, ať čtení není o vteřinu pozadu.
       wake() { if (zivy) { clearTimeout(timer); timer = setTimeout(tik, 60); } },
+      /* Claude začal nebo přestal pracovat (composer.js čte terminál). Když
+         pracuje, doptává se čtení rychle, ať text přibývá, jak ho píše. */
+      prace(st) {
+        if (!zivy) return;
+        proud.stav(st);
+        if (st && st.on) {
+          prazdno.hidden = true;
+          prazdnych = 0;
+        }
+        if (uDna) scroll.scrollTop = scroll.scrollHeight;
+      },
     };
   }
 
