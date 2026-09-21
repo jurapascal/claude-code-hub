@@ -97,7 +97,13 @@ body { display: flex; flex-direction: column; }
 .topbar-pc.busy { border-color: var(--green); }
 .topbar-pc.busy .ico { animation: pc-pulse 1.1s ease-in-out infinite; }
 @keyframes pc-pulse { 50% { opacity: .35; } }
-@media (max-width: 720px) { .topbar-pc span { display: none; } }
+/* Na telefonu malý: ikona a začátek jména počítače. Je to jediné, podle čeho
+   se v prostoru pozná, že Claude na počítač dosáhne — schovat ho nejde. */
+@media (max-width: 720px) {
+  .topbar-pc { max-width: 9rem; min-width: 0; flex-shrink: 1; gap: 4px;
+               padding: 2px 7px 2px 5px; font-size: 11px; }
+}
+@media (max-width: 520px) { .topbar-pc { max-width: 7rem; } }
 .topbar-actions { display: flex; gap: 2px; }
 
 .iconbtn {
@@ -1708,9 +1714,7 @@ body { display: flex; flex-direction: column; }
 @media (max-width: 520px) {
   /* Na 390 px se počet vedle dvou záložek nevejde; seznam je hned pod ním. */
   .section-count { display: none; }
-  /* Štítek počítače je jen informace — na telefonu si bere místo, které
-     potřebuje značka a nabídka. Zůstává v popisku v nabídce. */
-  .topbar-pc { display: none; }
+
   .topbar-update span { display: none; }    /* zbyde šipka nahoru */
   .topbar-update { padding: 6px 8px; margin-right: 0; }
 
