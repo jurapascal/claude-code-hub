@@ -1133,17 +1133,36 @@ function dayScene(part) {
   return svg;
 }
 
-function renderWelcome() {
-  const hour = new Date().getHours();
-  const part = dayPart(hour);
+/* Komu se tu říká „dobrý den". V prostoru na serveru běží hub pod systémovým
+   účtem `hub` — to je stroj, ne člověk, a „Dobrou noc, hub" zní jako chyba.
+   Tam se vezme křestní jméno přihlášeného z brány; bez jména radši nic, než
+   aby se zdravilo příjmením z e-mailu. */
+function greetName() {
+  const u = STATE.config && STATE.config.gateway_user;
+  if (u) return String(u.name || '').trim().split(/\s+/)[0] || '';
+  return (STATE.user || '').split(/[\s.]/)[0];
+}
+
+/* Pozdrav a scéna podle denní doby. Kreslí se znovu i během dne: okno bývá
+   otevřené od rána do noci, a „Dobrou noc" v pět odpoledne je pozdrav, který
+   se naposledy vykreslil v noci a od té doby nikdo nepřepsal. */
+let greetPart = '';
+function renderGreeting() {
+  const part = dayPart(new Date().getHours());
   const pozdrav = {rano: 'Dobré ráno', den: 'Dobrý den',
                    vecer: 'Dobrý večer', noc: 'Dobrou noc'}[part];
-  const who = (STATE.user || '').split(/[\s.]/)[0];
+  const who = greetName();
   $('welcome-greet').textContent = pozdrav + (who ? ', ' + who : '') + '.';
-
+  if (part === greetPart) return;
+  greetPart = part;
   const scene = $('welcome-scene');
   scene.textContent = '';
   scene.appendChild(dayScene(part));
+}
+
+function renderWelcome() {
+  greetPart = '';                 // scéna se při plném překreslení kreslí vždy
+  renderGreeting();
 
   const box = $('welcome-actions');
   box.textContent = '';
@@ -2463,6 +2482,10 @@ async function main() {
   $('btn-settings').onclick = () => HubSettings.open({...hubIO(), state: STATE});
   $('btn-stats').onclick = () => HubStats.open(hubIO());
   $('btn-menu').onclick = (ev) => topbarMenu(ev.currentTarget);
+  setInterval(renderGreeting, 5 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') renderGreeting();
+  });
   initChats();
   $('btn-new-shell').onclick = () => openTab({kind: 'shell', path: '', title: 'terminál'});
   // Levý klik = výchozí agent, pravý klik nebo delší podržení = výběr.
