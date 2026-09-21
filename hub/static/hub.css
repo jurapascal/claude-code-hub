@@ -2005,6 +2005,22 @@ body { display: flex; flex-direction: column; }
   white-space: pre-wrap; overflow-wrap: anywhere;
   -webkit-user-select: text; user-select: text;
 }
+.cteni-text { white-space: pre-wrap; }
+/* Přiložené obrázky: náhledy v bublině, klepnutím na celé okno. */
+.cteni-imgs { display: flex; flex-wrap: wrap; gap: 6px; }
+.cteni-imgs + .cteni-text { margin-top: 8px; }
+.cteni-img {
+  display: block; max-width: 100%; max-height: 260px; border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+  background: var(--bg); cursor: zoom-in; object-fit: contain;
+}
+.cteni-imgs .cteni-img:not(:only-child) { max-width: calc(50% - 3px); max-height: 180px; }
+.cteni-lupa {
+  position: fixed; inset: 0; z-index: 120;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(0, 0, 0, .82); cursor: zoom-out;
+}
+.cteni-lupa img { max-width: 100%; max-height: 100%; border-radius: 6px; object-fit: contain; }
 /* Co Claude napsal. Markdown kreslí prohlížeč poznámek, tak i vypadá stejně. */
 .cteni-say {
   font-size: 14px; line-height: 1.7; color: var(--fg);

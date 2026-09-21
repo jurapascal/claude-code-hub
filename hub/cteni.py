@@ -84,6 +84,43 @@ def _text_cloveka(obsah):
     return text
 
 
+# Obrázek, který člověk přiložil v bublině: hub ho uloží do ~/.claude/hub-images
+# a Claudovi napíše jeho cestu. Ve čtení má být vidět obrázek, ne cesta.
+_OBRAZEK = re.compile(r"""['"]?(%s/[^\s'"]+?\.(?:png|jpe?g|gif|webp|bmp))['"]?"""
+                      % re.escape(core.IMAGE_DIR), re.I)
+# Obrázek vložený přímo do Claude Code (Ctrl+V v terminálu) je v přepisu jako
+# base64. Do stránky se pošle jen rozumně velký — obří by čtení zdržel.
+MAX_INLINE = 2_500_000
+
+
+def _obrazky(text):
+    """(text bez cest k obrázkům, [cesty]) — jen obrázky, které hub opravdu
+    uložil a stránka si je umí vyžádat (/api/image čte jen z hub-images)."""
+    cesty = []
+    for m in _OBRAZEK.finditer(text):
+        if os.path.isfile(m.group(1)) and m.group(1) not in cesty:
+            cesty.append(m.group(1))
+    if not cesty:
+        return text, []
+    zbytek = _OBRAZEK.sub(" ", text)
+    return re.sub(r"[ \t]{2,}", " ", zbytek).strip(), cesty
+
+
+def _vlozene(obsah):
+    """Obrázky vložené přímo v Claude Code jako data: URI."""
+    out = []
+    if not isinstance(obsah, list):
+        return out
+    for cast in obsah:
+        if not isinstance(cast, dict) or cast.get("type") != "image":
+            continue
+        zdroj = cast.get("source") or {}
+        data = zdroj.get("data") or ""
+        if zdroj.get("type") == "base64" and data and len(data) <= MAX_INLINE:
+            out.append("data:%s;base64,%s" % (zdroj.get("media_type") or "image/png", data))
+    return out
+
+
 def _zkrat(text, limit=MAX_DETAIL):
     text = str(text or "")
     return text if len(text) <= limit else text[:limit].rstrip() + "\n…"
@@ -175,11 +212,20 @@ def _bloky_zpravy(entry):
 
     if druh == "user":
         if isinstance(obsah, str):
-            text = _text_cloveka(obsah)
-            if text:
-                out.append({"kind": "me", "text": _zkrat(text, MAX_TEXT)})
+            text, cesty = _obrazky(_text_cloveka(obsah))
+            if text or cesty:
+                out.append({"kind": "me", "text": _zkrat(text, MAX_TEXT), "images": cesty})
             return out
         if isinstance(obsah, list):
+            # Zpráva s obrázkem vloženým přímo v Claude Code: text i obrázky
+            # patří do jedné bubliny, ne každý kus zvlášť.
+            if not any(isinstance(c, dict) and c.get("type") == "tool_result" for c in obsah):
+                text, cesty = _obrazky(_text_cloveka(obsah))
+                vlozene = _vlozene(obsah)
+                if text or cesty or vlozene:
+                    out.append({"kind": "me", "text": _zkrat(text, MAX_TEXT),
+                                "images": cesty, "inline": vlozene})
+                return out
             for cast in obsah:
                 if not isinstance(cast, dict):
                     continue
@@ -191,9 +237,10 @@ def _bloky_zpravy(entry):
                                 "detail": _zkrat(text),
                                 "radku": _radku(text)})
                 elif cast.get("type") == "text":
-                    text = _text_cloveka(cast.get("text"))
-                    if text:
-                        out.append({"kind": "me", "text": _zkrat(text, MAX_TEXT)})
+                    text, cesty = _obrazky(_text_cloveka(cast.get("text")))
+                    if text or cesty:
+                        out.append({"kind": "me", "text": _zkrat(text, MAX_TEXT),
+                                    "images": cesty})
         return out
 
     if druh == "assistant":

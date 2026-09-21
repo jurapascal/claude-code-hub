@@ -23,8 +23,10 @@ TAIL = 256 * 1024
 _CACHE = {}                      # cesta -> (velikost, mtime, info)
 _LOCK = threading.Lock()
 # Značky, které Claude Code vkládá do uživatelských zpráv a člověk je nepsal.
+# `task-notification` = hláška, že doběhla úloha na pozadí — v seznamu i ve
+# čtení by se jinak tvářila jako něco, co člověk napsal.
 _NOISE = re.compile(r"<(system-reminder|local-command-stdout|local-command-stderr|"
-                    r"command-message)>.*?</\1>", re.S)
+                    r"command-message|task-notification)>.*?</\1>", re.S)
 
 
 def _root():

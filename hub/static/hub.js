@@ -859,7 +859,7 @@ function readChat(c) {
   closeDrawer();
   if (!window.HubCteni) return resumeChat(c);
   const at = new Date(c.updated * 1000);
-  HubCteni.open({api, notice: toast, resume: resumeChat},
+  HubCteni.open({api, notice: toast, resume: resumeChat, imageUrl},
                 {...c, when: at.toLocaleString('cs-CZ')});
 }
 
@@ -1577,7 +1577,8 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
      svůj přepis nepíšou, takže by nebylo z čeho číst. */
   if (kind === 'project' && window.HubCteni &&
       (agent || STATE.default_agent || 'claude') === 'claude') {
-    tab.cteni = HubCteni.install(tab, {api, notice: toast, aktivni: () => ACTIVE === tab});
+    tab.cteni = HubCteni.install(tab, {api, notice: toast, imageUrl,
+                                       aktivni: () => ACTIVE === tab});
   }
   if (kind === 'project' || kind.startsWith('slash:')) {
     tab.composer = HubComposer.install(tab, {

@@ -47,8 +47,24 @@
     return '';
   }
 
-  /* Proud bloků. Stejný pro živý tab i pro okno se starou konverzací. */
-  function flow(mount) {
+  /* Obrázek přes celé okno — klepnutí nebo Esc ho zavře. */
+  function zvetsit(src) {
+    const box = el('div', 'cteni-lupa');
+    const img = el('img');
+    img.src = src;
+    img.alt = '';
+    box.appendChild(img);
+    const zavrit = () => { box.remove(); document.removeEventListener('keydown', naKlavesu, true); };
+    function naKlavesu(ev) { if (ev.key === 'Escape') { ev.stopPropagation(); zavrit(); } }
+    box.onclick = zavrit;
+    document.addEventListener('keydown', naKlavesu, true);
+    document.body.appendChild(box);
+  }
+
+  /* Proud bloků. Stejný pro živý tab i pro okno se starou konverzací.
+     `imageUrl` převede cestu k obrázku z hub-images na adresu, ze které ho
+     stránka smí načíst (/api/image). */
+  function flow(mount, imageUrl) {
     const tools = new Map();          // id nástroje → jeho řádek
     let prace = null;                 // řádek „Claude pracuje…"
 
@@ -77,7 +93,25 @@
     function pridej(b) {
       if (b.kind === 'me') {
         const row = el('div', 'cteni-me');
-        row.appendChild(el('div', 'cteni-bubble', b.text));
+        const bubble = el('div', 'cteni-bubble');
+        /* Přiložený obrázek se ukáže jako obrázek, ne jako cesta k souboru —
+           tu hub Claudovi napsal jen proto, aby si ho uměl otevřít. */
+        const srcs = (b.images || []).map((p) => (imageUrl ? imageUrl(p) : ''))
+          .filter(Boolean).concat(b.inline || []);
+        if (srcs.length) {
+          const imgs = el('div', 'cteni-imgs');
+          for (const src of srcs) {
+            const img = el('img', 'cteni-img');
+            img.src = src;
+            img.alt = 'obrázek';
+            img.loading = 'lazy';
+            img.onclick = () => zvetsit(src);
+            imgs.appendChild(img);
+          }
+          bubble.appendChild(imgs);
+        }
+        if (b.text) bubble.appendChild(el('div', 'cteni-text', b.text));
+        row.appendChild(bubble);
         mount.appendChild(row);
         return;
       }
@@ -163,7 +197,7 @@
     tab.pane.appendChild(root);
     tab.pane.classList.add('cteni-on');
 
-    const proud = flow(mount);
+    const proud = flow(mount, io.imageUrl);
     const data = zdroj(io, () => 'id=' + encodeURIComponent(tab.id || ''));
     let timer = null, prazdnych = 0, zivy = true, ceka = false;
 
@@ -297,7 +331,7 @@
     setTimeout(() => pole.focus(), 0);
 
     const scroll = q('.cteni-scroll');
-    const proud = flow(q('.cteni-flow'));
+    const proud = flow(q('.cteni-flow'), io.imageUrl);
     const data = zdroj(io, 'chat=' + encodeURIComponent(chat.id));
 
     (async () => {
