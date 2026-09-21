@@ -20,6 +20,9 @@
   // Kolik spodních řádků terminálu se čte při rozhodování, jestli je dole
   // klidný prompt. Vstupní pole i s nápovědou pod ním má do šesti řádků.
   const PROBE_ROWS = 8;
+  // Jak dlouho musí prompt vydržet, než do něj odejde zpráva z fronty (tab
+  // právě vznikl). Claude Code ho kreslí dřív, než doběhne start.
+  const READY_MS = 1500;
 
   /* Jak vypadá spodek Claude Code, když jen čeká na zadání (naměřeno, ne
      odhadnuto):
@@ -526,6 +529,9 @@
     let idleNow = false;
     let everIdle = false;
     let cekaZprava = '';
+    let odchazi = false;     // zpráva z fronty se právě odesílá
+    let idleSince = 0;       // odkdy Claude Code bez přestávky čeká na zadání
+    let cekaTimer = null;
     let codePrompt = false;  // Claude Code čeká na kód z přihlášení (LOGIN_CODE)
     let normalPlaceholder = '';
     /* Bublina se ukáže, když je dole klidný prompt — jenže tím, že se ukáže,
@@ -587,6 +593,25 @@
       // odeslal zvlášť. Jednořádkový jde rovnou — bez uvozovacích sekvencí.
       toPty(body.includes('\n') ? '\x1b[200~' + body + '\x1b[201~' : body);
       setTimeout(() => toPty('\r'), 180);
+      /* Pojistka na ztracený Enter. Hned po startu si Claude Code delší dávku
+         znaků vezme jako vložení a Enter za ní spolkne — text pak zůstane
+         stát v jeho vstupním poli a nic se neděje. Když po chvíli pořád čeká
+         u promptu a v poli je začátek téhle zprávy, Enter se pošle znovu.
+         Odeslaná zpráva by v poli nebyla (Claude by pracoval), takže se nic
+         neodešle dvakrát. */
+      const zacatek = body.split('\n')[0].trim().slice(0, 24);
+      if (AG.full && zacatek) {
+        // Zkouší se víckrát: jedna kontrola mohla trefit chvíli, kdy Claude Code
+        // zrovna překresloval a prompt na obrazovce nebyl.
+        for (const za of [1500, 3000, 5000]) {
+          setTimeout(() => {
+            if (tab.exited) return;
+            const dole = visibleBottom(term, PROBE_ROWS);
+            if (dole.some((l) => PROMPT.test(l) && l.includes(zacatek)) &&
+                dole.some((l) => HINT.test(l))) toPty('\r');
+          }, za);
+        }
+      }
       // Kód z přihlášení do historie nepatří — platí jednou a je to heslo.
       if (!codePrompt) {
         // Dvakrát po sobě to samé je v seznamu jen k horšímu.
@@ -1362,13 +1387,25 @@
 
     function apply(force) {
       const idle = looksIdle();
+      if (idle && !idleNow) idleSince = Date.now();
       idleNow = idle;
       if (idle) everIdle = true;
-      // Zpráva napsaná, než Claude Code naběhl, odchází, jakmile čeká na zadání.
-      if (idle && cekaZprava) {
-        const zprava = cekaZprava;
-        cekaZprava = '';
-        submit(zprava);
+      /* Zpráva napsaná, než Claude Code naběhl, odchází až ve chvíli, kdy
+         prompt chvíli vydržel. Claude Code ho totiž kreslí dřív, než doběhne
+         start (ještě se ptá terminálu, co umí) — a Enter poslaný do té doby
+         se ztratí, zatímco text zůstane stát v jeho poli. Naměřeno. */
+      if (cekaZprava && !odchazi) {
+        const vydrzel = idle ? Date.now() - idleSince : 0;
+        if (idle && vydrzel >= READY_MS) {
+          odchazi = true;
+          const zprava = cekaZprava;
+          cekaZprava = '';
+          submit(zprava);
+          odchazi = false;
+        } else if (idle) {
+          clearTimeout(cekaTimer);
+          cekaTimer = setTimeout(() => apply(), READY_MS - vydrzel + 30);
+        }
       }
       const cteni = !!tab.cteni && !tab.pane.classList.contains('asking');
       const want = !hiddenByUser && (idle || cteni);
@@ -1391,7 +1428,17 @@
       // Měřit jde až s nasazenou třídou: složená bublina je jenom proužek
       // a vyšla by z ní čtvrtinová výška.
       if (AG.full) readBanner();
-      if (shown) {
+      if (shown && tab.cteni) {
+        /* Ve čtení je terminál schovaný, takže není co přesně překrývat.
+           Přeměřování podle Claudeova vstupního pole (fitOver) tu bublinu
+           při každém překreslení výpisu natahovalo a smršťovalo a zkracovalo
+           terminál — Claude Code pak překreslil a kolo se točilo znovu. Pole
+           na psaní tím skákalo pod rukama. Tady má bublina svou výšku
+           a terminál celou plochu, jednou provždy. */
+        if (root.style.minHeight) root.style.minHeight = '';
+        if (reserved !== 0) { reserved = 0; io.reserve(0); }
+        refreshModel();
+      } else if (shown) {
         fitOver();
         refreshModel();
         // Tab otevřený rovnou do režimu (Bypass po potvrzení): přepne se,
@@ -1535,8 +1582,11 @@
           io.agentColor ? io.agentColor(a) : a.color;
       }
     }
-    input.placeholder = 'Napiš, co má ' + AG.label +
-      ' udělat… (Enter odešle, Shift+Enter nový řádek)';
+    // Na úzké obrazovce se dlouhá výzva zalomila do dvou řádků a spodní byl
+    // uříznutý — pole vypadalo rozbitě. Tam stačí krátká.
+    input.placeholder = window.matchMedia('(max-width: 520px)').matches
+      ? 'Napiš ' + AG.label + '…'
+      : 'Napiš, co má ' + AG.label + ' udělat… (Enter odešle, Shift+Enter nový řádek)';
     schedule();
 
     return {

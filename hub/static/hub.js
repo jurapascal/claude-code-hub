@@ -835,20 +835,28 @@ function renderChats() {
   }
 }
 
+/* Zavřít šuplík s panelem (telefon). Ne jen sundat třídu: mobile.js drží i
+   ztmavení za šuplíkem a to by zůstalo — otevřený tab by byl šedý, dokud se
+   neklepne jinam. */
+function closeDrawer() {
+  if (window.HubMobile) window.HubMobile.closeDrawer();
+  else document.body.classList.remove('drawer-open');
+}
+
 /* Klepnutí na konverzaci ji otevře rovnou v tabu: nahoře je vidět, o čem se
    psalo (čtení z přepisu), dole se píše dál. Okno jen ke čtení bylo o krok
    navíc — kdo konverzaci otevírá, chce v ní většinou pokračovat. To okno
    zůstává v nabídce pravého tlačítka (dlouhého podržení) jako „Jen přečíst". */
 function openChat(c) {
   const running = c.tab && TABS.find((t) => t.id === c.tab);
-  document.body.classList.remove('drawer-open');
+  closeDrawer();
   if (running) return activate(running);
   resumeChat(c);
 }
 
 /* Konverzace jen ke čtení, bez spouštění Claude Code. */
 function readChat(c) {
-  document.body.classList.remove('drawer-open');
+  closeDrawer();
   if (!window.HubCteni) return resumeChat(c);
   const at = new Date(c.updated * 1000);
   HubCteni.open({api, notice: toast, resume: resumeChat},
@@ -873,7 +881,7 @@ function resumeChat(c, prompt) {
   }
   openTab({kind: 'project', path: c.cwd, title: c.title.slice(0, 40), agent: 'claude',
            resume: c.id, fork, prompt: prompt || ''});
-  document.body.classList.remove('drawer-open');
+  closeDrawer();
   setTimeout(loadChats, 4000);
 }
 

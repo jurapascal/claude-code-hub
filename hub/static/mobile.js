@@ -65,7 +65,7 @@
   if (closeBtn) closeBtn.onclick = closeDrawer;
 
   // Klik na projekt otevře tab — šuplík už jen překáží.
-  for (const id of ['projects', 'memory', 'actions']) {
+  for (const id of ['projects', 'chats', 'memory', 'actions']) {
     const box = $(id);
     if (box) box.addEventListener('click', () => setTimeout(closeDrawer, 60));
   }
