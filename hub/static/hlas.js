@@ -34,11 +34,27 @@
   const umiMikrofon = () => !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 
   /* ── nahrávání ────────────────────────────────────────────────────────── */
-  async function nahravat(naUroven) {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true}});
+  /* Zvukový kontext musí vzniknout a rozběhnout se přímo v kliknutí —
+     prohlížeče (Safari, Chrome i WebKitGTK) ho jinak nechají uspaný a z
+     mikrofonu nepřijde ani vzorek. Proto ho zakládá obsluha kliknutí dřív,
+     než se čeká na povolení mikrofonu, a sem ho jen předá. */
+  function kontext() {
     const Ctx = global.AudioContext || global.webkitAudioContext;
     const ctx = new Ctx();
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    return ctx;
+  }
+
+  async function nahravat(ctx, naUroven) {
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true}});
+    } catch (err) {
+      ctx.close().catch(() => {});
+      throw err;
+    }
+    if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
     const src = ctx.createMediaStreamSource(stream);
     const proc = ctx.createScriptProcessor(4096, 1, 1);
     const kusy = [];
@@ -48,7 +64,7 @@
       if (naUroven) {
         let sum = 0;
         for (let i = 0; i < data.length; i += 16) sum += data[i] * data[i];
-        naUroven(Math.min(1, Math.sqrt(sum / (data.length / 16)) * 4));
+        naUroven(Math.min(1, Math.sqrt(sum / (data.length / 16)) * 10));
       }
     };
     src.connect(proc);
@@ -64,6 +80,8 @@
         return wav(kusy, ctx.sampleRate);
       },
       zrusit: konec,
+      // Kolik vzorků už přišlo — podle toho se pozná mikrofon, který nic nedává.
+      get vzorku() { let n = 0; for (const k of kusy) n += k.length; return n; },
     };
   }
 
@@ -155,8 +173,9 @@
       ev.preventDefault();
       if (busy) return;
       if (rec) return hotovo();
+      const ctx = kontext();                  // hned v kliknutí, ne až po await
       try {
-        rec = await nahravat((u) => btn.style.setProperty('--uroven', u.toFixed(2)));
+        rec = await nahravat(ctx, (u) => btn.style.setProperty('--uroven', u.toFixed(2)));
       } catch (err) {
         rec = null;
         if (opts.notice) {
@@ -175,6 +194,13 @@
         input.placeholder = `Poslouchám… ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` +
                             ' — klikni na mikrofon, až domluvíš (Esc zruší)';
         if (s >= MAX_NAHRAVKA_S) hotovo();
+        // Po dvou vteřinách bez jediného vzorku mikrofon nic nedává —
+        // lepší to říct hned, než nechat člověka mluvit do prázdna.
+        if (s >= 2 && rec && rec.vzorku === 0) {
+          rec.zrusit();
+          uklid();
+          if (opts.notice) opts.notice('Z mikrofonu nejde zvuk — zkontroluj, jestli ho prohlížeč smí používat.');
+        }
       }, 500);
     });
 
