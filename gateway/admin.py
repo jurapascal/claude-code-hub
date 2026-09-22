@@ -31,6 +31,10 @@ přes `--password` (hodí se do skriptu, ale zůstane v historii shellu).
     python3 -m gateway.admin google status | remove
     python3 -m gateway.admin zamky               # zablokovaná přihlášení (3 špatné pokusy)
     python3 -m gateway.admin zamky odemknout jmeno@firma.cz   # nebo IP adresa
+    python3 -m gateway.admin firma                # kdo vidí firemní Obsidian a kdo zapisuje
+    python3 -m gateway.admin firma jmeno@firma.cz read     # none / read / write
+    python3 -m gateway.admin mcp                  # napojení z appky Claude
+    python3 -m gateway.admin mcp zrusit jmeno@firma.cz     # zrušit jeho napojení
 """
 import argparse
 import getpass
@@ -529,6 +533,45 @@ def cmd_stop(a, args):
         print(f"{name}: {'zastaveno' if ok else 'NEPODAŘILO SE zastavit'}")
 
 
+def cmd_firma(a, args):
+    """Přístup k firemnímu Obsidianu: výpis, nebo nastavení jednomu účtu.
+    Běžně to mění admini přímo ve firemním Obsidianu v hubu."""
+    if not args.email:
+        names = {"none": "nevidí", "read": "čte", "write": "čte i zapisuje"}
+        for p in a.company_list():
+            who = f"{p['email']} ({p['name']})" if p["name"] else p["email"]
+            extra = " · admin" if p["role"] == "admin" else (f" · nastavil {p['by']}" if p["by"] else "")
+            print(f"{who:<48} {names[p['level']]}{extra}")
+        return
+    if args.level not in ("none", "read", "write"):
+        raise ValueError("Úroveň je none, read, nebo write.")
+    user = a.get(args.email)
+    if not user:
+        raise ValueError(f"{args.email} tu žádný účet nemá.")
+    _target, old = a.set_company_level({"role": "admin", "email": "claude-hub-admin"},
+                                       user["id"], args.level)
+    print(f"{args.email}: {old} → {args.level}. Projeví se při dalším startu jeho prostoru"
+          " (zápis a napojení z appky Claude hned).")
+
+
+def cmd_mcp(a, args):
+    """Napojení z appky Claude (gateway/mcp.py): výpis a zrušení."""
+    if args.action == "zrusit":
+        if not args.email:
+            raise ValueError("Zadej e-mail účtu.")
+        n = a.oauth_revoke_user(args.email)
+        print(f"Zrušeno ({n} tokenů). Appka se bude muset přihlásit znovu.")
+        return
+    rows = a.oauth_logins(args.email or None)
+    if not rows:
+        print("Žádné napojení z appky Claude.")
+        return
+    for r in rows:
+        seen = time.strftime("%d. %m. %H:%M", time.localtime(r["seen"])) if r["seen"] else "zatím nic"
+        made = time.strftime("%d. %m. %Y", time.localtime(r["created"]))
+        print(f"{r['email']:<32} {r['client'] or '?':<20} od {made}, naposled {seen}")
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="gateway.admin",
                                 description="Správa účtů brány.")
@@ -613,6 +656,16 @@ def build_parser():
     zk.add_argument("action", nargs="?", default="status", choices=("status", "odemknout"))
     zk.add_argument("target", nargs="?", default="", help="e-mail nebo IP adresa (u odemknout)")
     zk.set_defaults(func=cmd_zamky)
+
+    fi = sub.add_parser("firma", help="kdo vidí firemní Obsidian a kdo do něj zapisuje")
+    fi.add_argument("email", nargs="?", default="")
+    fi.add_argument("level", nargs="?", default="", help="none / read / write")
+    fi.set_defaults(func=cmd_firma)
+
+    mc = sub.add_parser("mcp", help="napojení z appky Claude: výpis, zrušení")
+    mc.add_argument("action", nargs="?", default="status", choices=("status", "zrusit"))
+    mc.add_argument("email", nargs="?", default="")
+    mc.set_defaults(func=cmd_mcp)
 
     sub.add_parser("sessions", help="které prostory běží a kolik berou paměti"
                    ).set_defaults(func=cmd_sessions)

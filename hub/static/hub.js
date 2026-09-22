@@ -453,6 +453,9 @@ function openVault(path, vault, title) {
       `&t=${encodeURIComponent(TOKEN)}`,
     openLink,
     toast,
+    // Firemní: jen ke čtení podle práva účtu, správa přístupů pro adminy.
+    readonly: firma && !!STATE.firma && STATE.firma.level === 'read',
+    admin: firma && !!STATE.firma && !!STATE.firma.admin,
     obsidian: !firma && !shared && !onServer() && !!STATE.obsidian,
     openInObsidian: (p) => api('open-path', {kind: 'vault-note', file: p})
       .catch(() => toast('Obsidian se nepodařilo otevřít.')),

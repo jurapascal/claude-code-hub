@@ -73,6 +73,10 @@ def navrh(args):
         fail("Použití: firma.py navrh CÍL [SOUBOR | -] --potvrzeno")
     rel = target(args[0])
     vault = company_vault()
+    # Jen ke čtení: brána by návrh stejně odmítla, tak ať to Claude ví hned.
+    if config().get("company_level") == "read":
+        fail("Tenhle účet má firemní Obsidian jen ke čtení — zapisovat do něj nejde. "
+             "Řekni uživateli, ať požádá admina o právo zápisu.")
     if not confirmed:
         exists = os.path.exists(os.path.join(vault, *rel.split("/")))
         print("Ještě nic nevzniklo — nejdřív se zeptej uživatele. Napiš mu v chatu, co "

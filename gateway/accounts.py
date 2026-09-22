@@ -77,7 +77,58 @@ CREATE TABLE IF NOT EXISTS tokens (
     created     REAL NOT NULL,
     seen        REAL NOT NULL
 );
+-- Kdo smí do firemního Obsidianu: none / read / write. Bez řádku platí
+-- COMPANY_DEFAULT; admin má vždycky write. Mění admini ve firemním Obsidianu.
+CREATE TABLE IF NOT EXISTS company_access (
+    user_id  INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    level    TEXT NOT NULL,
+    by_email TEXT NOT NULL DEFAULT '',
+    updated  REAL NOT NULL
+);
+-- Napojení z appky Claude (MCP, gateway/mcp.py). Klient se registruje sám
+-- (RFC 7591), ale jen s adresou pro návrat, kterou brána zná (oauth.py).
+CREATE TABLE IF NOT EXISTS oauth_clients (
+    client_id     TEXT PRIMARY KEY,
+    name          TEXT NOT NULL DEFAULT '',
+    redirect_uris TEXT NOT NULL,            -- JSON seznam
+    created       REAL NOT NULL
+);
+-- Jednorázový kód z přihlášení; platí minutu, svázaný s klientem, adresou
+-- pro návrat a PKCE. V databázi jen otisk.
+CREATE TABLE IF NOT EXISTS oauth_codes (
+    fingerprint  BLOB PRIMARY KEY,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    client_id    TEXT NOT NULL,
+    redirect_uri TEXT NOT NULL,
+    challenge    TEXT NOT NULL,
+    resource     TEXT NOT NULL DEFAULT '',
+    expires      REAL NOT NULL
+);
+-- Přístupové (hodina) a obnovovací (měsíc, při použití se vymění) tokeny.
+-- `family` spojuje jedno přihlášení: když přijde už vyměněný obnovovací token,
+-- někdo ho ukradl a zruší se celé přihlášení (RFC 9700, 4.14.2).
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+    fingerprint BLOB PRIMARY KEY,
+    kind        TEXT NOT NULL,              -- access / refresh
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    client_id   TEXT NOT NULL,
+    family      TEXT NOT NULL,
+    resource    TEXT NOT NULL DEFAULT '',
+    created     REAL NOT NULL,
+    expires     REAL NOT NULL,
+    used        INTEGER NOT NULL DEFAULT 0, -- obnovovací už vyměněný
+    seen        REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS oauth_tokens_user ON oauth_tokens(user_id);
+CREATE INDEX IF NOT EXISTS oauth_tokens_family ON oauth_tokens(family);
 """
+COMPANY_LEVELS = ("none", "read", "write")
+# Bez záznamu: tak, jak to bylo před správou přístupů — každý čte a nahrává
+# přes potvrzovací kartu. Admini to pak lidem mění ve firemním Obsidianu.
+COMPANY_DEFAULT = os.environ.get("HUB_GW_COMPANY_DEFAULT", "write")
+ACCESS_TTL = 60 * 60
+REFRESH_TTL = 30 * 24 * 60 * 60
+CODE_TTL = 60
 
 
 def _hash(password, salt):
@@ -220,9 +271,14 @@ class Accounts:
             if not cur.rowcount:
                 raise ValueError(f"{email} tu žádný účet nemá.")
             # Změna hesla odhlašuje: jinak by ukradený token přežil i to, kvůli
-            # čemu se heslo mění.
+            # čemu se heslo mění. Napojení z appky Claude taky.
+            self._drop_logins(email)
+
+    def _drop_logins(self, email):
+        """Odhlásí účet všude: zařízení i napojení z appky Claude (MCP)."""
+        for table in ("tokens", "oauth_tokens", "oauth_codes"):
             self.db.execute(
-                "DELETE FROM tokens WHERE user_id ="
+                f"DELETE FROM {table} WHERE user_id ="
                 " (SELECT id FROM users WHERE email = ?)", (email,))
 
     def set_role(self, email, role):
@@ -258,9 +314,7 @@ class Accounts:
             if not cur.rowcount:
                 raise ValueError(f"{email} tu žádný účet nemá.")
             if disabled:
-                self.db.execute(
-                    "DELETE FROM tokens WHERE user_id ="
-                    " (SELECT id FROM users WHERE email = ?)", (email,))
+                self._drop_logins(email)
 
     def remove(self, email):
         with self._lock:
@@ -485,9 +539,7 @@ class Accounts:
                 " WHERE email = ?", (email,))
             if not cur.rowcount:
                 raise ValueError(f"{email} tu žádný účet nemá.")
-            self.db.execute(
-                "DELETE FROM tokens WHERE user_id ="
-                " (SELECT id FROM users WHERE email = ?)", (email,))
+            self._drop_logins(email)
 
     def user_for_token(self, token):
         """Komu token patří, nebo None. Zaznamená, že se ozval."""
@@ -520,3 +572,202 @@ class Accounts:
                 "SELECT t.label, t.created, t.seen FROM tokens t JOIN users u"
                 " ON u.id = t.user_id WHERE u.email = ? ORDER BY t.seen DESC",
                 ((email or "").strip().lower(),))]
+
+    # ── firemní Obsidian: kdo smí číst a zapisovat ───────────────────────────
+    def company_level(self, user):
+        """none / read / write pro účet. Admin má vždycky write."""
+        if not user:
+            return "none"
+        if user.get("role") == "admin":
+            return "write"
+        with self._lock:
+            row = self.db.execute("SELECT level FROM company_access WHERE user_id = ?",
+                                  (user["id"],)).fetchone()
+        level = row["level"] if row else COMPANY_DEFAULT
+        return level if level in COMPANY_LEVELS else "none"
+
+    def company_list(self):
+        """Všechny aktivní účty s úrovní přístupu — pro správu ve firemním Obsidianu."""
+        with self._lock:
+            rows = self.db.execute(
+                "SELECT u.id, u.email, u.name, u.role, c.level, c.by_email, c.updated"
+                " FROM users u LEFT JOIN company_access c ON c.user_id = u.id"
+                " WHERE u.disabled = 0 ORDER BY u.name COLLATE NOCASE, u.email").fetchall()
+        out = []
+        for r in rows:
+            level = "write" if r["role"] == "admin" else (r["level"] or COMPANY_DEFAULT)
+            out.append({"id": r["id"], "email": r["email"], "name": r["name"],
+                        "role": r["role"], "level": level if level in COMPANY_LEVELS else "none",
+                        "by": r["by_email"] or "", "updated": r["updated"] or 0})
+        return out
+
+    def set_company_level(self, admin, user_id, level):
+        """Admin nastaví úroveň jinému účtu. Vrací (účet, stará úroveň)."""
+        if not admin or admin.get("role") != "admin":
+            raise PermissionError("Přístupy k firemnímu Obsidianu mění jen admin.")
+        if level not in COMPANY_LEVELS:
+            raise ValueError("Neznámá úroveň přístupu.")
+        target = self.by_id(int(user_id or 0))
+        if not target:
+            raise ValueError("Takový účet tu není.")
+        if target["role"] == "admin":
+            raise ValueError("Admin má do firemního Obsidianu přístup vždycky.")
+        old = self.company_level(target)
+        with self._lock:
+            self.db.execute(
+                "INSERT OR REPLACE INTO company_access (user_id, level, by_email, updated)"
+                " VALUES (?, ?, ?, ?)", (target["id"], level, admin["email"], time.time()))
+        return target, old
+
+    # ── napojení z appky Claude (OAuth pro MCP) ──────────────────────────────
+    def oauth_client_add(self, name, redirect_uris):
+        client_id = "hub-" + secrets.token_urlsafe(18)
+        with self._lock:
+            self.db.execute(
+                "INSERT INTO oauth_clients (client_id, name, redirect_uris, created)"
+                " VALUES (?, ?, ?, ?)",
+                (client_id, (name or "")[:80], json.dumps(list(redirect_uris)), time.time()))
+        return client_id
+
+    def oauth_client(self, client_id):
+        if not client_id or len(client_id) > 80:
+            return None
+        with self._lock:
+            row = self.db.execute("SELECT * FROM oauth_clients WHERE client_id = ?",
+                                  (client_id,)).fetchone()
+        if not row:
+            return None
+        try:
+            uris = json.loads(row["redirect_uris"])
+        except ValueError:
+            uris = []
+        return {"client_id": row["client_id"], "name": row["name"],
+                "redirect_uris": [u for u in uris if isinstance(u, str)]}
+
+    def oauth_code_new(self, user, client_id, redirect_uri, challenge, resource):
+        code = secrets.token_urlsafe(32)
+        now = time.time()
+        with self._lock:
+            self.db.execute("DELETE FROM oauth_codes WHERE expires < ?", (now,))
+            self.db.execute(
+                "INSERT INTO oauth_codes (fingerprint, user_id, client_id, redirect_uri,"
+                " challenge, resource, expires) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (_fingerprint(code), user["id"], client_id, redirect_uri, challenge,
+                 resource or "", now + CODE_TTL))
+        return code
+
+    def oauth_code_take(self, code):
+        """Kód platí jednou: přečte se a hned smaže, i když by dál neprošel."""
+        if not code or len(code) > 200:
+            return None
+        fp = _fingerprint(code)
+        with self._lock:
+            row = self.db.execute("SELECT * FROM oauth_codes WHERE fingerprint = ?",
+                                  (fp,)).fetchone()
+            self.db.execute("DELETE FROM oauth_codes WHERE fingerprint = ?", (fp,))
+        if not row or row["expires"] < time.time():
+            return None
+        return dict(row)
+
+    def _oauth_pair(self, user_id, client_id, family, resource):
+        access = secrets.token_urlsafe(TOKEN_BYTES)
+        refresh = secrets.token_urlsafe(TOKEN_BYTES)
+        now = time.time()
+        for token, kind, ttl in ((access, "access", ACCESS_TTL),
+                                 (refresh, "refresh", REFRESH_TTL)):
+            self.db.execute(
+                "INSERT INTO oauth_tokens (fingerprint, kind, user_id, client_id, family,"
+                " resource, created, expires) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (_fingerprint(token), kind, user_id, client_id, family, resource or "",
+                 now, now + ttl))
+        return {"access_token": access, "refresh_token": refresh,
+                "token_type": "Bearer", "expires_in": ACCESS_TTL}
+
+    def oauth_issue(self, user_id, client_id, resource):
+        with self._lock:
+            self.db.execute("DELETE FROM oauth_tokens WHERE expires < ?", (time.time(),))
+            return self._oauth_pair(user_id, client_id, secrets.token_hex(16), resource)
+
+    def oauth_refresh(self, refresh, client_id):
+        """Vymění obnovovací token za nový pár. Znovu použitý (už vyměněný)
+        token = krádež: zruší se celé přihlášení (rodina)."""
+        if not refresh or len(refresh) > 200:
+            return None
+        fp = _fingerprint(refresh)
+        now = time.time()
+        with self._lock:
+            row = self.db.execute(
+                "SELECT t.*, u.disabled FROM oauth_tokens t JOIN users u ON u.id = t.user_id"
+                " WHERE t.fingerprint = ? AND t.kind = 'refresh'", (fp,)).fetchone()
+            if not row:
+                return None
+            if row["used"] or row["client_id"] != client_id:
+                self.db.execute("DELETE FROM oauth_tokens WHERE family = ?", (row["family"],))
+                return None
+            if row["expires"] < now or row["disabled"]:
+                return None
+            self.db.execute("UPDATE oauth_tokens SET used = 1 WHERE fingerprint = ?", (fp,))
+            # Předchozí přístupové tokeny z téhle rodiny končí s výměnou.
+            self.db.execute("DELETE FROM oauth_tokens WHERE family = ? AND kind = 'access'",
+                            (row["family"],))
+            return self._oauth_pair(row["user_id"], client_id, row["family"], row["resource"])
+
+    def oauth_user(self, access, resource):
+        """Komu přístupový token patří (a jen pro tenhle `resource`), nebo None."""
+        if not access or len(access) > 200:
+            return None
+        fp = _fingerprint(access)
+        with self._lock:
+            row = self.db.execute(
+                "SELECT u.*, t.expires AS t_expires, t.resource AS t_resource,"
+                " t.client_id AS t_client, t.family AS t_family FROM oauth_tokens t"
+                " JOIN users u ON u.id = t.user_id"
+                " WHERE t.fingerprint = ? AND t.kind = 'access'", (fp,)).fetchone()
+            if not row or row["disabled"] or row["t_expires"] < time.time():
+                return None
+            if row["t_resource"] and resource and row["t_resource"] != resource:
+                return None
+            self.db.execute("UPDATE oauth_tokens SET seen = ? WHERE fingerprint = ?",
+                            (time.time(), fp))
+        user = self._public(row)
+        user["client_id"] = row["t_client"]
+        user["family"] = row["t_family"]
+        return user
+
+    def oauth_revoke_token(self, token):
+        """RFC 7009: zruší celé přihlášení, ke kterému token patří."""
+        if not token or len(token) > 200:
+            return
+        with self._lock:
+            row = self.db.execute("SELECT family FROM oauth_tokens WHERE fingerprint = ?",
+                                  (_fingerprint(token),)).fetchone()
+            if row:
+                self.db.execute("DELETE FROM oauth_tokens WHERE family = ?", (row["family"],))
+
+    def oauth_logins(self, email=None):
+        """Aktivní napojení (jedno na přihlášení) pro správu."""
+        sql = ("SELECT u.email, c.name AS client, t.family, MIN(t.created) AS created,"
+               " MAX(t.seen) AS seen FROM oauth_tokens t JOIN users u ON u.id = t.user_id"
+               " LEFT JOIN oauth_clients c ON c.client_id = t.client_id"
+               " WHERE t.expires > ? AND t.used = 0")
+        args = [time.time()]
+        if email:
+            sql += " AND u.email = ?"
+            args.append(email.strip().lower())
+        sql += " GROUP BY t.family ORDER BY seen DESC"
+        with self._lock:
+            return [dict(r) for r in self.db.execute(sql, args)]
+
+    def oauth_revoke_user(self, email, family=""):
+        """Zruší napojení účtu — všechna, nebo jedno podle `family`. Vrací počet."""
+        email = (email or "").strip().lower()
+        with self._lock:
+            if family:
+                cur = self.db.execute(
+                    "DELETE FROM oauth_tokens WHERE family = ? AND user_id ="
+                    " (SELECT id FROM users WHERE email = ?)", (family, email))
+            else:
+                cur = self.db.execute(
+                    "DELETE FROM oauth_tokens WHERE user_id ="
+                    " (SELECT id FROM users WHERE email = ?)", (email,))
+        return cur.rowcount

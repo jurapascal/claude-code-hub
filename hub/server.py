@@ -508,6 +508,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _api_inner(self, name, query, payload=None):
         payload = payload or {}
+        if name == "mcp-tool":
+            # Napojení z appky Claude: volá jen brána (gateway/mcp.py) po
+            # ověření přihlášení a oprávnění. Z prohlížeče sem brána nepustí.
+            if payload.get("tool") is None:
+                return self._json({"error": "Jen POST."}, 405)
+            from . import mcp_tools
+            return self._json(mcp_tools.call(str(payload.get("tool")), payload.get("args")))
         if name == "chats":
             # Seznam konverzací jako v oficiální appce (hub/chats.py) a které
             # z nich právě běží v tabu — ty se neotevírají podruhé.

@@ -1090,7 +1090,12 @@ _SECRET = re.compile(
 
 def firma_state():
     vault = company_vault()
-    return {"vault": vault, "name": os.path.basename(vault) if vault else ""}
+    # Přístup (none/read/write) a role nastavuje brána v hub-config — vault.js
+    # podle nich schová úpravy a adminům ukáže správu přístupů.
+    who = CONFIG.get("gateway_user") or {}
+    return {"vault": vault, "name": os.path.basename(vault) if vault else "",
+            "level": CONFIG.get("company_level") or ("write" if vault else "none"),
+            "admin": isinstance(who, dict) and who.get("role") == "admin"}
 
 
 def firma_pending():

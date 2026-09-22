@@ -475,7 +475,8 @@
   let noteMtime = 0;
   let graph = null;
 
-  const canEdit = () => !!(root.HubEditor && root.HubEditor.available);
+  // Firemní trezor jen ke čtení (brána: company_level = read) úpravy nenabízí.
+  const canEdit = () => !!(root.HubEditor && root.HubEditor.available) && !(io && io.readonly);
   const proposes = () => !!(io && io.vault);
 
   function setState(text, kind) {
@@ -863,6 +864,88 @@
     q('.vault-md').appendChild(node('p', 'vault-empty', text));
   }
 
+  /* ── přístupy k firemnímu Obsidianu (jen admin) ───────────────────────────
+     Seznam lidí s úrovní: nevidí / čte / čte a zapisuje. Mění se hned
+     v bráně; kdo přístup ztratil, tomu brána prostor zastaví, jakmile
+     nepracuje, a trezor se mu po dalším startu do prostoru nepřiváže. */
+  const LEVELS = [['none', 'Nevidí'], ['read', 'Čte'], ['write', 'Čte i zapisuje']];
+
+  async function gw(method, body) {
+    const res = await fetch('/gw/firma/pristupy', {
+      method, credentials: 'same-origin',
+      headers: body ? {'Content-Type': 'application/json', 'X-Hub-Account': '1'} : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Brána odpověděla ' + res.status);
+    return data;
+  }
+
+  async function openAccess() {
+    const wrap = node('div', 'onb set-modal vault-access-modal firma');
+    wrap.innerHTML = `
+      <div class="onb-box acc-box">
+        <div class="onb-head">
+          <div>
+            <div class="onb-title">Přístupy k firemnímu Obsidianu</div>
+            <div class="onb-sub">Admini mají přístup vždycky. Změna platí hned;
+              kdo přístup nově dostal, uvidí trezor po restartu svého prostoru.</div>
+          </div>
+          <span class="spacer"></span>
+          <button class="set-x acc-close" title="Zavřít (Esc)">×</button>
+        </div>
+        <div class="acc-list"><p class="vault-empty">načítám…</p></div>
+      </div>`;
+    document.body.appendChild(wrap);
+    const shut = () => { wrap.remove(); document.removeEventListener('keydown', esc, true); };
+    function esc(ev) { if (ev.key === 'Escape') { ev.stopPropagation(); shut(); } }
+    document.addEventListener('keydown', esc, true);
+    wrap.querySelector('.acc-close').onclick = shut;
+    wrap.addEventListener('click', (ev) => { if (ev.target === wrap) shut(); });
+    const list = wrap.querySelector('.acc-list');
+    let data;
+    try {
+      data = await gw('GET');
+    } catch (err) {
+      list.textContent = '';
+      list.appendChild(node('p', 'vault-empty', err.message));
+      return;
+    }
+    list.textContent = '';
+    for (const p of data.people || []) {
+      const row = node('div', 'acc-row');
+      const who = node('div', 'acc-who');
+      who.append(node('strong', '', p.name || p.email), node('span', 'acc-mail', p.email));
+      row.appendChild(who);
+      if (p.role === 'admin') {
+        row.appendChild(node('span', 'acc-admin', 'admin · čte i zapisuje'));
+      } else {
+        const sel = node('div', 'acc-seg');
+        for (const [lvl, label] of LEVELS) {
+          const b = node('button', 'acc-opt' + (p.level === lvl ? ' on' : ''), label);
+          b.type = 'button';
+          b.onclick = async () => {
+            if (p.level === lvl) return;
+            sel.classList.add('busy');
+            try {
+              const out = await gw('POST', {id: p.id, level: lvl});
+              p.level = out.level;
+              for (const o of sel.children) o.classList.toggle('on', o === b);
+              io.toast((p.name || p.email) + ': ' + label.toLowerCase() +
+                       (out.note ? ' — ' + out.note : ''));
+            } catch (err) {
+              io.toast(err.message);
+            }
+            sel.classList.remove('busy');
+          };
+          sel.appendChild(b);
+        }
+        row.appendChild(sel);
+      }
+      list.appendChild(row);
+    }
+  }
+
   async function open(opts) {
     close();
     io = opts;
@@ -883,6 +966,7 @@
           <button class="btn ghost vault-rename" title="Přejmenovat poznámku" hidden>Přejmenovat</button>
           <button class="btn ghost vault-del" title="Smazat poznámku" hidden>Smazat</button>
           <button class="btn ghost vault-graph-btn" title="Graf poznámek">Graf</button>
+          <button class="btn ghost vault-access" title="Kdo firemní Obsidian vidí a kdo do něj smí zapisovat" hidden>Přístupy</button>
           <button class="btn ghost vault-app" hidden>Otevřít v Obsidianu</button>
           <button class="set-x vault-close" title="Zavřít (Esc)">×</button>
         </div>
@@ -942,6 +1026,10 @@
     q('.vault-rename').onclick = renameNote;
     q('.vault-del').onclick = deleteNote;
     q('.vault-graph-btn').onclick = toggleGraph;
+    // Správa přístupů: jen admin a jen ve firemním trezoru. Rozhoduje brána
+    // (/gw/firma/pristupy) — tlačítko je jen cesta k ní.
+    q('.vault-access').hidden = !(io && io.vault === 'firma' && io.admin);
+    q('.vault-access').onclick = openAccess;
     for (const b of box.querySelectorAll('.vault-mode')) {
       b.onclick = () => setMode(b.dataset.mode);
     }

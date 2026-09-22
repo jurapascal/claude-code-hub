@@ -181,6 +181,65 @@ Vedle osobního trezoru v každém prostoru je jeden společný trezor pro všec
   a cílová cesta nesmí ven z trezoru.
 - Kdo co nahrál: `/home/hub/firma/nahrano.jsonl` (mimo trezor).
 
+## Role a přístup k firemnímu Obsidianu
+
+Účet je `admin`, nebo člen (`user`) — `claude-hub-admin role <e-mail> admin|user`.
+Admin má do firemního Obsidianu přístup vždycky (čte i zapisuje) a spravuje,
+kdo další ho vidí: ve firemním Obsidianu v hubu tlačítko **Přístupy** — u každého
+člověka **Nevidí / Čte / Čte i zapisuje** (brána `/gw/firma/pristupy`, jen admin,
+jen ze stránky hubu). Z příkazové řádky totéž:
+
+    claude-hub-admin firma                       # kdo co smí
+    claude-hub-admin firma jmeno@firma.cz read   # none / read / write
+
+- **Nevidí:** trezor se do prostoru vůbec nepřiváže (bwrap), z CLAUDE.md zmizí
+  pokyny k němu a hub ho neukáže. Běžící prostor bez připojeného prohlížeče se
+  zastaví hned, ostatní při dalším startu; napojení z appky Claude ho ztratí hned.
+- **Čte:** jen ke čtení, návrhy (`tools/firma.py`, editor, karta Nahrát) brána
+  odmítne.
+- **Čte i zapisuje:** jako dřív — zápis přes kartu Nahrát nebo firemní tab.
+- Bez záznamu platí `HUB_GW_COMPANY_DEFAULT` (výchozí `write`, tedy stav před
+  správou přístupů). Změny se zapisují do `firma/pristupy.jsonl`.
+
+## Napojení z appky Claude (MCP)
+
+Každý si v appce Claude (claude.ai na webu, desktop, mobil) přidá vlastní
+konektor: **Nastavení → Konektory → Přidat vlastní konektor**, adresa
+`https://<brána>/mcp`. Při připojení se otevře přihlášení brány: e-mail, heslo,
+kód z aplikace a souhlas. Claude Code: `claude mcp add --transport http hub
+https://<brána>/mcp` a pak `/mcp` → přihlásit.
+
+Claude pak v appce vidí **jen prostor toho, kdo se přihlásil**: projekty,
+konverzace s Claude Code, osobní Obsidian, sdílené Obsidiany, kde je členem,
+a firemní podle jeho práva; umí číst a zapisovat soubory v jeho domově
+a spouštět v něm příkazy. Nástroje (`gateway/mcp.py`): `prostor`, `projekty`,
+`konverzace`, `konverzace_cti`, `obsidian_seznam`, `obsidian_hledat`,
+`obsidian_cti`, `obsidian_zapis`, `slozka`, `soubor_cti`, `soubor_zapis`,
+`prikaz`.
+
+Zabezpečení:
+
+- **Přihlášení** je stejně přísné jako do hubu: heslo + povinný kód z aplikace,
+  stejné zámky proti hádání, pokaždé znovu (cookie z prohlížeče se nepřebírá),
+  stránky nejdou vložit do rámu, formuláře jen ze stejného původu.
+- **OAuth 2.1 s PKCE (S256)** a samoregistrací klienta, ale kód se smí vrátit
+  jen appce Claude (`claude.ai`/`claude.com`) nebo na smyčku vlastního počítače
+  (Claude Code). Další adresy jen výslovně: `HUB_GW_MCP_REDIRECTS`. Kód platí
+  minutu a jednou.
+- **Tokeny** jen jako otisky: přístupový hodinu, obnovovací měsíc a při každém
+  použití se vymění — znovu použitý zruší celé přihlášení. Svázané s adresou
+  `/mcp` této brány. Změna hesla, blokace účtu a reset 2FA napojení zruší.
+- **Izolace:** každý nástroj běží v instanci hubu toho účtu, v jeho sandboxu
+  (bwrap) — cizí domov v něm vůbec není. Cesty se navíc drží v domově, příkazy
+  nedostanou proměnné s klíči a tokeny. Firemní Obsidian kontroluje brána při
+  každém volání a zapisuje do něj (i do sdílených) sama. Vnitřní `/api/mcp-tool`
+  hubu je z prohlížeče přes proxy nedostupné.
+- **Záznam:** `gateway/mcp.jsonl` (kdo, kterým nástrojem, cesty a příkazy —
+  bez obsahu souborů). Napojení vypíše a zruší:
+
+      claude-hub-admin mcp                          # kdo má napojení
+      claude-hub-admin mcp zrusit jmeno@firma.cz    # zrušit (appka se přihlásí znovu)
+
 ## Firemní skilly
 
 Hotové postupy, ze kterých si Claude sám vybírá, leží ve firemním trezoru:

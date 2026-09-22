@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from hub import __version__, qr
 
-from . import config, isolation, pocitac, shared, totp, workspace
+from . import config, isolation, mcp, pocitac, shared, totp, workspace
 from .accounts import Accounts
 
 HTML = "text/html; charset=utf-8"
@@ -639,6 +639,10 @@ class Handler(BaseHTTPRequestHandler):
             parsed = urllib.parse.urlparse(self.path)
             route = parsed.path
 
+            # Napojení z appky Claude (MCP + OAuth): vlastní přihlášení
+            # a tokeny, cookie brány se tu nepoužívá (gateway/mcp.py).
+            if mcp.route(self, method, route):
+                return
             if route == "/login":
                 return self._login(method)
             if route == "/logout":
@@ -678,6 +682,8 @@ class Handler(BaseHTTPRequestHandler):
 
             if route == "/gw/firma/publish":
                 return self._firma_publish(method, user)
+            if route == "/gw/firma/pristupy":
+                return self._firma_access(method, user)
             # Zabezpečení účtu z Nastavení → Účet (hub v prostoru o heslech nic neví).
             if route == "/gw/account":
                 return self._json({"user": user, "twofa": self.accounts.twofa(user["id"]),
@@ -698,6 +704,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"computers": self.server.pocitac.list(user["id"]),
                                    "ukoly": self.server.pocitac.ukoly(user["id"])})
 
+            # Nástroje pro appku Claude volá v instanci jen brána sama — přes
+            # proxy z prohlížeče se k nim nikdo nedostane.
+            if route.startswith("/api/mcp-tool"):
+                return self._send(404, b"404")
             # Přihlášený → všechno ostatní jde do jeho instance hubu.
             return self._proxy(method, user)
         except BrokenPipeError:
@@ -738,6 +748,45 @@ class Handler(BaseHTTPRequestHandler):
                 self.hubs.stop_idle(uid)
         result = {k: v for k, v in result.items() if k not in ("affected", "revoked")}
         return self._json(result)
+
+    def _firma_access(self, method, user):
+        """Kdo firemní Obsidian vidí a kdo do něj zapisuje — spravují admini
+        ve firemním Obsidianu v hubu. Seznam i změna jen pro admina; změna jen
+        ze stránky hubu (stejný původ + hlavička, kterou cizí web nepošle)."""
+        if user.get("role") != "admin":
+            return self._json({"error": "Přístupy k firemnímu Obsidianu spravují admini."}, 403)
+        if method == "GET":
+            return self._json({"people": self.accounts.company_list()})
+        if method != "POST":
+            return self._json({"error": "Jen GET nebo POST."}, 405)
+        form = self._read_form()
+        if not self._account_post_ok():
+            return self._json({"error": "Přístupy jde měnit jen v hubu."}, 403)
+        try:
+            target, old = self.accounts.set_company_level(
+                user, form.get("id"), str(form.get("level") or ""))
+        except PermissionError as exc:
+            return self._json({"error": str(exc)}, 403)
+        except (ValueError, TypeError) as exc:
+            return self._json({"error": str(exc)}, 400)
+        level = self.accounts.company_level(target)
+        note = ""
+        if level == "none" and old != "none" and self.hubs:
+            # Trezor je v běžícím prostoru přivázaný — kdo zrovna nepracuje,
+            # tomu se prostor zastaví hned, ostatním při dalším startu.
+            self.hubs.stop_idle(target["id"])
+            note = "trezor mu zmizí, až se jeho prostor znovu spustí"
+        elif old == "none" and level != "none":
+            note = "uvidí ho po restartu svého prostoru"
+        try:
+            with open(os.path.join(config.COMPANY_DIR, "pristupy.jsonl"), "a",
+                      encoding="utf-8") as fh:
+                fh.write(json.dumps({"cas": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                     "admin": user["email"], "komu": target["email"],
+                                     "z": old, "na": level}, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+        return self._json({"ok": True, "level": level, "note": note})
 
     # ---- přihlášení ----
     def _wants_json(self):

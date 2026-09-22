@@ -513,8 +513,10 @@ def _hub_config(user, home):
         "gateway_user": {"email": user.get("email", ""),
                          "name": user.get("name", ""),
                          "role": user.get("role", "user")},
-        # Společný firemní Obsidian (jen ke čtení) — hub ho ukáže v panelu.
-        "company_vault": config.COMPANY_VAULT,
+        # Společný firemní Obsidian — hub ho ukáže v panelu. Kdo k němu
+        # přístup nemá, tomu se neukáže vůbec (a do sandboxu se nepřiváže).
+        "company_vault": config.COMPANY_VAULT if company_level(user) != "none" else "",
+        "company_level": company_level(user),
         # Sdílené Obsidiany, kde je členem (svázané při startu), a kdo je
         # v týmu — z toho vybírá tools/sdilene.py.
         "shared_vaults": shared.vaults_for(user),
@@ -639,9 +641,10 @@ def ensure(user, kod=REPO_DIR):
     # prostor nastartuje taky — jen o firemním nebude vědět.
     try:
         ensure_company_vault()
-        _company_claude_md(home)
+        level = company_level(user)
+        _company_claude_md(home, level)
         mine = shared.vaults_for(user)
-        _company_settings(home, [v["path"] for v in mine])
+        _company_settings(home, [v["path"] for v in mine], company=level != "none")
         _shared_claude_md(home, mine)
     except (OSError, ValueError):
         pass
@@ -718,7 +721,31 @@ zavádí je správce serveru (`claude-hub-admin skills`).
 """
 
 
-def _company_block():
+def company_level(user):
+    """Přístup účtu k firemnímu Obsidianu: none / read / write (accounts.py).
+    Bez databáze (testy, nástroje bez brány) platí výchozí úroveň."""
+    from .accounts import COMPANY_DEFAULT
+    if shared.ACCOUNTS is None:
+        return "write" if (user or {}).get("role") == "admin" else COMPANY_DEFAULT
+    return shared.ACCOUNTS.company_level(user)
+
+
+READ_ONLY_BLOCK = """{mark}
+## Firemní Obsidian
+
+Vedle osobního trezoru je společný **firemní Obsidian** celého týmu:
+`{vault}`. Tenhle uživatel ho má **jen ke čtení** — firemní postupy, kontakty
+a know-how v něm hledej a čti, ale nic do něj nenavrhuj ani nenahrávej
+(`tools/firma.py` návrh odmítne). Když by uživatel chtěl něco do firemního
+Obsidianu zapsat, řekni mu, ať požádá admina o právo zápisu.
+{skills}{end}
+"""
+
+
+def _company_block(level="write"):
+    if level == "read":
+        return READ_ONLY_BLOCK.format(mark=FIRMA_MARK[0], vault=config.COMPANY_VAULT,
+                                      skills=_company_skills_text(), end=FIRMA_MARK[1])
     tool = os.path.join(REPO_DIR, "tools", "firma.py")
     return f"""{FIRMA_MARK[0]}
 ## Firemní Obsidian
@@ -764,25 +791,28 @@ a zeptá se kartou.
 """
 
 
-def _company_claude_md(home):
+def _company_claude_md(home, level="write"):
     """Pokyny k firemnímu Obsidianu v ~/.claude/CLAUDE.md prostoru. Mezi
-    značkami se vždy přepíšou, zbytek souboru patří uživateli a zůstane."""
+    značkami se vždy přepíšou, zbytek souboru patří uživateli a zůstane.
+    Bez přístupu (`none`) se blok smaže — Claude o trezoru nemá vědět."""
     text = safefs.read_text(home, ".claude/CLAUDE.md")
     if text is None:
         if safefs.is_file(home, ".claude/CLAUDE.md"):
             return                       # nečitelný (velký, jiné kódování) — nechat být
         text = ""                        # chybí, nebo je to odkaz — nahradí se
-    block = _company_block()
+    block = _company_block(level) if level != "none" else ""
     start, end = text.find(FIRMA_MARK[0]), text.find(FIRMA_MARK[1])
     if start >= 0 and end > start:
         new = text[:start] + block.rstrip("\n") + text[end + len(FIRMA_MARK[1]):]
-    else:
+    elif block:
         new = (text.rstrip("\n") + "\n\n" if text.strip() else "") + block
+    else:
+        new = text
     if new != text:
         safefs.write_text(home, ".claude/CLAUDE.md", new)
 
 
-def _company_settings(home, extra=()):
+def _company_settings(home, extra=(), company=True):
     """Firemní trezor (a sdílené Obsidiany z `extra`) mezi složkami, které Claude
     Code smí číst bez ptaní (permissions.additionalDirectories). Nečitelné
     nastavení se nepřepisuje."""
@@ -805,10 +835,13 @@ def _company_settings(home, extra=()):
     dirs = perms.get("additionalDirectories", [])
     if not isinstance(dirs, list):
         return
-    missing = [d for d in [config.COMPANY_VAULT, *extra] if d not in dirs]
-    if not missing:
+    want = ([config.COMPANY_VAULT] if company else []) + list(extra)
+    missing = [d for d in want if d not in dirs]
+    # Bez přístupu k firemnímu se jeho cesta z povolených složek odebere.
+    kept = [d for d in dirs if company or d != config.COMPANY_VAULT]
+    if not missing and len(kept) == len(dirs):
         return
-    perms["additionalDirectories"] = dirs + missing
+    perms["additionalDirectories"] = kept + missing
     data["permissions"] = perms
     safefs.write_text(home, rel, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
@@ -836,11 +869,30 @@ def publish_company(user, pid, overwrite=False):
     podvržený odkaz kamkoli na serveru. Čte se proto jen obyčejný soubor přímo
     na své cestě, bez následování odkazů.
     """
+    if company_level(user) != "write":
+        raise ValueError("Do firemního Obsidianu nemáš právo zapisovat — požádej admina.")
     data = _read_proposal(user, pid)
     if not isinstance(data.get("text"), str):
         raise ValueError("Návrh je poškozený.")
     src = os.path.join(os.path.realpath(home_for(user)), PENDING, str(pid) + ".json")
-    rel = company_rel(data.get("cil"))
+    result = write_company(user, data.get("cil"), data["text"], overwrite)
+    if result.get("ok"):
+        try:
+            os.remove(src)
+        except OSError:
+            pass
+    return result
+
+
+def write_company(user, rel, text, overwrite=False, via=""):
+    """Zapíše poznámku do firemního trezoru za účet `user` — jen s právem
+    zápisu. Sdílí ji potvrzovací karta v hubu i napojení z appky Claude (`via`
+    se zapíše do záznamu o nahráních)."""
+    if company_level(user) != "write":
+        raise ValueError("Do firemního Obsidianu nemáš právo zapisovat — požádej admina.")
+    if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_PROPOSAL:
+        raise ValueError("Poznámka chybí, nebo je moc velká.")
+    rel = company_rel(rel)
     vault = os.path.realpath(ensure_company_vault())
     target = os.path.join(vault, *rel.split("/"))
     if os.path.commonpath([os.path.realpath(os.path.dirname(target)), vault]) != vault:
@@ -851,17 +903,15 @@ def publish_company(user, pid, overwrite=False):
     os.makedirs(os.path.dirname(target), exist_ok=True)
     tmp = target + ".hub-tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(data["text"])
+        fh.write(text)
     os.replace(tmp, target)
     entry = {"cas": time.strftime("%Y-%m-%d %H:%M:%S"), "email": user.get("email", ""),
-             "cil": rel, "prepsano": existed, "znaku": len(data["text"])}
+             "cil": rel, "prepsano": existed, "znaku": len(text)}
+    if via:
+        entry["pres"] = via
     try:
         with open(config.COMPANY_LOG, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except OSError:
-        pass
-    try:
-        os.remove(src)
     except OSError:
         pass
     return {"ok": True, "path": rel, "overwritten": existed}
@@ -999,7 +1049,10 @@ def session_spec(user, isolation, mode):
     # přijde v prostředí (session_env), žádný soubor mimo domov se do sandboxu
     # nepřivazuje. Firemní Obsidian taky jen ke čtení: zapisuje do něj brána
     # po potvrzení.
-    extra_ro = [(kod, REPO_DIR), config.COMPANY_VAULT] + [v["path"] for v in shared.vaults_for(user)]
+    # Bez přístupu k firemnímu se do sandboxu vůbec nepřiváže — neuvidí ho
+    # ani Claude, ani terminál.
+    company = [config.COMPANY_VAULT] if company_level(user) != "none" else []
+    extra_ro = [(kod, REPO_DIR)] + company + [v["path"] for v in shared.vaults_for(user)]
     unit = unit_name(user)
     # Stará cesta u<id> vede v sandboxu na nový domov: cache (uv, npx) mají
     # absolutní cesty zapečené uvnitř a přepisovat je by bylo křehké.
