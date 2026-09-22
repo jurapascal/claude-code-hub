@@ -42,7 +42,7 @@
   function markdown(text) {
     if (global.HubVault && global.HubVault.render) {
       try {
-        return global.HubVault.render(text, {resolve: () => '', image: () => ''}).html;
+        return global.HubVault.render(text, {resolve: () => '', image: () => '', breaks: true}).html;
       } catch (_) { /* radši holý text než prázdno */ }
     }
     return '';

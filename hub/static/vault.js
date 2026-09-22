@@ -100,11 +100,12 @@
   /* Řádky odstavce. Poznámky od Clauda jsou v souboru zalomené po osmdesáti
      znacích, a kreslit každý konec řádku by text roztrhalo — spojují se proto
      mezerou jako v běžném Markdownu. Tvrdý zlom (dvě mezery nebo \ na konci)
-     zůstane. */
+     zůstane. `ctx.breaks` = každý konec řádku je zlom — odpovědi v chatu
+     (cteni.js) zalomené nejsou, tam řádek znamená řádek. */
   function joinLines(lines, ctx) {
     return lines.map((line, i) => {
       const last = i === lines.length - 1;
-      const hard = !last && /( {2,}|\\)$/.test(line);
+      const hard = !last && (!!(ctx && ctx.breaks) || /( {2,}|\\)$/.test(line));
       const text = inline(line.replace(/( {2,}|\\)$/, '').trim(), ctx);
       return text + (last ? '' : hard ? '<br>' : ' ');
     }).join('');
