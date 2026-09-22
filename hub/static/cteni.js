@@ -788,6 +788,7 @@
                Claude jako první zprávu, jakmile se konverzace otevře. -->
           <div class="cteni-write">
             <textarea class="cteni-input" rows="1" spellcheck="false"
+                  autocomplete="off" autocorrect="on" autocapitalize="sentences" aria-autocomplete="none" data-form-type="other" data-1p-ignore data-lpignore="true"
                       placeholder="Napiš a Claude v konverzaci pokračuje… (Enter odešle)"></textarea>
             <button class="cteni-send" title="Odeslat (Enter)">↑</button>
           </div>

@@ -458,6 +458,7 @@
       <div class="composer-box">
         <div class="composer-atts" hidden></div>
         <textarea class="composer-input" rows="1" spellcheck="false"
+                  autocomplete="off" autocorrect="on" autocapitalize="sentences" aria-autocomplete="none" data-form-type="other" data-1p-ignore data-lpignore="true"
                   placeholder="Napiš, co má agent udělat… (Enter odešle, Shift+Enter nový řádek)"></textarea>
         <div class="composer-bar">
           <!-- Nástroje jedou v jedné řadě a na úzké obrazovce se posouvají
