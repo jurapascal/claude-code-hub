@@ -285,6 +285,49 @@ EOF
     fi
 }
 
+# Verze pro prostory: každá ve své složce, ze které ji brána pouští (musí
+# sedět s gateway/workspace.py VERZE_DIR a update.sh). Zdroj se pak dá
+# přepnout, i když někdo pracuje — běžící prostor jede dál ze své složky.
+VERZE_DIR=/opt/claude-code-hub-verze
+setup_verze() {
+    step "Verze pro prostory"
+    if [ ! -d "$REPO_DIR/.git" ]; then
+        warn "zdroj není git — prostory pojedou přímo z $REPO_DIR"
+        return 0
+    fi
+    local ver commit cil tmp
+    ver="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' "$REPO_DIR/hub/__init__.py")"
+    commit="$(git -C "$REPO_DIR" rev-parse HEAD)"
+    if [ -z "$ver" ]; then
+        warn "v hub/__init__.py chybí verze — prostory pojedou přímo z $REPO_DIR"
+        return 0
+    fi
+    cil="$VERZE_DIR/$ver"
+    if [ "$(cat "$cil/.hotovo" 2>/dev/null)" = "$commit" ]; then
+        ok "$cil"
+        return 0
+    fi
+    # Stejné číslo verze z jiného commitu (ruční instalace z větve): složku,
+    # ze které ještě jede prostor, přepsat nejde — smazané soubory by mu
+    # zmizely pod rukama.
+    if [ -f "$cil/.hotovo" ] && grep -qs " $cil " /proc/[0-9]*/mountinfo; then
+        warn "$cil používá běžící prostor — nová kopie verze $ver se připraví příště"
+        return 0
+    fi
+    install -d -m 755 "$VERZE_DIR"
+    tmp="$(mktemp -d "$VERZE_DIR/.tmp-$ver-XXXXXX")"
+    if ! git -C "$REPO_DIR" archive HEAD | tar -x -C "$tmp"; then
+        rm -rf "$tmp"
+        warn "verzi $ver se nepodařilo vybalit — prostory pojedou přímo z $REPO_DIR"
+        return 0
+    fi
+    chmod -R a+rX,go-w "$tmp"
+    echo "$commit" >"$tmp/.hotovo"
+    rm -rf "$cil"
+    mv "$tmp" "$cil"
+    ok "$cil"
+}
+
 REPO_CHANGED=false
 fetch_repo() {
     step "Zdroj hubu ($REF)"
@@ -329,6 +372,20 @@ setup_service() {
         for _ in $(seq 1 40); do [ -S "/run/user/$uid/bus" ] && break; sleep 0.25; done
     fi
     [ -S "/run/user/$uid/bus" ] || die "Uživatelský systemd pro $HUB_USER nemá sběrnici (/run/user/$uid/bus)."
+
+    # Strop na všechny prostory dohromady. Každý prostor má vlastní strop
+    # (gateway/isolation.py, 45 % paměti), a když jich pracuje víc naráz,
+    # sečteno by přetekly stroj — jádro by pak zabíjelo, co mu přijde pod
+    # ruku, i sshd nebo nginx. Takhle to zůstane uvnitř brány a prostorů.
+    local dropin="/etc/systemd/system/user@$uid.service.d/claude-hub-pamet.conf"
+    local limit_new
+    limit_new="$(printf '[Service]\n# Claude Code Hub: prostory dohromady nesmí sebrat celý stroj.\nMemoryMax=85%%\n')"
+    if [ "$(cat "$dropin" 2>/dev/null)" != "$limit_new" ]; then
+        install -d -m 755 "$(dirname "$dropin")"
+        printf '%s\n' "$limit_new" >"$dropin"
+        quiet systemctl daemon-reload
+        ok "strop paměti pro všechny prostory: 85 % stroje"
+    fi
 
     unit="$HUB_HOME/.config/systemd/user/claude-hub-gateway.service"
     new="$(cat <<EOF
@@ -585,7 +642,7 @@ summary() {
     echo "                     claude-hub-admin list | sessions | passwd <e-mail>"
     echo "  Klíč API:          claude-hub-admin apikey set  → prostory na central se nepřihlašují"
     echo "                     (claude-hub-admin auth <e-mail> own = vlastní účet Claude)"
-    echo "  Aktualizace:       sama každou noc, když nikdo nepracuje (ručně: claude-hub-update)"
+    echo "  Aktualizace:       sama každou hodinu; v prostoru se nabídne Aktualizovat (ručně: claude-hub-update)"
     echo -e "  ${D}Log instalace: $LOG${R}"
 }
 
@@ -600,7 +657,7 @@ write_conf() {
 }
 
 setup_updater() {
-    step "Noční aktualizace"
+    step "Automatická aktualizace"
     # Ze zdroje, aby se updater aktualizoval s ním; skript stažený samotný (curl)
     # a starší zdroj bez update.sh vezmou kopii vedle sebe.
     local src="$REPO_DIR/gateway/update.sh"
@@ -625,16 +682,17 @@ EOF
 Description=Claude Code Hub - nocni aktualizace brany
 
 [Timer]
-# Několik pokusů za noc: když někdo pracuje, aktualizace počká na další.
-OnCalendar=*-*-* 02,03,04,05:15:00
-RandomizedDelaySec=10min
+# Každou hodinu: nová verze se připraví hned (prostorům nevadí) a lidi si ji
+# v prostoru zapnou sami. Bránu update.sh přepne, až nikdo nepracuje.
+OnCalendar=hourly
+RandomizedDelaySec=5min
 
 [Install]
 WantedBy=timers.target
 EOF
     quiet systemctl daemon-reload
     quiet systemctl enable --now claude-hub-update.timer
-    ok "každou noc 2:15–5:15, když nikdo nepracuje (ručně: claude-hub-update)"
+    ok "každou hodinu — prostory si novou verzi zapnou samy (ručně: claude-hub-update)"
 }
 
 setup_ucty() {
@@ -716,6 +774,7 @@ main() {
     setup_user
     setup_isolation
     fetch_repo
+    setup_verze
     write_conf
     install_admin_tool
     setup_company_skills

@@ -1598,7 +1598,15 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
       // nekouká na modrý tab s jantarovou tečkou pod ním.
       agentColor: (a) => dotColor(tab, a),
       // Co Claude zrovna dělá — čtení (cteni.js) z toho kreslí řádek práce.
-      prace: (stav) => { if (tab.cteni) tab.cteni.prace(stav); },
+      prace: (stav) => {
+        // Podle tohohle aktualizace prostoru počká, až Claude doběhne.
+        tab.pracuje = !!(stav && stav.on);
+        if (tab.cteni) tab.cteni.prace(stav);
+      },
+      // Odeslaná zpráva — čtení ji ukáže hned, i s tím, jestli ji Claude už vidí.
+      odeslano: (zprava, stav) => { if (tab.cteni) tab.cteni.odeslano(zprava, stav); },
+      // Claude v tabu spadl (wrapper to napsal do terminálu).
+      upozorni: (text) => { if (tab.cteni) tab.cteni.upozorni(text); else toast(text); },
       agents: (ready) => agentList(!!ready),
       /* Přepnout agenta ani model v běžícím tabu nejde: je to jiný program,
          případně jiný startovací argument. Otevře se proto nový tab nad tímtéž
@@ -2269,7 +2277,12 @@ function handle(msg) {
     }
   } else if (msg.t === 'exit') {
     const tab = TABS.find(t => t.id === msg.id);
-    if (tab) { tab.exited = true; tab.el.classList.add('exited'); }
+    if (tab) {
+      tab.exited = true;
+      tab.el.classList.add('exited');
+      // Ve čtení terminál není vidět — bez hlášky by jen přestalo přibývat.
+      if (tab.cteni) tab.cteni.upozorni('Claude Code v tomhle tabu skončil. Konverzaci otevřeš znovu v seznamu Konverzace.');
+    }
   } else if (msg.t === 'tab-opened') {
     // Tab z jiného okna téhož hubu (appka i prohlížeč naráz). Přidá se na
     // pozadí — přepnout na něj by tomu, kdo tu zrovna pracuje, sebralo tab.
@@ -2337,9 +2350,16 @@ async function restoreAfterRestart() {
     return;                 // obnova je bonus, chyba tu nesmí nic shodit
   }
   if (!tabs.length) return;
+  const drafts = takeDrafts();
   for (const t of tabs) {
-    openTab({kind: t.kind, path: t.path, title: t.title,
-             agent: t.agent, model: t.model, resume: t.resume});
+    const tab = openTab({kind: t.kind, path: t.path, title: t.title,
+                         agent: t.agent, model: t.model, resume: t.resume, vault: t.vault || ''});
+    // Rozepsaná zpráva z doby před restartem (aktualizace prostoru).
+    const at = drafts.findIndex((d) => d.path === (t.path || '') && d.title === (t.title || ''));
+    if (at >= 0 && tab.composer && tab.composer.setDraft) {
+      tab.composer.setDraft(drafts[at].text);
+      drafts.splice(at, 1);
+    }
   }
   const back = tabs.filter(t => t.resume).length;
   toast(`Hub aktualizovaný — ${tabs.length} ${tabyWord(tabs.length)} zpátky` +
@@ -2564,6 +2584,7 @@ async function main() {
 
   connect();
   checkForUpdate();
+  checkServerUpdate();
 
   await startScreen(returned);
 }
@@ -2691,5 +2712,166 @@ async function checkForUpdate() {
           `Aktualizovat můžeš v nastavení.`);
   }
 }
+
+/* ── Nová verze na serveru ───────────────────────────────────────────────────
+ * Server si novou verzi připraví sám, na pozadí (gateway/update.sh): každá
+ * verze má vlastní složku a běžící prostor jede dál z té své — nic se mu
+ * nevymění pod rukama. Hub se každou chvíli zeptá brány (/gw/verze), jestli
+ * je připravené něco novějšího, a nabídne to:
+ *   Aktualizovat — uloží se taby (i rozepsané zprávy), brána prostor
+ *                  restartuje už na nové verzi a taby se vrátí, Claude v nich
+ *                  pokračuje v konverzaci. Když zrovna pracuje, počká se.
+ *   Později      — zeptá se znovu za hodinu; pilulka v hlavičce zůstává. */
+const SRV_CHECK_MS = 10 * 60 * 1000;
+const SRV_LATER_MS = 60 * 60 * 1000;
+const SRV_LATER_KEY = 'hub.serverUpdateLater';
+const DRAFTS_KEY = 'hub.restartDrafts';
+let srvNewest = '';
+let srvCard = null;
+let srvTimer = null;
+
+function verNewer(a, b) {
+  const x = bare(a).split('.').map((n) => parseInt(n, 10) || 0);
+  const y = bare(b).split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  }
+  return false;
+}
+
+async function checkServerUpdate() {
+  if (!onServer()) return;
+  clearTimeout(srvTimer);
+  srvTimer = setTimeout(checkServerUpdate, SRV_CHECK_MS);
+  if (document.hidden) return;
+  let res;
+  try {
+    const r = await fetch('/gw/verze', {credentials: 'same-origin'});
+    if (!r.ok) return;                 // starší brána to neumí
+    res = await r.json();
+  } catch (_) {
+    return;
+  }
+  if (!res || !res.nejnovejsi || !verNewer(res.nejnovejsi, STATE.version.version)) return;
+  srvNewest = bare(res.nejnovejsi);
+  const btn = $('btn-update');
+  $('btn-update-text').textContent = `Nová verze ${srvNewest}`;
+  btn.title = `Na serveru je připravená verze ${srvNewest}, tvůj prostor jede na ` +
+              `${STATE.version.version}. Klikni a přepni se.`;
+  btn.hidden = false;
+  btn.onclick = () => showServerUpdate(true);
+  showServerUpdate(false);
+}
+// Po návratu k oknu (telefon z kapsy, druhý monitor) se zeptá hned.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && onServer()) checkServerUpdate();
+});
+
+function showServerUpdate(asked) {
+  if (!srvNewest || srvCard) return;
+  if (!asked) {
+    let later = null;
+    try { later = JSON.parse(localStorage.getItem(SRV_LATER_KEY) || 'null'); } catch (_) { /* nic */ }
+    if (later && later.version === srvNewest && Date.now() < later.until) return;
+  }
+  const card = document.createElement('div');
+  card.className = 'srvupd';
+  card.innerHTML = `
+    <div class="srvupd-ico"><svg class="ico"><use href="#i-up"/></svg></div>
+    <div class="srvupd-body">
+      <div class="srvupd-title"></div>
+      <div class="srvupd-text"></div>
+      <div class="srvupd-btns">
+        <button class="btn primary" data-act="go">Aktualizovat</button>
+        <button class="btn ghost" data-act="later">Později</button>
+      </div>
+    </div>`;
+  const q = (sel) => card.querySelector(sel);
+  q('.srvupd-title').textContent = `Na serveru je nová verze ${srvNewest}`;
+  q('.srvupd-text').textContent = `Tvůj prostor jede na ${STATE.version.version}. ` +
+    'Po aktualizaci se taby otevřou znovu a Claude v nich pokračuje, kde skončil — ' +
+    'nic se neztratí.';
+  q('[data-act=later]').onclick = () => {
+    try {
+      localStorage.setItem(SRV_LATER_KEY,
+        JSON.stringify({version: srvNewest, until: Date.now() + SRV_LATER_MS}));
+    } catch (_) { /* připomene se při dalším dotazu */ }
+    closeServerUpdate();
+    toast('Připomenu se za hodinu. Kdykoli dřív: pilulka „Nová verze" nahoře.');
+  };
+  q('[data-act=go]').onclick = () => applyServerUpdate(card, false);
+  document.body.appendChild(card);
+  srvCard = card;
+}
+
+function closeServerUpdate() {
+  if (srvCard) srvCard.remove();
+  srvCard = null;
+}
+
+function saveDrafts() {
+  const drafts = [];
+  for (const t of TABS) {
+    const text = t.composer && t.composer.draft ? t.composer.draft() : '';
+    if (text && text.trim()) drafts.push({path: t.path || '', title: t.title || '', text});
+  }
+  try { localStorage.setItem(DRAFTS_KEY, JSON.stringify({at: Date.now(), drafts})); } catch (_) { /* nic */ }
+}
+
+function takeDrafts() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DRAFTS_KEY) || 'null');
+    localStorage.removeItem(DRAFTS_KEY);
+    if (raw && Date.now() - raw.at < 60 * 60 * 1000 && Array.isArray(raw.drafts)) return raw.drafts;
+  } catch (_) { /* nic */ }
+  return [];
+}
+
+/* Aktualizovat: když Claude v některém tabu pracuje, počká se, až doběhne —
+   restart by mu práci utnul. Jde to i hned, ale jen výslovně. */
+async function applyServerUpdate(card, now) {
+  const q = (sel) => card.querySelector(sel);
+  const busy = () => TABS.filter((t) => !t.exited && t.pracuje);
+  if (!now && busy().length) {
+    q('.srvupd-text').textContent = `Claude ještě pracuje (${busy().length} ${tabyWord(busy().length)}). ` +
+      'Aktualizuju, jakmile doběhne — okno můžeš nechat otevřené.';
+    const btns = q('.srvupd-btns');
+    btns.innerHTML = '<button class="btn ghost" data-act="now">Hned</button>' +
+                     '<button class="btn ghost" data-act="cancel">Zrušit</button>';
+    let klid = 0;
+    const hlidac = setInterval(() => {
+      if (!srvCard) return clearInterval(hlidac);
+      // Pár vteřin v klidu, ne jen okamžik mezi dvěma kroky.
+      klid = busy().length ? 0 : klid + 1;
+      if (klid >= 3) { clearInterval(hlidac); applyServerUpdate(card, true); }
+    }, 1000);
+    q('[data-act=now]').onclick = () => { clearInterval(hlidac); applyServerUpdate(card, true); };
+    q('[data-act=cancel]').onclick = () => { clearInterval(hlidac); closeServerUpdate(); };
+    return;
+  }
+  q('.srvupd-btns').innerHTML = '';
+  q('.srvupd-text').textContent = 'Ukládám taby a rozepsané zprávy…';
+  card.classList.add('busy');
+  try {
+    saveDrafts();
+    await api('prostor-snapshot', {});
+    const r = await fetch('/gw/restart', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-Hub-Account': '1'}, body: '{}',
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+  } catch (err) {
+    card.classList.remove('busy');
+    q('.srvupd-text').textContent = 'Aktualizace se nepovedla: ' + err.message;
+    q('.srvupd-btns').innerHTML = '<button class="btn ghost" data-act="close">Zavřít</button>';
+    q('[data-act=close]').onclick = closeServerUpdate;
+    return;
+  }
+  q('.srvupd-text').textContent = `Přepínám prostor na verzi ${srvNewest}… Taby se za chvilku vrátí.`;
+  // Nový prostor naběhne s prvním požadavkem — tím je načtení stránky.
+  setTimeout(() => location.reload(), 1500);
+}
+// Nastavení → Aktualizace (settings.js) nabízí totéž tlačítkem.
+window.hubServerUpdate = () => { closeServerUpdate(); srvNewest ? showServerUpdate(true) : checkServerUpdate(); };
 
 main().catch(err => toast('Hub se nenačetl: ' + err.message));

@@ -161,8 +161,42 @@ if ! command -v "$AGENT_BIN" >/dev/null 2>&1; then
     exec bash
 fi
 
+# ── Po násilném konci ──
+# Kód 137 = SIGKILL. Nejčastěji ho pošle jádro, když dojde paměť — na serveru
+# má prostor strop na všechny taby dohromady. Dřív tab prostě zešedl a nikdo
+# nevěděl proč; teď se to napíše (hub z toho udělá hlášku ve čtení, viz
+# composer.js KILLED) a Claude Code v konverzaci pokračuje.
+#
+# Argumenty pro pokračování: --session-id X → --resume X a úvodní prompt se
+# podruhé neposílá. Kopie konverzace (--fork-session) se neobnovuje — nové id
+# si zvolil Claude Code sám a wrapper ho nezná.
+resume_args() {
+    RESUME=()
+    local have="" i=0 a
+    local args=("$@")
+    while [ "$i" -lt "${#args[@]}" ]; do
+        a="${args[$i]}"
+        case "$a" in
+            --session-id|--resume)
+                have="${args[$((i + 1))]}"
+                RESUME+=(--resume "$have")
+                i=$((i + 2)); continue ;;
+            --fork-session) return 1 ;;
+            --model|--append-system-prompt)
+                RESUME+=("$a" "${args[$((i + 1))]}")
+                i=$((i + 2)); continue ;;
+            --*) RESUME+=("$a") ;;
+            *) ;;                       # úvodní prompt
+        esac
+        i=$((i + 1))
+    done
+    [ -n "$have" ]
+}
+
 # ── Main Loop ──
 FIRST_RUN=true
+KILLS=0
+ARGS=("$@")
 
 while true; do
     if $FIRST_RUN; then
@@ -170,8 +204,29 @@ while true; do
         FIRST_RUN=false
     fi
 
-    "$AGENT_BIN" "$@"
+    STARTED=$SECONDS
+    "$AGENT_BIN" "${ARGS[@]}"
     EXIT_CODE=$?
+
+    if [ $EXIT_CODE -eq 137 ] && [ "$AGENT_ID" = "claude" ]; then
+        KILLS=$((KILLS + 1))
+        echo ""
+        echo -e "  ${Y}⚠ Claude Code byl násilně ukončen${R} ${D}(SIGKILL)${R}"
+        echo -e "  ${D}Nejčastěji došla paměť — na serveru má prostor strop pro všechny taby${R}"
+        echo -e "  ${D}dohromady. Pomůže zavřít taby, které zrovna nepotřebuješ.${R}"
+        # Pokračuje se jen po delším běhu a nejvýš třikrát: když ho jádro
+        # zabije hned po startu, dokola by se to jen točilo.
+        if [ "$KILLS" -le 3 ] && [ $((SECONDS - STARTED)) -ge 20 ] && resume_args "${ARGS[@]}"; then
+            echo -e "  ${A}✦${R} ${W}konverzace je uložená, pokračuju v ní…${R}"
+            echo ""
+            ARGS=("${RESUME[@]}")
+            sleep 2
+            continue
+        fi
+        echo -e "  ${D}Konverzaci otevřeš znovu v seznamu Konverzace.${R}"
+        echo ""
+        break
+    fi
 
     # Exit code 130 = SIGINT (ctrl+c)
     if [ $EXIT_CODE -eq 130 ] || [ $EXIT_CODE -eq 2 ]; then

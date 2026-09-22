@@ -207,6 +207,8 @@ class HubProc:
         # S jakým přihlášením Clauda prostor nastartoval (workspace.auth_mark) —
         # připojené předplatné se do běžícího prostoru dostane až restartem.
         self.auth_mark = ""
+        # Verze hubu, na které prostor jede (workspace.code_dir při startu).
+        self.version = ""
         self._checked = 0.0
         self._alive = False
         self._lock = threading.Lock()
@@ -223,9 +225,10 @@ class HubProc:
             # prokazatelně neběží.
             workspace.migrate_home(self.user)
         self.shared = [v["slug"] for v in shared.vaults_for(self.user)]
-        argv, home, unit = workspace.session_spec(self.user, isolation, self.mode)
+        argv, home, unit, verze = workspace.session_spec(self.user, isolation, self.mode)
         self.home = home
         self.unit = unit
+        self.version = verze
         env = dict(os.environ, HOME=home)
         # Klíč API brány jen tomu, kdo jede na `central` — `own` ho nesmí
         # zdědit ani z prostředí samotné brány.
@@ -687,6 +690,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._gw_shared(user)
             if route == "/gw/restart":
                 return self._gw_restart(method, user)
+            if route == "/gw/verze":
+                return self._gw_verze(user)
             if route == "/gw/pocitac":
                 # Které počítače jsou k prostoru připojené — štítek v hlavičce —
                 # a kde jsou úkoly, které jim Claude nechal na později.
@@ -950,14 +955,29 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"vaults": vaults, "people": shared.people(), "gone": gone})
 
     def _gw_restart(self, method, user):
-        """Restart vlastního prostoru z hubu (nové sdílené Obsidiany)."""
+        """Restart vlastního prostoru z hubu (nové sdílené Obsidiany, přepnutí
+        na novou verzi)."""
         if method != "POST":
             return self._json({"error": "Jen POST."}, 405)
+        # Tělo se musí přečíst, i když v něm nic není: na spojení, které
+        # prohlížeč drží otevřené, by jinak zbylé „{}" začínalo další požadavek
+        # („{}GET …" → 501) — a tím je hned načtení stránky po restartu.
+        self._read_form()
         if not self._account_post_ok():
             return self._json({"error": "Restart jde jen z hubu."}, 403)
         if self.hubs:
             self.hubs.restart(user)
         return self._json({"ok": True})
+
+    def _gw_verze(self, user):
+        """Na jaké verzi prostor jede a na jakou by se přepnul restartem.
+
+        Nová verze se na serveru připravuje na pozadí (gateway/update.sh) a do
+        běžícího prostoru se nedostane sama — hub se podle tohohle zeptá, jestli
+        ji člověk chce hned, nebo později."""
+        proc = self.hubs.procs.get(user["id"]) if self.hubs else None
+        running = proc.version if proc and proc.alive() else ""
+        return self._json({"prostor": running, "nejnovejsi": workspace.code_dir()[1]})
 
     # ---- rozhraní pro hub na počítači ----
     def _bearer_token(self):

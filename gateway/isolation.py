@@ -38,10 +38,36 @@ PER_USER = os.environ.get("HUB_GW_UCTY", "0") == "1"
 SPOUSTEC = "/usr/local/sbin/claude-hub-prostor"
 DOCKER_IMAGE = "claude-hub-workspace"
 
-# Kolik si smí jedna session vzít. Naměřeno: session Claude Code drží kolem
-# 400-500 MB, takže 1,5 GB je pohodlný strop i pro delší konverzaci a zároveň
-# se jich na 8GB stroj vejde několik, aniž by shodily weby nebo mail.
-LIMITS = {"memory": "1500M", "tasks": 256, "cpu_weight": 100}
+# Kolik si smí vzít jeden prostor. Strop platí na celý prostor — hub i se
+# všemi taby uživatele —, ne na jednu session. Naměřeno 22. 9. 2026: jeden tab
+# s Claude Code je kolem 850 MB (Claude ~480 MB + MCP servery, které si pouští)
+# a 75 procesů a vláken. Pevných 1,5 GB a 256 úloh tak stačilo sotva na jeden
+# tab: s osobním a firemním tabem (otevírají se samy) jádro zabíjelo Clauda
+# uprostřed práce — tab se „sám zavřel", u jednoho prostoru 17× za týden.
+# Paměť se proto bere podle stroje a stroj jako celek chrání strop na všechny
+# prostory dohromady (install.sh → user@<hub>.service, MemoryMax=85 %).
+PAMET_PODIL = 45            # % paměti stroje na jeden prostor
+PAMET_MIN = 1500            # MB
+PAMET_MAX = 6144            # MB
+
+
+def _pamet_prostoru():
+    if os.environ.get("HUB_GW_MEMORY"):
+        return os.environ["HUB_GW_MEMORY"]
+    try:
+        with open("/proc/meminfo", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("MemTotal:"):
+                    mb = int(line.split()[1]) // 1024
+                    return f"{max(PAMET_MIN, min(PAMET_MAX, mb * PAMET_PODIL // 100))}M"
+    except (OSError, ValueError, IndexError):
+        pass
+    return f"{PAMET_MIN}M"
+
+
+LIMITS = {"memory": _pamet_prostoru(),
+          "tasks": int(os.environ.get("HUB_GW_TASKS") or 1024),
+          "cpu_weight": 100}
 
 
 def available():
@@ -76,7 +102,8 @@ def wrap(mode, argv, home, extra_ro=(), extra_rw=(), limits=None, unit="",
 
     `home` je domov uživatele na bráně — jediné místo, kam smí zapisovat.
     `extra_ro` jsou cesty, které má vidět jen ke čtení (zdroj hubu, sdílené
-    přihlášení, když nemá přežít úpravy session).
+    přihlášení, když nemá přežít úpravy session). Místo cesty může být dvojice
+    (zdroj, cíl) — v sandboxu je pak `zdroj` vidět pod jménem `cíl`.
     `extra_rw` jsou cesty vně domova, do kterých session **smí** zapsat — jediný
     případ je sdílené přihlášení Claude Code, které si samo obnovuje token, a
     obnovený token má vidět i zbytek session (jinak by po expiraci vypadly
@@ -174,8 +201,11 @@ def _bwrap(argv, home, extra_ro, extra_rw=(), aliases=()):
     if resolv != "/etc/resolv.conf" and os.path.isfile(resolv):
         cmd += ["--ro-bind", os.path.dirname(resolv), os.path.dirname(resolv)]
     for path in extra_ro:
-        if os.path.exists(path):
-            cmd += ["--ro-bind", path, path]
+        # (zdroj, cíl) = přivázat jinou složku na známé místo — tak jede
+        # prostor z připravené verze hubu, a uvnitř je to pořád REPO_DIR.
+        src, dst = path if isinstance(path, tuple) else (path, path)
+        if os.path.exists(src):
+            cmd += ["--ro-bind", src, dst]
     for path in extra_rw:
         if os.path.exists(path):
             cmd += ["--bind", path, path]
@@ -311,15 +341,16 @@ def _docker(argv, home, extra_ro, limits=None, extra_rw=()):
            # Bez práv navíc a bez možnosti si je vzít.
            "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
            # Aby jeden uživatel nemohl serveru sníst paměť ani procesor.
-           "--memory", str(limits.get("memory", "1500M")),
-           "--memory-swap", str(limits.get("memory", "1500M")),
-           "--pids-limit", str(limits.get("tasks", 256)),
+           "--memory", str(limits.get("memory", LIMITS["memory"])),
+           "--memory-swap", str(limits.get("memory", LIMITS["memory"])),
+           "--pids-limit", str(limits.get("tasks", LIMITS["tasks"])),
            "-v", f"{home}:{home}:rw",
            "-e", f"HOME={home}",
            "-w", home]
     for path in extra_ro:
-        if os.path.exists(path):
-            cmd += ["-v", f"{path}:{path}:ro"]
+        src, dst = path if isinstance(path, tuple) else (path, path)
+        if os.path.exists(src):
+            cmd += ["-v", f"{src}:{dst}:ro"]
     for path in extra_rw:
         if os.path.exists(path):
             cmd += ["-v", f"{path}:{path}:rw"]

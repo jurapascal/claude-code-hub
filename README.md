@@ -37,6 +37,14 @@ dělá jednu aplikaci:
   vidět hned po otevření tabu; co napíšeš, než Claude Code naběhne, počká
   a odejde samo. Klepnutí na konverzaci v panelu ji otevře rovnou v tabu
   (s historií nahoře), jen přečíst ji jde pravým tlačítkem / podržením.
+  **Zprávy během práce** jsou vidět hned, jak je odešleš — pod bublinou stojí,
+  kde zrovna jsou: *odesílá se* → *ve frontě, Claude ji zatím nevidí* →
+  zařadí se do konverzace na místo, kde si ji Claude přečetl („✓ přečetl během
+  práce"), stejně jako v oficiální appce. **Agenti** jsou karty: typ a úkol,
+  jestli běží (točící se kruh a čas) nebo doběhli, poslední kroky naživo
+  (z přepisu agenta), počet nástrojů a tokenů, zadání a výsledek. Agenti
+  puštění najednou stojí pohromadě jako strom, a dokud někdo pracuje na
+  pozadí, je na konci konverzace proužek, který k němu doskočí.
 - **Bublina místo vstupního řádku** — spodek terminálu, kde Claude Code kreslí
   svoje vstupní pole, překryje chatovací bublina: pole na text, přepínač modelu,
   slash příkazy, příloha a režimy (Shift+Tab, Esc). Odeslané jde do stejného pty,

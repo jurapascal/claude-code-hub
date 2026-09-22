@@ -1401,23 +1401,36 @@
     return box;
   }
 
-  /* Hub na serveru (brána): zdroj patří serveru a aktualizuje se sám každou noc
-     (gateway/update.sh), když nikdo nepracuje. Tlačítko by jen nainstalovalo
-     kopii do domova prostoru, která nic nemění. */
+  /* Hub na serveru (brána): zdroj patří serveru a novou verzi si server
+     připraví sám (gateway/update.sh). Instalovat do domova prostoru nemá
+     smysl — nabízí se jen přepnutí prostoru na připravenou verzi. */
   function aktualizaceServer() {
     const box = section('Aktualizace aplikace',
-      'Hub na serveru se aktualizuje sám každou noc, když nikdo nepracuje. ' +
-      'Nic se tu instalovat nemusí.');
+      'Novou verzi si server připraví sám, na pozadí — tvému prostoru se nic ' +
+      'nevymění pod rukama. Když je hotová, hub nabídne Aktualizovat: prostor ' +
+      'se přepne a taby se vrátí i s konverzacemi.');
     const row = el('div', 'set-row');
-    row.appendChild(el('span', 'set-ver', 'Verze na serveru: ' + state.version.version));
+    row.appendChild(el('span', 'set-ver', 'Tvůj prostor jede na: ' + state.version.version));
     box.appendChild(row);
+    // Připravenou novější verzi jde zapnout i odsud (hub.js, hubServerUpdate).
+    fetch('/gw/verze', {credentials: 'same-origin'})
+      .then((r) => (r.ok ? r.json() : null))
+      .then((v) => {
+        const nova = v && v.nejnovejsi;
+        if (!nova || nova === state.version.version || !window.hubServerUpdate) return;
+        const btns = el('div', 'onb-btns');
+        const go = el('button', 'actionbtn', 'Přepnout na verzi ' + nova);
+        go.onclick = () => window.hubServerUpdate();
+        btns.appendChild(go);
+        row.after(btns);
+      }).catch(() => { /* starší brána */ });
     const status = el('div', 'set-status');
-    status.textContent = 'Zjišťuju, jak dopadla poslední noční aktualizace…';
+    status.textContent = 'Zjišťuju, jak dopadla poslední aktualizace serveru…';
     box.appendChild(status);
     io.api('update-check').then((v) => {
       const s = (v && v.server) || {};
       if (!s.checked_at) {
-        status.textContent = 'Noční aktualizace zatím neproběhla.';
+        status.textContent = 'Aktualizace serveru zatím neproběhla.';
         return;
       }
       const when = new Date(s.checked_at * 1000).toLocaleString('cs-CZ');

@@ -46,6 +46,12 @@ USERS_ROOT = os.environ.get("HUB_GW_USERS", os.path.join(HUB_HOME, "users"))
 # čtení — session do něj nesmí zapisovat.
 REPO_DIR = os.environ.get("HUB_GW_REPO",
                           os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Připravené verze hubu, každá ve své složce (gateway/update.sh `pripravit`,
+# install.sh `setup_verze`). Nový prostor jede z nejnovější — přiváže se do
+# sandboxu na místo REPO_DIR, takže uvnitř se nic nemění (i cesty zapsané
+# v konfiguraci MCP dál vedou na REPO_DIR). Běžící prostor jede ze své složky
+# dál, i když se zdroj mezitím přepne: nic se mu nevymění pod rukama.
+VERZE_DIR = os.environ.get("HUB_GW_VERZE", "/opt/claude-code-hub-verze")
 # Sdílené přihlášení Claude Code z dob dřívějšího `central`. Už se nepoužívá —
 # ensure() jen uklízí symlinky, které na něj v domovech zůstaly.
 SHARED_CLAUDE = os.environ.get("HUB_GW_CLAUDE", os.path.join(HUB_HOME, ".claude"))
@@ -516,10 +522,53 @@ def _hub_config(user, home):
     }
 
 
-def ensure(user):
+def _verze(text):
+    try:
+        return tuple(int(x) for x in str(text).split("."))
+    except ValueError:
+        return None
+
+
+def verze_zdroje(root):
+    """__version__ z hubu ve složce `root` ('' = nevíme)."""
+    try:
+        with open(os.path.join(root, "hub", "__init__.py"), encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("__version__"):
+                    return line.split("=", 1)[1].strip().strip("\"'")
+    except OSError:
+        pass
+    return ""
+
+
+def code_dir():
+    """(složka, verze), ze které se pustí nový prostor.
+
+    Nejnovější hotová připravená verze (má `.hotovo`), když je aspoň tak nová
+    jako zdroj brány; jinak zdroj sám — stroj, kde se verze nepřipravují
+    (vývoj, starší instalace)."""
+    zdroj = verze_zdroje(REPO_DIR)
+    nejlepsi = None
+    try:
+        jmena = os.listdir(VERZE_DIR)
+    except OSError:
+        jmena = []
+    for jmeno in jmena:
+        v = _verze(jmeno)
+        if v is None or not os.path.isfile(os.path.join(VERZE_DIR, jmeno, ".hotovo")):
+            continue
+        if nejlepsi is None or v > nejlepsi[0]:
+            nejlepsi = (v, jmeno)
+    if nejlepsi and nejlepsi[0] >= (_verze(zdroj) or ()):
+        return os.path.join(VERZE_DIR, nejlepsi[1]), nejlepsi[1]
+    return REPO_DIR, zdroj
+
+
+def ensure(user, kod=REPO_DIR):
     """Založí (nebo doplní) domov uživatele. Vrací slovník s cestami.
 
     Voláno při každém přihlášení — je to idempotentní: co existuje, nechá být.
+    `kod` = složka hubu, ze které prostor pojede (code_dir).
     """
     home = home_for(user)
     vault = vault_dir(user, home)
@@ -565,7 +614,7 @@ def ensure(user):
     # kopii z instalace dál a nová verze hubu se v tabu vůbec neprojevila —
     # hub sahá nejdřív po ~/.claude/agent-wrapper.sh, teprve pak po zdroji.
     try:
-        with open(os.path.join(REPO_DIR, "agent-wrapper.sh"), encoding="utf-8") as fh:
+        with open(os.path.join(kod, "agent-wrapper.sh"), encoding="utf-8") as fh:
             wrapper = fh.read()
     except OSError:
         wrapper = ""
@@ -934,18 +983,23 @@ def _read_proposal(user, pid):
 def session_spec(user, isolation, mode):
     """Co předat pty backendu, aby se spustila izolovaná instance hubu.
 
-    Vrací (argv, home, unit). `argv` je už obalené izolací a limity; `home`
-    je pracovní složka i jediné zapisovatelné místo session; `unit` je jméno
-    systemd scope, podle kterého se prostor pozná a zastaví (prázdné, když
-    na stroji systemd-run není a limity se nepoužijí).
+    Vrací (argv, home, unit, verze). `argv` je už obalené izolací a limity;
+    `home` je pracovní složka i jediné zapisovatelné místo session; `unit` je
+    jméno systemd scope, podle kterého se prostor pozná a zastaví (prázdné,
+    když na stroji systemd-run není a limity se nepoužijí); `verze` = verze
+    hubu, na které prostor pojede.
     """
-    paths = ensure(user)
+    # Bez sandboxu se jiná složka na místo REPO_DIR přivázat nedá — tam jede
+    # prostor přímo ze zdroje.
+    kod, verze = code_dir() if mode in ("bwrap", "docker") else (REPO_DIR, verze_zdroje(REPO_DIR))
+    paths = ensure(user, kod)
     home = paths["home"]
     inner = [PYTHON, os.path.join(REPO_DIR, "claude-hub.py"), "--no-browser"]
-    # REPO_DIR ke čtení (zdroj hubu). Nic víc: klíč API přijde v prostředí
-    # (session_env), žádný soubor mimo domov se do sandboxu nepřivazuje.
-    # Firemní Obsidian taky jen ke čtení: zapisuje do něj brána po potvrzení.
-    extra_ro = [REPO_DIR, config.COMPANY_VAULT] + [v["path"] for v in shared.vaults_for(user)]
+    # Hub ke čtení — připravená verze pod jménem REPO_DIR. Nic víc: klíč API
+    # přijde v prostředí (session_env), žádný soubor mimo domov se do sandboxu
+    # nepřivazuje. Firemní Obsidian taky jen ke čtení: zapisuje do něj brána
+    # po potvrzení.
+    extra_ro = [(kod, REPO_DIR), config.COMPANY_VAULT] + [v["path"] for v in shared.vaults_for(user)]
     unit = unit_name(user)
     # Stará cesta u<id> vede v sandboxu na nový domov: cache (uv, npx) mají
     # absolutní cesty zapečené uvnitř a přepisovat je by bylo křehké.
@@ -955,4 +1009,4 @@ def session_spec(user, isolation, mode):
                           ucet=slug(user))
     if argv[:1] not in (["systemd-run"], ["sudo"]):
         unit = ""                 # bez scope (docker, stroj bez systemd)
-    return argv, home, unit
+    return argv, home, unit, verze

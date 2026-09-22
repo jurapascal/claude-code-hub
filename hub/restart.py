@@ -37,12 +37,13 @@ MAX_AGE = 3600
 def _resume_for(hub, session):
     """Id konverzace, kterou tab drží (nebo ''), ať se dá pokračovat.
 
-    Stejná cesta jako u seznamu konverzací: značka HUB_TAB od Stop hooku,
-    jinak nejnovější přepis ze složky projektu.
+    Stejná cesta jako u čtení (core.transcript_for): id, které si hub pro tab
+    zvolil sám (--session-id), jinak značka HUB_TAB od Stop hooku a nakonec
+    nejnovější přepis ze složky projektu. Bez toho prvního se dva taby nad
+    jedním projektem po restartu vrátily do téže (nejnovější) konverzace.
     """
     try:
-        transcript = core._tab_transcript(session.id, session.path or core.HOME,
-                                          session.started)
+        transcript = core.transcript_for(session)
         if transcript:
             return os.path.basename(transcript)[:-6]
     except Exception:
@@ -70,6 +71,8 @@ def snapshot(hub):
             "agent": agent,
             "model": session.model or "",
             "resume": resume,
+            # Firemní tab (trezor firmy) má zůstat firemní i po restartu.
+            "vault": getattr(session, "vault", "") or "",
         })
     data = {"at": int(time.time()), "version": core.version(), "tabs": tabs}
     try:

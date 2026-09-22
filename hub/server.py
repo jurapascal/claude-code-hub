@@ -524,13 +524,9 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 return self._json({"error": str(exc)}, 400)
             return self._json({"ok": True})
-        if name == "cteni":
+        if name in ("cteni", "cteni-agenti"):
             # Konverzace jako text (hub/cteni.py). Buď z tabu, který běží,
             # nebo ze starého přepisu podle id konverzace.
-            try:
-                start = int((query.get("from") or ["0"])[0] or 0)
-            except ValueError:
-                start = 0
             chat = (query.get("chat") or [""])[0]
             if chat:
                 path = cteni.path_for(chat)
@@ -540,6 +536,13 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     session = None
                 path = core.transcript_for(session) if session else ""
+            if name == "cteni-agenti":
+                # Co dělají agenti, které Claude pustil — z jejich přepisů.
+                return self._json(cteni.agenti(path))
+            try:
+                start = int((query.get("from") or ["0"])[0] or 0)
+            except ValueError:
+                start = 0
             return self._json(cteni.read(path, start, tail=not start))
         if name == "tab-model":
             try:
@@ -764,6 +767,13 @@ class Handler(BaseHTTPRequestHandler):
             if core.on_gateway():
                 return self._json({"error": "Prostor na serveru restartuje server sám."}, 400)
             return self._json(restart.relaunch(HUB))
+        if name == "prostor-snapshot":
+            # Prostor na serveru se přepíná na novou verzi (restartuje ho brána,
+            # /gw/restart). Před tím se uloží taby — nová instance je otevře
+            # znovu a Claude v nich pokračuje v konverzaci (/api/restore).
+            if not core.on_gateway():
+                return self._json({"error": "Jen v prostoru na serveru."}, 400)
+            return self._json({"tabs": restart.snapshot(HUB)})
         if name == "restore":
             # Co bylo otevřené před restartem. Čte se jednou, pak je soubor pryč.
             return self._json({"tabs": restart.take()})

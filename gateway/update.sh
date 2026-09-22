@@ -1,12 +1,21 @@
 #!/bin/bash
-# Noční aktualizace brány Claude Code Hub. Pouští ji claude-hub-update.timer
-# (nastaví gateway/install.sh) jako root, několikrát za noc.
+# Aktualizace brány Claude Code Hub. Pouští ji claude-hub-update.timer
+# (nastaví gateway/install.sh) jako root, každou hodinu.
 #
-# Když je venku novější vydání (značka vX.Y.Z na GitHubu) a zrovna nikdo
-# nepracuje, přepne zdroj na ně, pustí install.sh se stejnými parametry jako
-# při instalaci a restartuje bránu. Když někdo pracuje, počká na další pokus:
-# restart brány by mu utnul session i s Claude Code. Jak to dopadlo, zapíše do
-# /etc/claude-hub/update.json — prostor to ukáže v Nastavení → Aktualizace.
+# Ve dvou krocích, ať se nikomu nic neutne:
+#
+#  1. Nová verze se PŘIPRAVÍ hned, i když lidi pracují: vybalí se ze značky
+#     na GitHubu do vlastní složky /opt/claude-code-hub-verze/<verze>.
+#     Běžících prostorů se to nedotkne — každý jede ze své složky. Brána z té
+#     nejnovější pouští každý prostor, který startuje znovu, a v prostoru se
+#     ukáže „Na serveru je nová verze · Aktualizovat · Později". Aktualizovat
+#     = hub si uloží taby, prostor se restartuje a taby se vrátí i s
+#     konverzacemi (hub/static/hub.js, serverUpdate).
+#  2. Bránu samotnou (zdroj, install.sh, restart služby) přepne, až nepoběží
+#     žádný prostor: restart brány by prostory zastavil.
+#
+# Jak to dopadlo, zapíše do /etc/claude-hub/update.json (`ready` = nejnovější
+# připravená verze) — prostor to ukáže v Nastavení → Aktualizace.
 #
 # Ručně: claude-hub-update
 #
@@ -18,12 +27,17 @@ CONF=/etc/claude-hub/install.conf
 STATUS=/etc/claude-hub/update.json
 LOG=/var/log/claude-hub-update.log
 REPO_URL="https://github.com/jurapascal/claude-code-hub.git"
+# Připravené verze pro prostory. Musí sedět s gateway/workspace.py (VERZE_DIR).
+VERZE_DIR=/opt/claude-code-hub-verze
+# Kolik starších verzí nechat. Ta, ze které ještě jede nějaký prostor, se
+# nemaže nikdy — smazané soubory by mu zmizely pod rukama.
+VERZE_NECHAT=3
 
-# status <ok:true|false> <věta> [nová verze]
+# status <ok:true|false> <věta> [nová verze] [připravená verze]
 status() {
-    python3 - "$STATUS" "$1" "$2" "${3:-}" <<'EOF'
+    python3 - "$STATUS" "$1" "$2" "${3:-}" "${4:-}" <<'EOF'
 import json, os, sys, time
-path, ok, detail, version = sys.argv[1:5]
+path, ok, detail, version, ready = sys.argv[1:6]
 try:
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
@@ -32,6 +46,8 @@ except Exception:
 data.update({"checked_at": int(time.time()), "ok": ok == "true", "detail": detail})
 if version:
     data.update({"version": version, "updated_at": int(time.time())})
+if ready:
+    data.update({"ready": ready})
 tmp = path + ".tmp"
 with open(tmp, "w", encoding="utf-8") as fh:
     json.dump(data, fh, ensure_ascii=False)
@@ -39,6 +55,40 @@ os.chmod(tmp, 0o644)
 os.replace(tmp, path)
 EOF
     echo "$(date '+%F %T') $2" >>"$LOG"
+}
+
+# Vybalí značku do $VERZE_DIR/<verze>. Nejdřív vedle a přejmenováním — prostor
+# nesmí nikdy vidět napůl vybalenou složku; hotová má v sobě .hotovo.
+pripravit() {
+    local tag="$1" ver="${1#v}" cil tmp
+    cil="$VERZE_DIR/$ver"
+    [ -f "$cil/.hotovo" ] && return 0
+    install -d -m 755 "$VERZE_DIR"
+    tmp="$(mktemp -d "$VERZE_DIR/.tmp-$ver-XXXXXX")" || return 1
+    if ! git -C "$REPO_DIR" archive "$tag" | tar -x -C "$tmp"; then
+        rm -rf "$tmp"
+        return 1
+    fi
+    chmod -R a+rX,go-w "$tmp"
+    git -C "$REPO_DIR" rev-list -n 1 "$tag" >"$tmp/.hotovo"
+    rm -rf "$cil"
+    mv "$tmp" "$cil"
+    echo "$(date '+%F %T') připravena verze $ver" >>"$LOG"
+}
+
+# Starší verze pryč — kromě posledních $VERZE_NECHAT a těch, ze kterých ještě
+# jede prostor (je vidět v přípojných bodech jeho sandboxu).
+uklidit() {
+    local ver
+    [ -d "$VERZE_DIR" ] || return 0
+    rm -rf "$VERZE_DIR"/.tmp-* 2>/dev/null
+    for ver in $(ls -1 "$VERZE_DIR" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | head -n "-$VERZE_NECHAT"); do
+        if grep -qs " $VERZE_DIR/$ver " /proc/[0-9]*/mountinfo; then
+            continue
+        fi
+        rm -rf "${VERZE_DIR:?}/$ver"
+        echo "$(date '+%F %T') smazána stará verze $ver" >>"$LOG"
+    done
 }
 
 main() {
@@ -63,13 +113,26 @@ main() {
     fi
     current="$(git -C "$REPO_DIR" describe --tags --exact-match 2>/dev/null || true)"
     if [ "$current" = "$latest" ]; then
-        status true "Server má nejnovější verzi ${latest#v}."
+        # I verze, na které server už je, má mít svou složku — z ní brána
+        # pouští prostory (starší instalace ji ještě neměla).
+        pripravit "$latest" >>"$LOG" 2>&1 || true
+        uklidit
+        status true "Server má nejnovější verzi ${latest#v}." "" "${latest#v}"
         return 0
     fi
 
+    # 1. Připravit — běžícím prostorům nic nevadí. Stahuje se jen do .git,
+    #    pracovní strom zdroje (a tím brána) zůstává, jak je.
+    if ! { git -C "$REPO_DIR" fetch --tags --quiet origin && pripravit "$latest"; } >>"$LOG" 2>&1; then
+        status false "Novou verzi ${latest#v} se nepodařilo připravit — podrobnosti v $LOG."
+        return 1
+    fi
+    uklidit
+
+    # 2. Bránu přepnout, až neběží žádný prostor.
     running="$(claude-hub-admin sessions 2>/dev/null | grep -c '^claude-hub-' || true)"
     if [ "${running:-0}" -gt 0 ]; then
-        status true "Je venku ${latest#v}, ale běží prostorů: $running — aktualizace počká na další pokus."
+        status true "Verze ${latest#v} je připravená — prostory se na ni přepnou, až je lidi aktualizují. Brána se přepne, až nepoběží žádný prostor (teď běží: $running)." "" "${latest#v}"
         return 0
     fi
 
@@ -97,7 +160,7 @@ main() {
     sudo -u hub XDG_RUNTIME_DIR="/run/user/$uid" \
         DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
         systemctl --user restart claude-hub-gateway >>"$LOG" 2>&1
-    status true "Aktualizováno na ${latest#v}." "${latest#v}"
+    status true "Aktualizováno na ${latest#v}." "${latest#v}" "${latest#v}"
 }
 
 main "$@"

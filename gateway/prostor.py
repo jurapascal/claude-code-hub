@@ -39,7 +39,25 @@ UCET_RE = re.compile(r"^u[0-9]+$")
 # systemd-escape píše nepovolené znaky jako \xNN, proto i zpětné lomítko.
 UNIT_RE = re.compile(r"^claude-hub-[a-z0-9.\\x_-]+$")
 
-LIMITY = {"MemoryMax": "1500M", "MemorySwapMax": "0", "TasksMax": "256",
+
+
+def _pamet():
+    """Strop paměti prostoru podle stroje — stejně jako isolation.LIMITS
+    (45 % paměti, 1,5–6 GB). Tenhle skript běží jako root samostatně, proto
+    výpočet nesdílí: import z repa by rootovi pouštěl cizí kód."""
+    try:
+        with open("/proc/meminfo", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("MemTotal:"):
+                    mb = int(line.split()[1]) // 1024
+                    return f"{max(1500, min(6144, mb * 45 // 100))}M"
+    except (OSError, ValueError, IndexError):
+        pass
+    return "1500M"
+
+
+# Strop na celý prostor (všechny taby), viz isolation.LIMITS.
+LIMITY = {"MemoryMax": _pamet(), "MemorySwapMax": "0", "TasksMax": "1024",
           "CPUWeight": "100"}
 
 

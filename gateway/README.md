@@ -54,12 +54,24 @@ restartuje, jen když se něco změnilo (`--no-restart` ji nechá běžet). Úč
 pak spravují přes `claude-hub-admin` (obal nad `python3 -m gateway.admin` se
 správnými cestami).
 
-**Aktualizace jsou noční a automatické.** `claude-hub-update.timer` zkouší
-2:15–5:15, jestli je na GitHubu novější vydání. Když ano a nikdo nepracuje,
-přepne zdroj, pustí `install.sh` se stejnými parametry (`/etc/claude-hub/install.conf`)
-a restartuje bránu; když někdo pracuje, počká na další pokus. Výsledek je
-v `/etc/claude-hub/update.json` a v prostoru v Nastavení → Aktualizace —
-tlačítko Aktualizovat tam není, zdroj patří serveru.
+**Aktualizace jsou automatické a nikomu nic neutnou.** `claude-hub-update.timer`
+se každou hodinu podívá, jestli je na GitHubu novější vydání. Když ano:
+
+1. **Hned ho připraví** — vybalí značku do `/opt/claude-code-hub-verze/<verze>`.
+   Každý prostor jede ze své složky (brána ji do sandboxu přiváže na místo
+   `/opt/claude-code-hub`), takže běžícím prostorům se nic nevymění pod rukama.
+2. **Lidem v prostoru to nabídne**: „Na serveru je nová verze · Aktualizovat ·
+   Později". Aktualizovat uloží taby i rozepsané zprávy, brána prostor
+   restartuje už na nové verzi a taby se vrátí, Claude v nich pokračuje
+   v konverzaci. Když Claude zrovna pracuje, počká se, až doběhne. Později =
+   připomene se za hodinu (a v hlavičce svítí „Nová verze").
+3. **Bránu samotnou přepne**, až nepoběží žádný prostor: přepne zdroj, pustí
+   `install.sh` se stejnými parametry (`/etc/claude-hub/install.conf`)
+   a restartuje ji.
+
+Starší verze se mažou (nechávají se tři poslední a každá, ze které ještě jede
+prostor). Výsledek je v `/etc/claude-hub/update.json` a v prostoru v Nastavení
+→ Aktualizace.
 
 **Claude přes klíč API.** `claude-hub-admin apikey set` uloží společný klíč
 (ověří ho u Anthropicu) a prostory na `central` ho při startu dostanou jako
@@ -417,7 +429,14 @@ Doporučení pro tuhle konfiguraci:
 
 - **nejvýš 4 současné session**, další čekají
 - **uspat session po 30 minutách bez psaní** — největší jediná úspora
-- **1,5 GB na session** (`MemoryMax` + `MemorySwapMax=0`)
+- **strop na prostor, ne na session** (`MemoryMax` + `MemorySwapMax=0`):
+  prostor je hub se všemi taby a jeden tab s Claude Code je i s MCP servery
+  kolem **850 MB a 75 procesů** (naměřeno 22. 9. 2026). Pevných 1,5 GB tak
+  stačilo sotva na jeden tab a jádro zabíjelo Clauda uprostřed práce. Brána
+  proto bere **45 % paměti stroje** (1,5–6 GB; `HUB_GW_MEMORY`), **1024 úloh**
+  (`HUB_GW_TASKS`) a všechny prostory dohromady drží pod **85 % stroje**
+  (`install.sh` → `user@<hub>.service`). Když ho jádro přece zabije, tab to
+  napíše a Claude v konverzaci pokračuje (`agent-wrapper.sh`).
 - **odkládací soubor 2–4 GB**. Bez něj sáhne OOM killer po tom, co má nejvíc
   paměti — tedy nejspíš po databázi, ne po session, která to způsobila.
 - **ClamAV v mailu si vezme dalších ~1,3 GB.** Když ho chceš, počítej se dvěma

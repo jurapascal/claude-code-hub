@@ -34,6 +34,10 @@
   const WORKING = /esc to interrupt/i;
   const SPINNER = /^\s*[·✢*✶✻✽∗]\s+([A-Z][A-Za-z-]+)…(?:\s*\((.*))?\s*$/;
   const WORK_ROWS = 14;       // spinner je nad vstupním polem, i víceřádkovým
+  // Wrapper to napíše, když Clauda něco zabije — nejčastěji jádro, kterému
+  // došla paměť (agent-wrapper.sh). Ve čtení je terminál schovaný, tak se
+  // z toho udělá hláška.
+  const KILLED = /Claude Code byl násilně ukončen/;
 
   /* Jak vypadá spodek Claude Code, když jen čeká na zadání (naměřeno, ne
      odhadnuto):
@@ -588,7 +592,16 @@
     /* Enter se posílá zvlášť a s odstupem: slepený s textem ho Claude Code
        přečte jako nový řádek, ne jako odeslání. (Stejný důvod jako u tlačítek
        rychlých akcí.) */
-    function submit(text) {
+    /* Čtení ukáže odeslanou zprávu hned — dřív, než ji Claude Code zapíše
+       do přepisu, a když zrovna pracuje, i s tím, že čeká ve frontě. Kód
+       z přihlášení se neukazuje: je to jednorázové heslo. */
+    function ohlas(body, opts, stav) {
+      if (!io.odeslano || codePrompt) return;
+      io.odeslano({text: opts.text !== undefined ? opts.text : body,
+                   images: (opts.atts || []).filter((p) => IMG_EXT.test(p))}, stav);
+    }
+
+    function submit(text, opts = {}) {
       const body = text.replace(/\r/g, '');
       if (!body.trim()) return;
       /* Tab právě vznikl a Claude Code se ještě rozjíždí. Co by se teď poslalo
@@ -596,10 +609,16 @@
          odejde sama, jakmile se objeví prompt. */
       if (tab.cteni && (!tab.id || !everIdle)) {
         cekaZprava = cekaZprava ? cekaZprava + '\n' + body : body;
-        if (io.notice) io.notice('Claude Code ještě startuje — zpráva odejde, jakmile naběhne.');
+        ohlas(body, opts, 'start');
+        if (io.notice && !io.odeslano) io.notice('Claude Code ještě startuje — zpráva odejde, jakmile naběhne.');
         return;
       }
       if (!tab.id) return;
+      if (opts.zeStartu) {
+        if (io.odeslano) io.odeslano(null, 'odesila');
+      } else {
+        ohlas(body, opts, 'odesila');
+      }
       // Víceřádkový text musí dorazit jako vložení, jinak by se každý řádek
       // odeslal zvlášť. Jednořádkový jde rovnou — bez uvozovacích sekvencí.
       toPty(body.includes('\n') ? '\x1b[200~' + body + '\x1b[201~' : body);
@@ -639,7 +658,7 @@
       const text = files ? input.value.trim() : input.value;
       const body = files ? (text ? files + ' ' + text : files) : text;
       if (!body.trim()) return;
-      submit(body);
+      submit(body, {text: input.value.trim(), atts: atts.slice()});
       input.value = '';
       atts.length = 0;
       renderAtts();
@@ -1411,7 +1430,7 @@
           odchazi = true;
           const zprava = cekaZprava;
           cekaZprava = '';
-          submit(zprava);
+          submit(zprava, {zeStartu: true});
           odchazi = false;
         } else if (idle) {
           clearTimeout(cekaTimer);
@@ -1467,7 +1486,17 @@
     /* Co Claude zrovna dělá — pro čtení, kde terminál není vidět a jinak by
        se nepoznalo, jestli pracuje, nebo čeká. Hlásí se jen změna. */
     let pracSig = '';
+    let zabitVidet = false;
     function sledujPraci() {
+      if (io.upozorni && AG.full) {
+        const zabit = visibleBottom(term, WORK_ROWS).some((l) => KILLED.test(l));
+        if (zabit && !zabitVidet) {
+          io.upozorni('Claude Code v tomhle tabu spadl — nejspíš došla paměť (na serveru má ' +
+                      'prostor strop pro všechny taby dohromady). Konverzace je uložená; ' +
+                      'rozdělanou práci mu zadej znovu a nepotřebné taby zavři.');
+        }
+        zabitVidet = zabit;
+      }
       if (!io.prace || !AG.full) return;
       let stav = {on: false};
       if (!tab.exited) {
@@ -1649,6 +1678,9 @@
         return true;
       },
       focus: () => { if (shown) input.focus(); },
+      // Rozepsaná zpráva — přežije restart prostoru při aktualizaci (hub.js).
+      draft: () => input.value,
+      setDraft: (text) => { if (!input.value) { input.value = text; autogrow(); } },
       visible: () => shown,
       hide: () => { hiddenByUser = true; apply(true); },
       release: () => {
