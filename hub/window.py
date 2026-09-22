@@ -139,6 +139,8 @@ def _open_webkit(url, versions):
     except TypeError:
         pass  # jiná verze WebKitu — okno pojede i bez toho, jen bez odkazů ven
 
+    _follow_theme(view, Gtk)
+
     if gtk_ver == "4.0":
         Gtk.init()
         window = Gtk.Window()
@@ -162,6 +164,40 @@ def _open_webkit(url, versions):
     window.connect("destroy", Gtk.main_quit)
     window.show_all()
     return Gtk.main
+
+
+def _follow_theme(view, Gtk):
+    """GTK motiv okna podle motivu stránky.
+
+    Rozbalený <select> kreslí WebKitGTK jako GTK nabídku, a ta se řídí motivem
+    GTK, ne stránkou — v tmavém hubu se tak otevíral bílý seznam. Stránka při
+    každé změně motivu pošle `hubTheme` ("dark"/"light", hub.js applyTheme)
+    a okno si podle toho přepne preferenci tmavého motivu. Jiná zpráva než
+    tyhle dvě se zahodí.
+    """
+    manager = view.get_user_content_manager()
+
+    def received(_manager, message):
+        # WebKit2 4.x posílá JavascriptResult, WebKit 6 rovnou JSCValue.
+        value = message.get_js_value() if hasattr(message, "get_js_value") else message
+        try:
+            theme = value.to_string()
+        except Exception:
+            return
+        if theme not in ("dark", "light"):
+            return
+        settings = Gtk.Settings.get_default()
+        if settings is not None:
+            settings.set_property("gtk-application-prefer-dark-theme", theme == "dark")
+
+    try:
+        manager.connect("script-message-received::hubTheme", received)
+        try:
+            manager.register_script_message_handler("hubTheme")
+        except TypeError:
+            manager.register_script_message_handler("hubTheme", None)   # WebKit 6
+    except Exception:
+        pass  # starší WebKit — seznam zůstane podle systému, stránka jede dál
 
 
 def open_window(url, prefer=""):

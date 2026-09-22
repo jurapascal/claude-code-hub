@@ -140,6 +140,14 @@ function applyTheme() {
     '--chart', onServer() ? p.CHART_CLOUD : p.CHART);
   $('btn-theme').firstElementChild.firstElementChild
     .setAttribute('href', DARK ? '#i-moon' : '#i-sun');
+  // Rozbalené <select>, posuvníky a další ovládací prvky kreslí prohlížeč sám —
+  // bez tohohle zůstaly v tmavém režimu světlé.
+  document.documentElement.style.colorScheme = DARK ? 'dark' : 'light';
+  // Okno appky na Linuxu (WebKitGTK) kreslí rozbalený seznam jako GTK nabídku;
+  // ta se řídí GTK motivem, tak se mu řekne, který je (hub/window.py).
+  try {
+    window.webkit.messageHandlers.hubTheme.postMessage(DARK ? 'dark' : 'light');
+  } catch (_) { /* jiný prohlížeč — tam stačí color-scheme */ }
   // Každý tab má svou barvu — firemní je fialový i vedle modrého osobního.
   for (const tab of TABS) tab.term.options.theme = termTheme(tab);
 }
