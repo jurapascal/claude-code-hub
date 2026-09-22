@@ -29,6 +29,7 @@
     ['agenti',     'AI agenti', 'i-hub',      () => agenti()],
     ['pamet',      'Paměť',     'i-book',     () => pamet()],
     ['ucet',       'Účet',      'i-user',     () => ucet()],
+    ['hlas',       'Hlas',      'i-mic',      () => hlas()],
     ['napojeni',   'Napojení',  'i-hub',      () => napojeni()],   // MCP — Claude Code
     ['aktualizace','Aktualizace', 'i-up',     () => aktualizace()],
     ['logy',       'Logy',      'i-status',   () => logy(), 'dev'],
@@ -1437,6 +1438,78 @@
       status.className = 'set-status ' + (s.ok === false ? 'warn' : 'ok');
       status.textContent = `Naposledy ${when}: ${s.detail || ''}`;
     }).catch(() => { status.textContent = ''; });
+    return box;
+  }
+
+  /* Diktování a předčítání česky (hub/hlas.py, hlas.js). Na počítači se
+     instaluje odsud, na serveru ho připravuje správce pro všechny. */
+  function hlas() {
+    const box = section('Hlas',
+      'Diktování (mikrofon v poli na psaní) a předčítání Claudových odpovědí — ' +
+      'česky. Přepis dělá Whisper a hlas Piper přímo na ' +
+      (state.config && state.config.gateway_user ? 'serveru' : 'tomhle počítači') +
+      '; nic neodchází ven.');
+    const status = el('div', 'set-status', 'Zjišťuju…');
+    box.appendChild(status);
+    const btns = el('div', 'onb-btns');
+    box.appendChild(btns);
+
+    const row = el('label', 'onb-row');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = !!(window.HubHlas && HubHlas.auto.get());
+    cb.onchange = () => { if (window.HubHlas) HubHlas.auto.set(cb.checked); };
+    row.appendChild(cb);
+    row.appendChild(el('span', null,
+      'Předčítat nové odpovědi samy (jen v tabu, na který se díváš; platí pro tohle zařízení)'));
+
+    let poll = null;
+    async function nacti() {
+      let s;
+      try { s = await io.api('hlas'); } catch (_) { s = {ready: false}; }
+      btns.textContent = '';
+      if (s.ready) {
+        status.className = 'set-status ok';
+        status.textContent = 'Hlas je připravený.';
+        if (!row.parentNode) box.appendChild(row);
+        const test = el('button', 'actionbtn', 'Vyzkoušet předčítání');
+        test.onclick = () => window.HubHlas && HubHlas.speak(
+          'Ahoj, tady je hub. Tohle je český hlas, kterým ti budu číst odpovědi.', null, io.toast);
+        btns.appendChild(test);
+        if (window.HubHlas) HubHlas.refresh();
+        return;
+      }
+      if (row.parentNode) row.remove();
+      const job = s.job || {};
+      if (job.running || s.installing) {
+        status.className = 'set-status';
+        status.textContent = 'Instaluju: ' + (job.step || 'začínám…');
+        clearTimeout(poll);
+        poll = setTimeout(nacti, 2000);
+        return;
+      }
+      if (job.done && job.result && job.result.ok === false) {
+        status.className = 'set-status warn';
+        status.textContent = 'Instalace se nepovedla: ' + (job.result.detail || '');
+      } else if (!s.can_install) {
+        status.className = 'set-status warn';
+        status.textContent = 'Na serveru hlas ještě není — nainstaluje se s další ' +
+          'aktualizací serveru (claude-hub-update).';
+        return;
+      } else {
+        status.className = 'set-status';
+        status.textContent = 'Hlas tu zatím není. Instalace stáhne asi 1 GB ' +
+          '(knihovny a modely) a zabere pár minut.';
+      }
+      const go = el('button', 'actionbtn', 'Nainstalovat hlas');
+      go.onclick = async () => {
+        go.disabled = true;
+        try { await io.api('hlas-install', {}); } catch (err) { io.toast(err.message); }
+        nacti();
+      };
+      btns.appendChild(go);
+    }
+    nacti();
     return box;
   }
 

@@ -24,6 +24,7 @@ import posixpath
 import re
 import secrets
 import string
+import subprocess
 import struct
 import threading
 import time
@@ -511,6 +512,26 @@ class Handler(BaseHTTPRequestHandler):
 
     def _api_inner(self, name, query, payload=None):
         payload = payload or {}
+        if name.startswith("hlas"):
+            # Diktování a předčítání (hub/hlas.py) — česky, na tomhle stroji.
+            from . import hlas
+            if name == "hlas":
+                return self._json({**hlas.state(), "job": core.job_state("hlas")})
+            if self.command != "POST":
+                return self._json({"error": "Jen POST."}, 405)
+            if name == "hlas-install":
+                return self._json({"ok": hlas.start_install()})
+            try:
+                if name == "hlas-prepis":
+                    wav = base64.b64decode(str(payload.get("wav") or ""), validate=False)
+                    return self._json({"text": hlas.prepis(wav)})
+                if name == "hlas-rec":
+                    return self._send(200, hlas.rec(payload.get("text")), "audio/wav")
+            except (ValueError, RuntimeError) as exc:
+                return self._json({"error": str(exc)}, 400)
+            except subprocess.TimeoutExpired:
+                return self._json({"error": "Hlas to nestihl — zkus kratší kus."}, 504)
+            return self._json({"error": "Neznámý požadavek."}, 404)
         if name == "mcp-tool":
             # Napojení z appky Claude: volá jen brána (gateway/mcp.py) po
             # ověření přihlášení a oprávnění. Z prohlížeče sem brána nepustí.

@@ -140,6 +140,7 @@ def _open_webkit(url, versions):
         pass  # jiná verze WebKitu — okno pojede i bez toho, jen bez odkazů ven
 
     _follow_theme(view, Gtk)
+    _allow_microphone(view, WebKit, url)
 
     if gtk_ver == "4.0":
         Gtk.init()
@@ -164,6 +165,43 @@ def _open_webkit(url, versions):
     window.connect("destroy", Gtk.main_quit)
     window.show_all()
     return Gtk.main
+
+
+def _allow_microphone(view, WebKit, url):
+    """Mikrofon pro diktování (hlas.js). WebKitGTK bez obsluhy každou žádost
+    o mikrofon tiše zamítne. Povoluje se jen mikrofon (ne kamera, ne poloha)
+    a jen stránce hubu — okno nic jiného neotevírá, ale kdyby se tam přece
+    jen něco dostalo (prostor na serveru je jiná adresa), zeptá se zamítnutím."""
+    try:
+        view.get_settings().set_enable_media_stream(True)
+    except Exception:
+        return                      # starý WebKit — diktování tu nepůjde
+
+    from urllib.parse import urlsplit
+    # Stránka hubu, a brána, kterou okno ukazuje jako prostor na serveru.
+    allowed = {urlsplit(url).netloc}
+    gw = str(core.CONFIG.get("gw_server") or "")
+    if gw.startswith("https://"):
+        allowed.add(urlsplit(gw).netloc)
+
+    def request(_view, req):
+        wanted = getattr(WebKit, "UserMediaPermissionRequest", None)
+        if not (wanted and isinstance(req, wanted)):
+            return False            # ostatní žádosti výchozí cestou (zamítnout)
+        try:
+            is_video = req.get_property("is-for-video-device")
+        except Exception:
+            is_video = True
+        if is_video or urlsplit(view.get_uri() or "").netloc not in allowed:
+            req.deny()
+        else:
+            req.allow()
+        return True
+
+    try:
+        view.connect("permission-request", request)
+    except TypeError:
+        pass
 
 
 def _follow_theme(view, Gtk):

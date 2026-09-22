@@ -116,7 +116,7 @@
   /* Proud bloků. Stejný pro živý tab i pro okno se starou konverzací.
      `imageUrl` převede cestu k obrázku z hub-images na adresu, ze které ho
      stránka smí načíst (/api/image). */
-  function flow(mount, imageUrl, {historie = false, openLink = null} = {}) {
+  function flow(mount, imageUrl, {historie = false, openLink = null, notice = null, zive = null} = {}) {
     /* Odkaz v Markdownu je <a> bez href (vault.js) — sám nikam nevede,
        otevřít ho musí hub. V okně appky by holý odkaz stejně nic neudělal. */
     mount.addEventListener('click', (ev) => {
@@ -505,6 +505,12 @@
         if (html) box.innerHTML = html;
         else box.textContent = b.text;
         mount.appendChild(box);
+        // Přečíst nahlas (hlas.js) — tlačítko v rohu bubliny. Nová odpověď
+        // v tabu, na který se člověk dívá, se se zapnutým předčítáním čte sama.
+        if (global.HubHlas && b.text) {
+          global.HubHlas.tlacitko(box, b.text, notice);
+          if (zive && zive()) global.HubHlas.speak(b.text, null, notice);
+        }
         return;
       }
       if (b.kind === 'tool') {
@@ -677,7 +683,13 @@
     tab.pane.appendChild(root);
     tab.pane.classList.add('cteni-on');
 
-    const proud = flow(mount, io.imageUrl, {openLink: io.openLink});
+    /* Předčítá se jen to, co přibude naživo — ne historie při otevření tabu. */
+    let nacteno = false;
+    const proud = flow(mount, io.imageUrl, {
+      openLink: io.openLink, notice: io.notice,
+      zive: () => nacteno && !!global.HubHlas && global.HubHlas.auto.get() &&
+                  (!io.aktivni || io.aktivni()),
+    });
     const data = zdroj(io, () => 'id=' + encodeURIComponent(tab.id || ''));
     let timer = null, prazdnych = 0, zivy = true, ceka = false;
 
@@ -730,6 +742,7 @@
         prazdnych++;                 // server chvilku nemohl — zkusí se dál
       } finally {
         ceka = false;
+        if (data.hotovo) nacteno = true;
         if (zivy) {
           clearTimeout(timer);
           // Tab, na který není vidět, se doptává zvolna — přibýt v něm může
@@ -866,7 +879,8 @@
     setTimeout(() => pole.focus(), 0);
 
     const scroll = q('.cteni-scroll');
-    const proud = flow(q('.cteni-flow'), io.imageUrl, {historie: true, openLink: io.openLink});
+    const proud = flow(q('.cteni-flow'), io.imageUrl, {historie: true, openLink: io.openLink,
+                                                        notice: io.notice});
     const data = zdroj(io, 'chat=' + encodeURIComponent(chat.id));
 
     (async () => {

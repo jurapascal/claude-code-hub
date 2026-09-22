@@ -36,6 +36,11 @@ async function api(path, body) {
   return res.json();
 }
 
+// Diktování a předčítání (hlas.js) jdou přes API hubu — na počítači i na serveru.
+if (window.HubHlas) {
+  HubHlas.init({api, url: (name) => `/api/${name}?t=${encodeURIComponent(TOKEN)}`});
+}
+
 function send(msg) {
   if (WS && WS.readyState === WebSocket.OPEN) WS.send(JSON.stringify(msg));
 }

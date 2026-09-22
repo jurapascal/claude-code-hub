@@ -479,6 +479,25 @@ setup_company_skills() {
     fi
 }
 
+setup_hlas() {
+    step "Hlas (diktování a předčítání česky)"
+    # Whisper a Piper jednou pro všechny prostory, pod /usr — sandbox ho vidí
+    # jen ke čtení a nikdo si ho nestahuje zvlášť (hub/hlas.py). Hotová složka
+    # se přeskočí; poprvé se stahuje asi 1 GB.
+    local dir=/usr/local/lib/claude-hub-hlas
+    if python3 -c "import sys; sys.path.insert(0, '$REPO_DIR'); from hub import hlas; sys.exit(0 if hlas._ready('$dir') else 1)" 2>/dev/null; then
+        ok "připravený ($dir)"
+        return
+    fi
+    info "instaluju do $dir (poprvé pár minut)"
+    if (cd "$REPO_DIR" && python3 -m hub.hlas install "$dir") >>"$LOG" 2>&1; then
+        ok "připravený ($dir)"
+    else
+        # Bez hlasu brána jede dál — jen v prostorech nebude mikrofon a 🔊.
+        warn "hlas se nenainstaloval — podrobnosti v $LOG"
+    fi
+}
+
 # Míří doména na tenhle server? Bez toho Let's Encrypt certifikát nevydá.
 dns_points_here() {
     local here v4 v6
@@ -778,6 +797,7 @@ main() {
     write_conf
     install_admin_tool
     setup_company_skills
+    setup_hlas
     setup_service
     setup_updater
     setup_ucty

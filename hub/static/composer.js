@@ -477,6 +477,7 @@
                   title="Režim oprávnění (Shift+Tab) — normální / auto-accept / plán / auto / bypass">Režim: <span class="val"></span> ▾</button>
           </div>
           <button class="composer-chip ghost" data-act="esc" title="Přeruší, co Claude právě dělá (Esc)">Esc</button>
+          <button class="composer-mic" title="Diktovat česky — klikni, mluv, klikni znovu" hidden>${icon('i-mic')}</button>
           <button class="composer-send" title="Odeslat (Enter)">${icon('i-up')}</button>
         </div>
       </div>
@@ -504,6 +505,8 @@
     tab.pane.insertBefore(askRoot, root);
 
     const input = root.querySelector('.composer-input');
+    // Diktování česky (hlas.js) — tlačítko se ukáže, jen když je hlas nainstalovaný.
+    if (global.HubHlas) global.HubHlas.mic(root.querySelector('.composer-mic'), input, {notice: io.notice});
     const attBox = root.querySelector('.composer-atts');
     const picker = root.querySelector('input[type=file]');
     const modelBtn = root.querySelector('[data-act=model]');
