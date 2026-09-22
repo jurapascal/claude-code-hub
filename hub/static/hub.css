@@ -2671,3 +2671,8 @@ html:has(> body.is-touch), body.is-touch { height: var(--app-h, 100%); }
 .app-barva { width: 30px; height: 30px; border-radius: 50%; cursor: pointer;
   border: 2px solid var(--border); }
 .app-barva:hover { border-color: var(--fg-bright); }
+
+/* Dlaždice „Vlastní obrázek“ mezi ikonami (settings.js appka()). */
+.app-vlastni { width: auto; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: var(--accent); border-style: dashed; border-color: var(--accent); }
+.app-vlastni .ico { width: 18px; height: 18px; }

@@ -1086,6 +1086,8 @@ function placeName() {
 function renderBranding() {
   const app = STATE.app || {};
   const name = app.name || 'Claude Code';
+  // Titulek = název okna appky (Chrome v režimu appky, záložka prohlížeče).
+  document.title = app.name ? app.name : 'Claude Code ' + placeName();
   const home = $('btn-home');
   if (home) {
     home.querySelector('strong').textContent = name;
@@ -1114,6 +1116,8 @@ function renderBranding() {
   for (const link of document.querySelectorAll('link[rel="icon"]')) {
     if (app.icon) link.href = '/app-ikona/32.png?v=' + app.icon;
   }
+  // Okno appky na počítači (WebKitGTK) si název a ikonu přečte znovu hned.
+  try { window.webkit.messageHandlers.hubApp.postMessage('zmena'); } catch (_) { /* prohlížeč */ }
 }
 
 function renderPlace() {

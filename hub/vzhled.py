@@ -101,10 +101,13 @@ def adresy():
     Na serveru přes bránu s kódem účtu, na počítači z hubu samotného."""
     pid = str(core.CONFIG.get("pwa_id") or "")
     v = verze()
+    # Adresa manifestu se nemění (bez verze): Chrome u nainstalované appky
+    # hlídá manifest na téže adrese a novou ikonu či název převezme sám —
+    # změnu pozná podle adres ikon, ty nesou verzi.
     if core.CONFIG.get("gateway_user") and pid:
-        return {"manifest": f"/manifest.webmanifest?u={pid}&v={v}",
+        return {"manifest": f"/manifest.webmanifest?u={pid}",
                 "touch": f"/app-ikona/{pid}/192.png?v={v}"}
-    return {"manifest": f"/manifest.webmanifest?v={v}", "touch": f"/app-ikona/192.png?v={v}"}
+    return {"manifest": "/manifest.webmanifest", "touch": f"/app-ikona/192.png?v={v}"}
 
 
 def uprav_stranku(page):

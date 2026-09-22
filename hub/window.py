@@ -141,10 +141,13 @@ def _open_webkit(url, versions):
 
     _follow_theme(view, Gtk)
     _allow_microphone(view, WebKit, url)
+    holder = {}                    # okno vzniká až níž, zpráva přijde později
+    _follow_app(view, holder)
 
     if gtk_ver == "4.0":
         Gtk.init()
         window = Gtk.Window()
+        holder["window"] = window
         window.set_default_size(1360, 860)
         window.set_title(_app_title())
         window.set_child(view)
@@ -155,6 +158,7 @@ def _open_webkit(url, versions):
 
     Gtk.init([])
     window = Gtk.Window(title=_app_title())
+    holder["window"] = window
     window.set_default_size(1360, 860)
     icon = _app_icon()
     if icon:
@@ -166,6 +170,34 @@ def _open_webkit(url, versions):
     window.connect("destroy", Gtk.main_quit)
     window.show_all()
     return Gtk.main
+
+
+def _follow_app(view, holder):
+    """Uložený název a ikona appky (Nastavení → Vzhled) platí v okně hned,
+    ne až po dalším spuštění: stránka pošle `hubApp` a okno si je přečte
+    znovu. Obsah zprávy se nepoužije — název i ikonu bere okno z hubu."""
+    manager = view.get_user_content_manager()
+
+    def received(*_args):
+        window = holder.get("window")
+        if window is None:
+            return
+        try:
+            window.set_title(_app_title())
+            icon = _app_icon()
+            if icon and hasattr(window, "set_icon_from_file"):
+                window.set_icon_from_file(icon)
+        except Exception:
+            pass
+
+    try:
+        manager.connect("script-message-received::hubApp", received)
+        try:
+            manager.register_script_message_handler("hubApp")
+        except TypeError:
+            manager.register_script_message_handler("hubApp", None)   # WebKit 6
+    except Exception:
+        pass
 
 
 def _app_title():

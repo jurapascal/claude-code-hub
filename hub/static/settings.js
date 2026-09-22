@@ -205,6 +205,13 @@
     box.appendChild(radek);
 
     const emo = el('div', 'app-grid');
+    // Vlastní obrázek na prvním místě — fotka rodiny, kreslený obrázek, logo.
+    const vlastni = el('button', 'app-emoji app-vlastni');
+    vlastni.type = 'button';
+    vlastni.title = 'Nahrát vlastní obrázek (fotku, logo…)';
+    vlastni.innerHTML = '<svg class="ico"><use href="#i-image"/></svg><span>Vlastní</span>';
+    vlastni.onclick = () => soubor.click();
+    emo.appendChild(vlastni);
     for (const e of EMOJI) {
       const b = el('button', 'app-emoji', e);
       b.type = 'button';
@@ -240,6 +247,7 @@
 
     const btns = el('div', 'onb-btns');
     const nahrat = el('button', 'actionbtn', 'Nahrát vlastní obrázek');
+    nahrat.title = 'Fotka nebo obrázek z počítače či telefonu — ořízne se na čtverec';
     nahrat.onclick = () => soubor.click();
     const ulozit = el('button', 'actionbtn primary', 'Uložit');
     const vychozi = el('button', 'actionbtn', 'Vrátit výchozí');
@@ -295,7 +303,8 @@
         await io.api('app-vzhled', payload);
         await io.refreshState();
         state = await io.api('state');
-        io.toast('Uloženo. Na ploše telefonu se nová ikona ukáže, až appku přidáš znovu.');
+        io.toast('Uloženo. V appce platí hned. Ikonu na ploše Android obnoví sám ' +
+                 '(při dalším spuštění, nejpozději do dne), na iPhonu appku přidej na plochu znovu.');
         render();
       } catch (err) {
         io.toast(err.message);
