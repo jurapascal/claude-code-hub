@@ -20,21 +20,26 @@ def prepis(model_dir):
     from faster_whisper import WhisperModel
 
     raw = sys.stdin.buffer.read()
-    with wave.open(io.BytesIO(raw)) as wav:
-        rate = wav.getframerate()
-        channels = wav.getnchannels()
-        width = wav.getsampwidth()
-        frames = wav.readframes(wav.getnframes())
-    if width != 2:
-        raise SystemExit("Čekám 16bitové WAV.")
-    audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
-    if channels > 1:
-        audio = audio.reshape(-1, channels).mean(axis=1)
-    if rate != 16000:
-        # Prohlížeč nahrává na 16 kHz sám; kdyby ne, převzorkuje se tady.
-        n = int(len(audio) * 16000 / rate)
-        audio = np.interp(np.linspace(0, len(audio) - 1, n),
-                          np.arange(len(audio)), audio).astype(np.float32)
+    if raw[:4] == b"RIFF":
+        with wave.open(io.BytesIO(raw)) as wav:
+            rate = wav.getframerate()
+            channels = wav.getnchannels()
+            width = wav.getsampwidth()
+            frames = wav.readframes(wav.getnframes())
+        if width != 2:
+            raise SystemExit("Čekám 16bitové WAV.")
+        audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+        if channels > 1:
+            audio = audio.reshape(-1, channels).mean(axis=1)
+        if rate != 16000:
+            n = int(len(audio) * 16000 / rate)
+            audio = np.interp(np.linspace(0, len(audio) - 1, n),
+                              np.arange(len(audio)), audio).astype(np.float32)
+    else:
+        # Nahrávka z MediaRecorderu (webm/ogg s Opusem, mp4 s AAC na iPhonu):
+        # rozbalí a na 16 kHz převzorkuje PyAV (ffmpeg), který faster-whisper má.
+        from faster_whisper.audio import decode_audio
+        audio = decode_audio(io.BytesIO(raw), sampling_rate=16000)
 
     model = WhisperModel(model_dir, device="cpu", compute_type="int8",
                          local_files_only=True)

@@ -45,45 +45,88 @@
     return ctx;
   }
 
+  /* Nahrávání. Přednost má MediaRecorder — nativní nahrávání prohlížeče
+     (Chrome, Firefox i na Androidu, Safari): nejmíň věcí, které se můžou
+     pokazit, formát (webm/ogg/mp4) rozbalí server. Kde ho prohlížeč nemá,
+     nahrává se přes Web Audio do WAV. Měřič hlasitosti je jen ozdoba —
+     když selže, nahrává se dál. */
+  const TYPY = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm'];
+
   async function nahravat(ctx, naUroven) {
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         // Potlačení ozvěny je pro hovor, ne pro diktování — hlas jím zbytečně
         // trpí. Šum a hlasitost prohlížeč srovnat smí.
-        audio: {channelCount: 1, echoCancellation: false, noiseSuppression: true,
-                autoGainControl: true}});
+        audio: {echoCancellation: false, noiseSuppression: true, autoGainControl: true}});
     } catch (err) {
       ctx.close().catch(() => {});
       throw err;
     }
-    if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
-    const src = ctx.createMediaStreamSource(stream);
-    const proc = ctx.createScriptProcessor(4096, 1, 1);
-    const kusy = [];
-    proc.onaudioprocess = (ev) => {
-      const data = ev.inputBuffer.getChannelData(0);
-      kusy.push(new Float32Array(data));
-      if (naUroven) {
+    if (ctx.state !== 'running') await ctx.resume().catch(() => {});
+
+    let src = null, merak = null;
+    try {
+      src = ctx.createMediaStreamSource(stream);
+      const an = ctx.createAnalyser();
+      an.fftSize = 1024;
+      src.connect(an);
+      const d = new Float32Array(an.fftSize);
+      merak = setInterval(() => {
+        an.getFloatTimeDomainData(d);
         let sum = 0;
-        for (let i = 0; i < data.length; i += 16) sum += data[i] * data[i];
-        naUroven(Math.min(1, Math.sqrt(sum / (data.length / 16)) * 10));
-      }
-    };
-    src.connect(proc);
-    proc.connect(ctx.destination);
+        for (let i = 0; i < d.length; i += 4) sum += d[i] * d[i];
+        if (naUroven) naUroven(Math.min(1, Math.sqrt(sum / (d.length / 4)) * 10));
+      }, 80);
+    } catch (_) { src = null; }
+
     const konec = () => {
-      try { proc.disconnect(); src.disconnect(); } catch (_) { /* už je */ }
+      clearInterval(merak);
+      try { if (src) src.disconnect(); } catch (_) { /* už je */ }
       stream.getTracks().forEach((t) => t.stop());
       ctx.close().catch(() => {});
     };
+
+    if (global.MediaRecorder) {
+      try {
+        const typ = TYPY.find((t) => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t));
+        const mr = new MediaRecorder(stream, typ ? {mimeType: typ} : undefined);
+        const casti = [];
+        let bajtu = 0;
+        mr.ondataavailable = (ev) => {
+          if (ev.data && ev.data.size) { casti.push(ev.data); bajtu += ev.data.size; }
+        };
+        mr.start(250);
+        return {
+          stop: () => new Promise((hotovo, chyba) => {
+            mr.onstop = async () => {
+              konec();
+              try {
+                const blob = new Blob(casti, {type: mr.mimeType || typ || 'audio/webm'});
+                hotovo(new Uint8Array(await blob.arrayBuffer()));
+              } catch (err) { chyba(err); }
+            };
+            try { mr.stop(); } catch (err) { konec(); chyba(err); }
+          }),
+          zrusit() { try { mr.stop(); } catch (_) { /* už stojí */ } konec(); },
+          get vzorku() { return bajtu; },
+        };
+      } catch (_) { /* tenhle prohlížeč MediaRecorder nemá pořádně — Web Audio */ }
+    }
+
+    if (!src) src = ctx.createMediaStreamSource(stream);
+    const proc = ctx.createScriptProcessor(4096, 1, 1);
+    const kusy = [];
+    proc.onaudioprocess = (ev) => kusy.push(new Float32Array(ev.inputBuffer.getChannelData(0)));
+    src.connect(proc);
+    proc.connect(ctx.destination);
     return {
       stop() {
+        try { proc.disconnect(); } catch (_) { /* už je */ }
         konec();
         return wav16(kusy, ctx.sampleRate);
       },
-      zrusit: konec,
-      // Kolik vzorků už přišlo — podle toho se pozná mikrofon, který nic nedává.
+      zrusit() { try { proc.disconnect(); } catch (_) { /* už je */ } konec(); },
       get vzorku() { let n = 0; for (const k of kusy) n += k.length; return n; },
     };
   }
@@ -182,17 +225,18 @@
 
     async function hotovo() {
       const r = rec;
+      const delka = (Date.now() - start) / 1000;
       uklid();
       if (!r) return;
-      const data = await r.stop();
-      if (data.length < 44 + 16000) {           // pod půl vteřiny = omyl
-        if (opts.notice) opts.notice('Nahrávka byla moc krátká.');
-        return;
-      }
       busy = true;
       btn.classList.add('busy');
       input.placeholder = 'Přepisuju…';
       try {
+        const data = await r.stop();
+        if (delka < 0.7 || !data || data.length < 1000) {
+          if (opts.notice) opts.notice('Nahrávka byla moc krátká — podrž mikrofon zapnutý, dokud mluvíš.');
+          return;
+        }
         const out = await io.api('hlas-prepis', {wav: base64(data)});
         const text = (out.text || '').trim();
         if (!text) {
@@ -206,11 +250,12 @@
           input.setSelectionRange(input.value.length, input.value.length);
         }
       } catch (err) {
-        if (opts.notice) opts.notice(err.message || 'Přepis se nepovedl.');
+        if (opts.notice) opts.notice('Přepis se nepovedl: ' + ((err && err.message) || err));
+      } finally {
+        busy = false;
+        btn.classList.remove('busy');
+        input.placeholder = puvodni;
       }
-      busy = false;
-      btn.classList.remove('busy');
-      input.placeholder = puvodni;
     }
 
     btn.addEventListener('click', async (ev) => {
@@ -240,7 +285,7 @@
         if (s >= MAX_NAHRAVKA_S) hotovo();
         // Po dvou vteřinách bez jediného vzorku mikrofon nic nedává —
         // lepší to říct hned, než nechat člověka mluvit do prázdna.
-        if (s >= 2 && rec && rec.vzorku === 0) {
+        if (s >= 3 && rec && rec.vzorku === 0) {
           rec.zrusit();
           uklid();
           if (opts.notice) opts.notice('Z mikrofonu nejde zvuk — zkontroluj, jestli ho prohlížeč smí používat.');

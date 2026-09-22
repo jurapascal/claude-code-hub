@@ -194,10 +194,12 @@ def _worker(what, arg, data, timeout, model=""):
 
 
 def _check(wav):
+    """WAV z Web Audio, nebo nahrávka z MediaRecorderu: webm (Chrome, Firefox),
+    ogg (Firefox), mp4 (Safari)."""
     if not wav or len(wav) > MAX_AUDIO:
         raise ValueError("Nahrávka chybí, nebo je moc dlouhá.")
-    if wav[:4] != b"RIFF":
-        raise ValueError("Nahrávka není WAV.")
+    if not (wav[:4] in (b"RIFF", b"OggS", b"\x1aE\xdf\xa3") or wav[4:8] == b"ftyp"):
+        raise ValueError("Nahrávka je v neznámém formátu.")
 
 
 def prepis_zde(wav, model=""):
