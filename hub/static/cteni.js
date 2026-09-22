@@ -116,7 +116,17 @@
   /* Proud bloků. Stejný pro živý tab i pro okno se starou konverzací.
      `imageUrl` převede cestu k obrázku z hub-images na adresu, ze které ho
      stránka smí načíst (/api/image). */
-  function flow(mount, imageUrl, {historie = false} = {}) {
+  function flow(mount, imageUrl, {historie = false, openLink = null} = {}) {
+    /* Odkaz v Markdownu je <a> bez href (vault.js) — sám nikam nevede,
+       otevřít ho musí hub. V okně appky by holý odkaz stejně nic neudělal. */
+    mount.addEventListener('click', (ev) => {
+      const a = ev.target.closest('a');
+      if (!a || !mount.contains(a)) return;
+      ev.preventDefault();
+      const url = a.dataset.href || a.getAttribute('href') || '';
+      if (/^(https?:|mailto:)/i.test(url) && openLink) openLink(url);
+    });
+
     const tools = new Map();          // id nástroje → jeho řádek
     const agenti = new Map();         // id volání Agent → karta
     let prace = null;                 // řádek „Claude pracuje…"
@@ -641,7 +651,7 @@
     tab.pane.appendChild(root);
     tab.pane.classList.add('cteni-on');
 
-    const proud = flow(mount, io.imageUrl);
+    const proud = flow(mount, io.imageUrl, {openLink: io.openLink});
     const data = zdroj(io, () => 'id=' + encodeURIComponent(tab.id || ''));
     let timer = null, prazdnych = 0, zivy = true, ceka = false;
 
@@ -829,7 +839,7 @@
     setTimeout(() => pole.focus(), 0);
 
     const scroll = q('.cteni-scroll');
-    const proud = flow(q('.cteni-flow'), io.imageUrl, {historie: true});
+    const proud = flow(q('.cteni-flow'), io.imageUrl, {historie: true, openLink: io.openLink});
     const data = zdroj(io, 'chat=' + encodeURIComponent(chat.id));
 
     (async () => {

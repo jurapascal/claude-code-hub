@@ -695,6 +695,9 @@ body { display: flex; flex-direction: column; }
   position: absolute; inset: 0; z-index: 5;
   overflow: hidden; pointer-events: none;
 }
+/* Přes čtení (cteni.js) je terminál schovaný — jeho tlačítka by visela nad
+   textem konverzace na místech, kde v terminálu zrovna stojí adresa. */
+.pane.cteni-on:not(.asking) .links { display: none; }
 /* Výplň barvou terminálu — to ona adresu schová. */
 .link {
   position: absolute;
