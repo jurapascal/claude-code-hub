@@ -497,6 +497,40 @@ def session_env(user):
     return env
 
 
+def pwa_id(user):
+    """Tajný kód účtu do adres manifestu a ikon appky (vlastní název a ikona,
+    hub/vzhled.py). Prohlížeč je stahuje bez přihlášení — podle kódu brána
+    pozná, čí jsou, a z e-mailu ani čísla účtu se kód odvodit nedá."""
+    import hashlib
+    import hmac
+    import secrets
+    path = os.path.join(config.GATEWAY_DIR, "pwa-klic")
+    try:
+        with open(path, "rb") as fh:
+            key = fh.read()
+    except FileNotFoundError:
+        key = b""
+    if len(key) < 32:
+        key = secrets.token_bytes(32)
+        fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(key)
+        os.replace(path + ".tmp", path)
+    return hmac.new(key, str(user["id"]).encode(), hashlib.sha256).hexdigest()[:24]
+
+
+def app_look(user):
+    """(název, cesta k ikoně podle velikosti) z konfigurace prostoru — pro
+    manifest a ikony na ploše. Čte se bez následování odkazů (domov patří session)."""
+    home = home_for(user)
+    try:
+        cfg = json.loads(safefs.read_text(home, ".claude/hub-config.json") or "{}")
+    except ValueError:
+        cfg = {}
+    name = str((cfg if isinstance(cfg, dict) else {}).get("app_name") or "").strip()[:40]
+    return name, home
+
+
 def _hub_config(user, home):
     vault = vault_dir(user, home)
     return {
@@ -510,6 +544,8 @@ def _hub_config(user, home):
         # průvodce prvním spuštěním.
         "onboarded": True,
         # Kdo to je — hub si to jinam nepíše, hodí se pro hlavičku.
+        # Kód pro manifest a ikony appky na ploše (vlastní název a ikona).
+        "pwa_id": pwa_id(user),
         "gateway_user": {"email": user.get("email", ""),
                          "name": user.get("name", ""),
                          "role": user.get("role", "user")},

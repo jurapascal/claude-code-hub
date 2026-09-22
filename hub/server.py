@@ -32,7 +32,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (account, chats, clockify, connect, core, cteni, pocitac, predplatne,
-               pty_backend, qr, remote, restart, stats)
+               pty_backend, qr, remote, restart, stats, vzhled)
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -458,6 +458,18 @@ class Handler(BaseHTTPRequestHandler):
             if not self._authorised(query):
                 return self._send(403, b"Neplatny token.")
             return self._api(route[5:], query)
+        # Vlastní název a ikona appky (hub/vzhled.py). Manifest a ikony si
+        # prohlížeč bere bez tokenu — nic tajného v nich není.
+        if route == "/manifest.webmanifest":
+            body = json.dumps(vzhled.manifest(vzhled.zobrazeny(), "/app-ikona/",
+                                              vzhled.verze()), ensure_ascii=False)
+            return self._send(200, body.encode("utf-8"), "application/manifest+json",
+                              {"Cache-Control": "no-cache"})
+        m = re.fullmatch(r"/app-ikona/(512|192|32)\.png", route)
+        if m:
+            with open(vzhled.ikona_nebo_vychozi(int(m.group(1))), "rb") as fh:
+                return self._send(200, fh.read(), "image/png",
+                                  {"Cache-Control": "public, max-age=86400"})
         return self._static(route.lstrip("/"))
 
     def do_POST(self):
@@ -495,6 +507,12 @@ class Handler(BaseHTTPRequestHandler):
             ctype += "; charset=utf-8"
         with open(full, "rb") as fh:
             body = fh.read()
+        if rel == "index.html":
+            # Vlastní název a odkazy na vlastní manifest a ikonu (hub/vzhled.py).
+            try:
+                body = vzhled.uprav_stranku(body)
+            except Exception as exc:
+                core.log_error("vlastní vzhled stránky", exc)
         self._send(200, body, ctype, extra)
 
     def _api(self, name, query, payload=None):
@@ -519,6 +537,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def _api_inner(self, name, query, payload=None):
         payload = payload or {}
+        if name == "app-vzhled":
+            # Vlastní název a ikona appky (hub/vzhled.py, Nastavení → Vzhled).
+            if self.command != "POST":
+                return self._json(vzhled.stav())
+            try:
+                return self._json(vzhled.uloz(
+                    name=payload.get("name"), icons=payload.get("icons"),
+                    reset=payload.get("reset") is True))
+            except (ValueError, OSError) as exc:
+                return self._json({"error": str(exc)}, 400)
         if name.startswith("hlas"):
             # Diktování a předčítání (hub/hlas.py) — česky, na tomhle stroji.
             from . import hlas
@@ -624,11 +652,16 @@ class Handler(BaseHTTPRequestHandler):
                 "firma": part("firemní Obsidian", core.firma_state, {"vault": "", "name": ""}),
                 "shared": part("sdílené Obsidiany", core.shared_state, []),
                 "onboarded": bool(core.CONFIG.get("onboarded")),
+                # Vlastní název a ikona appky (hub/vzhled.py).
+                "app": part("vzhled appky", vzhled.stav, {}),
                 "config": {"project_dirs": core.CONFIG.get("project_dirs") or [],
                            "brain_dir": core.CONFIG.get("brain_dir") or "",
                            "newtab": core.CONFIG.get("newtab") or {},
                            "show_archived": bool(core.CONFIG.get("show_archived")),
                            "dev_mode": bool(core.CONFIG.get("dev_mode")),
+                           # Téma drží hub, ne jen prohlížeč: port hubu se mění
+                           # s každým spuštěním a s ním i paměť prohlížeče.
+                           "theme": core.CONFIG.get("theme") or "",
                            # Server, na kterém má appka účet, a jestli se má
                            # otevírat rovnou tam. Token sem nepatří — stránka
                            # ho nepotřebuje a /api/state se kreslí všude.
@@ -917,8 +950,10 @@ class Handler(BaseHTTPRequestHandler):
                        "newtab", "extra_projects", "show_archived",
                        "agents", "default_agent", "project_agents",
                        "remote_keep_running", "dev_mode", "memory_autosave",
-                       "hlas_model")
+                       "hlas_model", "theme")
             updates = {k: v for k, v in payload.items() if k in allowed}
+            if "theme" in updates and updates["theme"] not in ("", "dark", "light"):
+                return self._json({"error": "Neznámé téma."}, 400)
             if "hlas_model" in updates and updates["hlas_model"] not in ("turbo", "small"):
                 return self._json({"error": "Neznámý model pro přepis."}, 400)
             if not updates:

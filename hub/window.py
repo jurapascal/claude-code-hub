@@ -146,7 +146,7 @@ def _open_webkit(url, versions):
         Gtk.init()
         window = Gtk.Window()
         window.set_default_size(1360, 860)
-        window.set_title("Claude Code Hub")
+        window.set_title(_app_title())
         window.set_child(view)
         loop = GLib.MainLoop()
         window.connect("close-request", lambda *_: (loop.quit(), False)[1])
@@ -154,17 +154,39 @@ def _open_webkit(url, versions):
         return loop.run
 
     Gtk.init([])
-    window = Gtk.Window(title="Claude Code Hub")
+    window = Gtk.Window(title=_app_title())
     window.set_default_size(1360, 860)
-    if core.ICON_PATH and os.path.isfile(core.ICON_PATH):
+    icon = _app_icon()
+    if icon:
         try:
-            window.set_icon_from_file(core.ICON_PATH)
+            window.set_icon_from_file(icon)
         except Exception:
             pass
     window.add(view)
     window.connect("destroy", Gtk.main_quit)
     window.show_all()
     return Gtk.main
+
+
+def _app_title():
+    """Vlastní název appky (Nastavení → Vzhled), jinak Claude Code Hub."""
+    try:
+        from . import vzhled
+        vzhled.sync_desktop()      # instalace spouštěč přepisuje na výchozí
+        return vzhled.zobrazeny()
+    except Exception:
+        return "Claude Code Hub"
+
+
+def _app_icon():
+    try:
+        from . import vzhled
+        custom = vzhled.ikona(512)
+    except Exception:
+        custom = ""
+    if custom:
+        return custom
+    return core.ICON_PATH if core.ICON_PATH and os.path.isfile(core.ICON_PATH) else ""
 
 
 def _allow_microphone(view, WebKit, url):

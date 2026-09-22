@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from hub import __version__, qr
 
-from . import config, isolation, mcp, pocitac, shared, totp, workspace
+from . import config, isolation, mcp, pocitac, safefs, shared, totp, workspace
 from .accounts import Accounts
 
 HTML = "text/html; charset=utf-8"
@@ -666,6 +666,12 @@ class Handler(BaseHTTPRequestHandler):
             # Soubory pro instalaci na plochu (PWA). Prohlížeč si manifest
             # i ikony stahuje bez přihlašovací cookie — kdyby chtěly přihlášení,
             # Android by instalaci nenabídl a iPhone by neměl ikonu.
+            # Manifest a ikony s vlastním názvem a ikonou účtu (?u=kód,
+            # /app-ikona/<kód>/…) — bez přihlášení, podle tajného kódu.
+            if route == "/manifest.webmanifest" and "u=" in parsed.query:
+                return self._pwa_user_manifest(parsed.query)
+            if route.startswith("/app-ikona/") and route.count("/") == 3:
+                return self._pwa_user_icon(route)
             if route in PWA_FILES:
                 return self._pwa_file(route)
             # Napojení z appky Claude (MCP + OAuth): vlastní přihlášení
@@ -751,6 +757,52 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": f"Brána: {exc}"}, 502)
             except Exception:
                 pass
+
+    _pwa_ids = {"at": 0, "map": {}}
+
+    def _pwa_user(self, pid):
+        """Účet podle kódu z adresy (workspace.pwa_id); seznam se přepočítá
+        nejvýš jednou za minutu."""
+        import re as _re
+        if not _re.fullmatch(r"[0-9a-f]{24}", pid or ""):
+            return None
+        cache = self._pwa_ids
+        if time.time() - cache["at"] > 60 or pid not in cache["map"]:
+            cache["map"] = {workspace.pwa_id(u): u["id"] for u in self.accounts.list()
+                            if not u.get("disabled")}
+            cache["at"] = time.time()
+        uid = cache["map"].get(pid)
+        return self.accounts.by_id(uid) if uid else None
+
+    def _pwa_user_manifest(self, query):
+        from hub import vzhled
+        pid = (urllib.parse.parse_qs(query).get("u") or [""])[0]
+        user = self._pwa_user(pid)
+        if not user:
+            return self._pwa_file("/manifest.webmanifest")
+        name, home = workspace.app_look(user)
+        icon = safefs.lstat(home, ".claude/hub-ikona-512.png")
+        version = int(icon.st_mtime) if icon else 0
+        base = f"/app-ikona/{pid}/" if icon else "/icon-"
+        data = vzhled.manifest(name or vzhled.VYCHOZI, base, version)
+        if not icon:        # výchozí ikony se jmenují icon-<velikost>.png
+            for i in data["icons"]:
+                i["src"] = i["src"].split("?")[0]
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self._send(200, body, "application/manifest+json", {"Cache-Control": "no-cache"})
+
+    def _pwa_user_icon(self, route):
+        import re as _re
+        m = _re.fullmatch(r"/app-ikona/([0-9a-f]{24})/(512|192|32)\.png", route)
+        user = self._pwa_user(m.group(1)) if m else None
+        if not user:
+            return self._send(404, b"404")
+        _name, home = workspace.app_look(user)
+        png = safefs.read_bytes(home, f".claude/hub-ikona-{m.group(2)}.png", limit=2 * 1024 * 1024)
+        if not png or not png.startswith(b"\x89PNG"):
+            return self._pwa_file(f"/icon-{m.group(2)}.png")
+        self._send(200, png, "image/png", {"Cache-Control": "public, max-age=86400",
+                                           "X-Content-Type-Options": "nosniff"})
 
     def _pwa_file(self, route):
         ctype, cache = PWA_FILES[route]

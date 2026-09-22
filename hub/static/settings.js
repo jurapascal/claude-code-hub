@@ -144,6 +144,7 @@
       t.onclick = () => {
         if (key === 'system') {
           localStorage.removeItem('hub-theme');
+          io.api('config', {theme: ''}).catch(() => {});
           io.setTheme(!matchMedia('(prefers-color-scheme: light)').matches, false);
         } else {
           io.setTheme(dark, true);
@@ -153,6 +154,8 @@
       wrap.appendChild(t);
     }
     box.appendChild(wrap);
+
+    box.appendChild(appka());
 
     box.appendChild(el('div', 'set-title', 'Vývojářský režim'));
     box.appendChild(el('div', 'set-note',
@@ -168,6 +171,145 @@
       'Zapnout tlačítka Deploy a Push na GitHub a sekce Projekty, ' +
       'Taby a Logy'));
     box.appendChild(row);
+    return box;
+  }
+
+  /* Vlastní název a ikona appky (hub/vzhled.py). Ikonu kreslí prohlížeč —
+     emoji na barevném pozadí, nebo nahraný obrázek — do PNG 512/192/32 a hub
+     je uloží. Platí v liště, pro ikonu na ploše telefonu i pro spouštěč. */
+  const EMOJI = ['🏠', '👨‍👩‍👧‍👦', '🐱', '🐶', '🦄', '🌻', '⭐', '🚀', '🌈', '❤️',
+                 '🎨', '📚', '🧸', '🍀', '☀️', '🐝', '🦊', '🐼', '🎈', '🤖'];
+  const BARVY = ['#e0843c', '#4c97f0', '#3fb950', '#a371f7', '#f85149',
+                 '#f2cc60', '#ff7ab6', '#1b2129', '#ffffff'];
+
+  function appka() {
+    const app = state.app || {};
+    const box = el('div', 'app-edit');
+    box.appendChild(el('div', 'set-title', 'Název a ikona appky'));
+    box.appendChild(el('div', 'set-note',
+      'Pojmenuj si appku a vyber ikonu — ukáže se v liště, na ploše telefonu ' +
+      '(po znovupřidání na plochu) i v nabídce aplikací na počítači.'));
+
+    let volba = {emoji: '🏠', barva: BARVY[0], obrazek: null};
+    let zmenaIkony = false;
+
+    const radek = el('div', 'app-row');
+    const nahled = el('canvas', 'app-nahled');
+    nahled.width = nahled.height = 96;
+    const jmeno = el('input', 'set-input app-name');
+    jmeno.type = 'text';
+    jmeno.maxLength = 40;
+    jmeno.placeholder = app.default || 'Claude Code Hub';
+    jmeno.value = app.name || '';
+    radek.append(nahled, jmeno);
+    box.appendChild(radek);
+
+    const emo = el('div', 'app-grid');
+    for (const e of EMOJI) {
+      const b = el('button', 'app-emoji', e);
+      b.type = 'button';
+      b.onclick = () => { volba = {...volba, emoji: e, obrazek: null}; zmenaIkony = true; kresli(); };
+      emo.appendChild(b);
+    }
+    box.appendChild(emo);
+
+    const barvy = el('div', 'app-grid');
+    for (const c of BARVY) {
+      const b = el('button', 'app-barva');
+      b.type = 'button';
+      b.style.background = c;
+      b.title = c;
+      b.onclick = () => { volba = {...volba, barva: c}; zmenaIkony = true; kresli(); };
+      barvy.appendChild(b);
+    }
+    box.appendChild(barvy);
+
+    const soubor = el('input');
+    soubor.type = 'file';
+    soubor.accept = 'image/*';
+    soubor.hidden = true;
+    soubor.onchange = () => {
+      const f = soubor.files && soubor.files[0];
+      if (!f) return;
+      const img = new Image();
+      img.onload = () => { volba = {...volba, obrazek: img}; zmenaIkony = true; kresli(); };
+      img.onerror = () => io.toast('Tenhle obrázek se nepodařilo načíst.');
+      img.src = URL.createObjectURL(f);
+    };
+    box.appendChild(soubor);
+
+    const btns = el('div', 'onb-btns');
+    const nahrat = el('button', 'actionbtn', 'Nahrát vlastní obrázek');
+    nahrat.onclick = () => soubor.click();
+    const ulozit = el('button', 'actionbtn primary', 'Uložit');
+    const vychozi = el('button', 'actionbtn', 'Vrátit výchozí');
+    btns.append(nahrat, ulozit, vychozi);
+    box.appendChild(btns);
+
+    function vykresli(size) {
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const g = c.getContext('2d');
+      if (volba.obrazek) {
+        // Obrázek vyplní celý čtverec (střed, oříznutý na výšku/šířku).
+        const im = volba.obrazek;
+        const k = Math.max(size / im.naturalWidth, size / im.naturalHeight);
+        const w = im.naturalWidth * k, h = im.naturalHeight * k;
+        g.drawImage(im, (size - w) / 2, (size - h) / 2, w, h);
+      } else {
+        g.fillStyle = volba.barva;
+        g.fillRect(0, 0, size, size);
+        // Emoji zabere zhruba polovinu — zbytek je okraj, který si Android
+        // (maskovatelná ikona) může ořezat do kruhu nebo kapky.
+        g.font = Math.round(size * 0.52) + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.fillText(volba.emoji, size / 2, size * 0.54);
+      }
+      return c;
+    }
+
+    function kresli() {
+      const g = nahled.getContext('2d');
+      g.clearRect(0, 0, 96, 96);
+      g.drawImage(vykresli(512), 0, 0, 96, 96);
+    }
+
+    // Zatím uložená ikona jako výchozí náhled.
+    if (app.icon) {
+      const im = new Image();
+      im.onload = () => { volba = {...volba, obrazek: im}; kresli(); };
+      im.src = '/app-ikona/512.png?v=' + app.icon;
+    } else {
+      kresli();
+    }
+
+    ulozit.onclick = async () => {
+      ulozit.disabled = true;
+      try {
+        const payload = {name: jmeno.value.trim()};
+        if (zmenaIkony) {
+          payload.icons = {};
+          for (const n of [512, 192, 32]) payload.icons[n] = vykresli(n).toDataURL('image/png');
+        }
+        await io.api('app-vzhled', payload);
+        await io.refreshState();
+        state = await io.api('state');
+        io.toast('Uloženo. Na ploše telefonu se nová ikona ukáže, až appku přidáš znovu.');
+        render();
+      } catch (err) {
+        io.toast(err.message);
+      }
+      ulozit.disabled = false;
+    };
+    vychozi.onclick = async () => {
+      try {
+        await io.api('app-vzhled', {reset: true});
+        await io.refreshState();
+        state = await io.api('state');
+        render();
+      } catch (err) { io.toast(err.message); }
+    };
     return box;
   }
 

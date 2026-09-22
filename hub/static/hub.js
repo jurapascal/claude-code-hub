@@ -161,8 +161,31 @@ function applyTheme() {
 
 function setTheme(dark, remember) {
   DARK = dark;
-  if (remember) localStorage.setItem('hub-theme', dark ? 'dark' : 'light');
+  if (remember) {
+    try { localStorage.setItem('hub-theme', dark ? 'dark' : 'light'); } catch (_) { /* nic */ }
+    // Téma si pamatuje i hub (hub-config): paměť prohlížeče se na počítači
+    // ztratí s každým novým portem hubu a appka z plochy má vlastní.
+    api('config', {theme: dark ? 'dark' : 'light'}).catch(() => {});
+  }
   applyTheme();
+}
+
+/* Téma uložené v hubu má přednost před pamětí prohlížeče. */
+function themeFromState() {
+  const t = STATE && STATE.config && STATE.config.theme;
+  if (t !== 'dark' && t !== 'light') {
+    // Hub téma ještě nezná, prohlížeč ano (volba z doby před touhle verzí):
+    // převzít, ať se po další aktualizaci neztratí.
+    let saved = '';
+    try { saved = localStorage.getItem('hub-theme') || ''; } catch (_) { /* nic */ }
+    if (saved === 'dark' || saved === 'light') api('config', {theme: saved}).catch(() => {});
+    return;
+  }
+  try { localStorage.setItem('hub-theme', t); } catch (_) { /* nic */ }
+  if ((t === 'dark') !== DARK) {
+    DARK = t === 'dark';
+    applyTheme();
+  }
 }
 
 /* ── sidebar ──────────────────────────────────────────────────────────────── */
@@ -1058,13 +1081,50 @@ function placeName() {
   return onServer() ? 'server' : 'PC';
 }
 
+/* Vlastní název a ikona appky (Nastavení → Vzhled, hub/vzhled.py): v liště,
+   v šuplíku a na úvodní stránce. Bez nastavení zůstává „Claude Code". */
+function renderBranding() {
+  const app = STATE.app || {};
+  const name = app.name || 'Claude Code';
+  const home = $('btn-home');
+  if (home) {
+    home.querySelector('strong').textContent = name;
+    let img = home.querySelector('.brand-img');
+    const svg = home.querySelector('.brand-ico');
+    if (app.icon) {
+      if (!img) {
+        img = document.createElement('img');
+        img.className = 'brand-img';
+        img.alt = '';
+        home.insertBefore(img, home.firstChild);
+      }
+      img.src = '/app-ikona/192.png?v=' + app.icon;
+      if (svg) svg.style.display = 'none';
+    } else {
+      if (img) img.remove();
+      if (svg) svg.style.display = '';
+    }
+  }
+  const head = document.querySelector('.drawer-head strong');
+  if (head) head.textContent = name;
+  const big = document.querySelector('.welcome-big');
+  if (big && big.firstChild && big.firstChild.nodeType === 3) {
+    big.firstChild.textContent = name + ' ';
+  }
+  for (const link of document.querySelectorAll('link[rel="icon"]')) {
+    if (app.icon) link.href = '/app-ikona/32.png?v=' + app.icon;
+  }
+}
+
 function renderPlace() {
   const badge = $('btn-place');
   if (!badge) return;
   const u = STATE.config.gateway_user;
-  document.title = 'Claude Code ' + placeName();
+  const app = STATE.app || {};
+  document.title = app.name ? app.name : 'Claude Code ' + placeName();
   const big = $('welcome-place');
   if (big) big.textContent = placeName();
+  renderBranding();
   // Barva celé appky se odvozuje odsud: počítač jantarově, prostor modře.
   document.documentElement.dataset.place = u ? 'server' : 'pc';
   badge.textContent = u ? 'SERVER' : 'PC';
@@ -2543,7 +2603,7 @@ function hubIO() {
     open: openLink,
     pickFolder,
     reload,
-    refreshState: async () => { STATE = await api('state'); },
+    refreshState: async () => { STATE = await api('state'); renderBranding(); },
     openWizard: () => HubOnboarding.open({...hubIO(), state: STATE}),
     /* Přihlášení jiným účtem. `/login` žije uvnitř Claude Code, ne v shellu,
        tak se otevře tab, který ho dostane rovnou jako první příkaz — stejnou
@@ -2590,6 +2650,7 @@ async function main() {
                : !window.matchMedia('(prefers-color-scheme: light)').matches;
 
   await reload();
+  themeFromState();
 
   $('search').oninput = (ev) => renderProjects(ev.target.value);
   $('btn-refresh').onclick = () => reload();

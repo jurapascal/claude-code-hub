@@ -2653,3 +2653,21 @@ html:has(> body.is-touch), body.is-touch { height: var(--app-h, 100%); }
   .welcome-open .wcol-title { padding-left: 12px; }
   .welcome-open-item { padding: 12px; border-radius: 12px; font-size: 15.5px; background: var(--bg-card); margin-bottom: 6px; }
 }
+
+/* Vlastní ikona appky v liště (hub.js renderBranding). */
+.brand-img { width: 20px; height: 20px; border-radius: 5px; object-fit: cover; flex: none; }
+@media (max-width: 820px) { .brand-img { width: 26px; height: 26px; border-radius: 7px; } }
+
+/* Nastavení → Vzhled: název a ikona appky (settings.js appka()). */
+.app-edit { margin: 18px 0 8px; }
+.app-row { display: flex; align-items: center; gap: 14px; margin: 10px 0; }
+.app-nahled { width: 72px; height: 72px; border-radius: 16px; flex: none;
+  border: 1px solid var(--border); background: var(--bg-card); }
+.app-name { flex: 1; min-width: 0; font-size: 15px; padding: 9px 11px; }
+.app-grid { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.app-emoji { width: 40px; height: 40px; font-size: 22px; line-height: 1; border-radius: 10px;
+  background: var(--bg-card); border: 1px solid var(--border); cursor: pointer; }
+.app-emoji:hover { border-color: var(--accent); }
+.app-barva { width: 30px; height: 30px; border-radius: 50%; cursor: pointer;
+  border: 2px solid var(--border); }
+.app-barva:hover { border-color: var(--fg-bright); }
