@@ -90,6 +90,73 @@
     }
   }
 
+  /* ── jako appka Claude: taby v šuplíku, jméno tabu v liště ────────────── */
+  /* Lišta s taby se na telefon nevejde (a v appce Claude žádná není): otevřené
+     taby jsou v šuplíku nad projekty a jméno toho, na který se kouká, stojí
+     uprostřed horní lišty. Seznam je zrcadlo #tabbar — klepnutí posílá dál
+     na původní tlačítko tabu, takže o přepínání i zavírání dál rozhoduje
+     hub.js a o tomhle nic neví. */
+  const tabbar = $('tabbar');
+  const openBox = $('open-tabs');
+  const openSection = $('open-section');
+  const tabTitle = $('topbar-tab');
+
+  function syncTabs() {
+    if (!tabbar || !openBox) return;
+    const tabs = [...tabbar.querySelectorAll('.tab')];
+    const active = tabs.find((t) => t.classList.contains('active'));
+    const name = (t) => (t.querySelector('.tab-title') || t).textContent.trim();
+    if (tabTitle) tabTitle.textContent = active ? name(active) : '';
+    document.body.classList.toggle('has-tab', !!active);
+    openSection.hidden = !tabs.length;
+    openBox.textContent = '';
+    for (const t of tabs) {
+      const row = document.createElement('div');
+      row.className = 'open-tab' + (t === active ? ' on' : '') +
+                      (t.classList.contains('exited') ? ' exited' : '');
+      const dot = t.querySelector('.tab-agent');
+      const d = document.createElement('span');
+      d.className = 'open-dot';
+      if (dot && dot.style.getPropertyValue('--agent-color')) {
+        d.style.background = dot.style.getPropertyValue('--agent-color');
+      }
+      if (t.classList.contains('firma')) d.style.background = 'var(--firma)';
+      const go = document.createElement('button');
+      go.className = 'open-name';
+      go.textContent = name(t);
+      go.onclick = () => { t.click(); closeDrawer(); };
+      const x = document.createElement('button');
+      x.className = 'open-x';
+      x.title = 'Zavřít tab';
+      x.innerHTML = '<svg class="ico"><use href="#i-close"/></svg>';
+      x.onclick = () => { const c = t.querySelector('.tab-close'); if (c) c.click(); };
+      row.append(d, go, x);
+      openBox.appendChild(row);
+    }
+  }
+  if (tabbar) {
+    let pending = 0;
+    new MutationObserver(() => {
+      cancelAnimationFrame(pending);
+      pending = requestAnimationFrame(syncTabs);
+    }).observe(tabbar, {childList: true, subtree: true, characterData: true,
+                        attributes: true, attributeFilter: ['class', 'style']});
+    syncTabs();
+  }
+
+  /* Nový tab: stejná nabídka jako „+" v liště tabů (hub.js), jen zakotvená
+     u tlačítka, na které se kleplo. */
+  function newTab(anchor) {
+    const plus = $('btn-new-menu');
+    if (plus && plus.onclick) plus.onclick({currentTarget: anchor});
+  }
+  const newTop = $('btn-new-top');
+  if (newTop) newTop.onclick = () => newTab(newTop);
+  const drawerNew = $('btn-drawer-new');
+  if (drawerNew) drawerNew.onclick = () => { closeDrawer(); if (newTop) newTab(newTop); };
+  const drawerX = $('btn-drawer-x');
+  if (drawerX) drawerX.onclick = closeDrawer;
+
   matchMedia(NARROW).addEventListener('change', applyClasses);
   applyClasses();
 
