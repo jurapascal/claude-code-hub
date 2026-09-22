@@ -622,12 +622,14 @@
   function zdroj(io, dotaz) {
     let odkud = 0;
     let hotovo = false;
+    let src = '';          // který přepis se čte — server podle něj pozná přestěhování
     return {
       async dalsi() {
         const url = 'cteni?' + (typeof dotaz === 'function' ? dotaz() : dotaz) +
-                    '&from=' + odkud;
+                    '&from=' + odkud + (src ? '&src=' + encodeURIComponent(src) : '');
         const res = await io.api(url);
         if (!res || !res.ready) return {blocks: [], konec: true};
+        if (res.src) src = res.src;
         const posun = res.next !== odkud;
         odkud = res.next;
         hotovo = !posun;

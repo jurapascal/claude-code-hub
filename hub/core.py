@@ -2412,8 +2412,55 @@ def transcript_for(session):
     if chat_id:
         path = transcript_path(cwd, chat_id)
         if os.path.isfile(path):
+            # Obnovený tab: Claude Code při --resume umí založit nový přepis
+            # s novým id a historii do něj zkopírovat. Starý pak stojí a čtení
+            # by nové zprávy nevidělo („zprávu zatím nepřevzal“). Pokračování
+            # se hledá jen občas — čtení se ptá každou vteřinu.
+            now = time.time()
+            if now - getattr(session, "navaz_at", 0) >= NAVAZ_KAZDYCH:
+                session.navaz_at = now
+                rodina = getattr(session, "rodina", None) or [chat_id]
+                novy = _pokracovani(path, rodina)
+                if novy:
+                    session.chat_id = os.path.basename(novy)[:-6]
+                    session.rodina = rodina + [session.chat_id]
+                    return novy
             return path
     return _tab_transcript(session.id, cwd, session.started)
+
+
+NAVAZ_KAZDYCH = 4.0
+
+
+def _pokracovani(path, rodina):
+    """Novější přepis ve stejné složce, který navazuje na některé z id v `rodina`
+    (Claude Code ho založil při obnovení tabu), nebo ''. Pozná se podle toho,
+    že staré id je v jeho začátku — zkopírovaná historie ho nese dál."""
+    try:
+        base = os.path.getmtime(path)
+        entries = list(os.scandir(os.path.dirname(path)))
+    except OSError:
+        return ""
+    needles = [('"%s"' % r).encode("ascii") for r in rodina]
+    mine = {r + ".jsonl" for r in rodina}
+    best, best_m = "", base
+    for e in entries:
+        if not e.name.endswith(".jsonl") or e.name in mine:
+            continue
+        try:
+            m = e.stat().st_mtime
+        except OSError:
+            continue
+        if m <= best_m:
+            continue
+        try:
+            with open(e.path, "rb") as fh:
+                head = fh.read(256 * 1024)
+        except OSError:
+            continue
+        if any(n in head for n in needles):
+            best, best_m = e.path, m
+    return best
 
 
 def _first_time(transcript):

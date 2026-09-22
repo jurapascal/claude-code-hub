@@ -289,6 +289,9 @@ class Hub:
                 continue
             if s.resume:
                 running.setdefault(s.resume, s.id)
+            # Přestěhovaná konverzace (core._pokracovani) běží pod novým id.
+            if getattr(s, "chat_id", ""):
+                running.setdefault(s.chat_id, s.id)
             transcript = core._tab_transcript(s.id, s.path or core.HOME, s.started)
             if transcript:
                 running.setdefault(os.path.basename(transcript)[:-6], s.id)
@@ -550,7 +553,17 @@ class Handler(BaseHTTPRequestHandler):
                 start = int((query.get("from") or ["0"])[0] or 0)
             except ValueError:
                 start = 0
-            return self._json(cteni.read(path, start, tail=not start))
+            # Přepis se mohl přestěhovat (obnovený tab, core._pokracovani):
+            # pozice patří starému souboru, v novém se naváže za poslední
+            # zprávu, kterou čtení už ukázalo.
+            src = (query.get("src") or [""])[0]
+            here = os.path.basename(path)[:-6] if path else ""
+            if start and src and here and src != here and cteni.je_id(src):
+                start = cteni.navaz(os.path.join(os.path.dirname(path), src + ".jsonl"),
+                                    start, path)
+            out = cteni.read(path, start, tail=not start)
+            out["src"] = here
+            return self._json(out)
         if name == "tab-model":
             try:
                 session = HUB.sessions.get(int((query.get("id") or ["0"])[0]))

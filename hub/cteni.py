@@ -468,6 +468,37 @@ def _bloky_zpravy(entry):
     return []
 
 
+def navaz(stary, odkud, novy):
+    """Kde v novém přepisu pokračovat, když Claude Code konverzaci přestěhoval
+    (core._pokracovani): najde poslední zprávu, kterou čtení ze starého přepisu
+    už mělo (před bajtem `odkud`), a vrátí pozici hned za ní v novém. Když ji
+    nenajde, vrátí 0 — čtení pak začne od konce nového jako při otevření."""
+    try:
+        with open(stary, "rb") as fh:
+            fh.seek(max(0, int(odkud) - 2 * 1024 * 1024))
+            kus = fh.read(max(0, int(odkud) - fh.tell()))
+    except (OSError, ValueError):
+        return 0
+    uuid = None
+    for radek in reversed(kus.splitlines()):
+        m = re.search(rb'"uuid":"([0-9a-f-]{36})"', radek)
+        if m:
+            uuid = m.group(0)
+            break
+    if not uuid:
+        return 0
+    try:
+        with open(novy, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return 0
+    i = data.find(uuid)
+    if i < 0:
+        return 0
+    konec = data.find(b"\n", i)
+    return konec + 1 if konec >= 0 else len(data)
+
+
 def read(path, start=0, tail=False):
     """Nové bloky od bajtu `start`. Vrací i offset, na kterém se skončilo.
 
