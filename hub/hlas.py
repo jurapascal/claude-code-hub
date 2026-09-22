@@ -28,7 +28,13 @@ from . import core
 
 SERVER_DIR = "/usr/local/lib/claude-hub-hlas"
 LOCAL_DIR = os.path.join(core.CLAUDE_DIR, "hlas")
-WHISPER = "Systran/faster-whisper-small"
+# Přepis: „turbo“ (large-v3-turbo) je česky zhruba dvakrát přesnější než
+# „small“ — naměřeno na českých větách 12 % proti 27 % chybných slov — ale
+# pomalejší: na 4jádrovém serveru asi 10 s na větu proti 3 s. Výchozí je
+# přesnost; kdo chce rychlost, přepne si v Nastavení → Hlas (hlas_model).
+MODELY = {"turbo": ("mobiuslabsgmbh/faster-whisper-large-v3-turbo", "whisper-turbo", "1,6 GB"),
+          "small": ("Systran/faster-whisper-small", "whisper-small", "480 MB")}
+VYCHOZI = "turbo"
 VOICE_URL = ("https://huggingface.co/rhasspy/piper-voices/resolve/main/"
              "cs/cs_CZ/jirka/medium/cs_CZ-jirka-medium.onnx")
 PACKAGES = ["faster-whisper>=1.1", "piper-tts>=1.3"]
@@ -43,16 +49,38 @@ def _python(root):
     return os.path.join(root, "venv", "bin", "python")
 
 
-def _paths(root):
+def _model_dir(root, name):
+    return os.path.join(root, "modely", MODELY[name][1])
+
+
+def _has_model(root, name):
+    return os.path.isfile(os.path.join(_model_dir(root, name), "model.bin"))
+
+
+def chosen_model(root=""):
+    """Který model pro přepis: podle nastavení, jinak výchozí — a když na stroji
+    není, ten, který tam je."""
+    want = core.CONFIG.get("hlas_model") or VYCHOZI
+    if want not in MODELY:
+        want = VYCHOZI
+    if root and not _has_model(root, want):
+        for name in MODELY:
+            if _has_model(root, name):
+                return name
+    return want
+
+
+def _paths(root, model=""):
+    name = model if model in MODELY and _has_model(root, model) else chosen_model(root)
     return {"python": _python(root),
-            "whisper": os.path.join(root, "modely", "whisper-small"),
+            "whisper": _model_dir(root, name),
             "voice": os.path.join(root, "modely", "cs_CZ-jirka-medium.onnx")}
 
 
 def _ready(root):
     p = _paths(root)
     return (os.path.isfile(p["python"])
-            and os.path.isfile(os.path.join(p["whisper"], "model.bin"))
+            and any(_has_model(root, name) for name in MODELY)
             and os.path.isfile(p["voice"]) and os.path.isfile(p["voice"] + ".json"))
 
 
@@ -68,6 +96,9 @@ def state():
     found = root()
     on_server = bool(core.CONFIG.get("gateway_user"))
     return {"ready": bool(found), "where": found,
+            "model": chosen_model(found),
+            "models": {name: {"installed": bool(found) and _has_model(found, name),
+                              "size": MODELY[name][2]} for name in MODELY},
             # Na serveru instaluje správce (install.sh), prostor sám nemůže.
             "can_install": not on_server,
             "installing": core.job_state("hlas").get("running", False)}
@@ -110,11 +141,13 @@ def install(target=LOCAL_DIR, log=print):
     else:
         _run([p["python"], "-m", "pip", "install", "-q", *PACKAGES],
              "instaluju Whisper a Piper (pár minut)", log)
-    if not os.path.isfile(os.path.join(p["whisper"], "model.bin")):
-        _run([p["python"], "-c",
-              "import sys; from huggingface_hub import snapshot_download; "
-              "snapshot_download(sys.argv[1], local_dir=sys.argv[2])",
-              WHISPER, p["whisper"]], "stahuju model pro přepis (asi 480 MB)", log)
+    for name, (repo, _dir, size) in MODELY.items():
+        if not _has_model(target, name):
+            _run([p["python"], "-c",
+                  "import sys; from huggingface_hub import snapshot_download; "
+                  "snapshot_download(sys.argv[1], local_dir=sys.argv[2])",
+                  repo, _model_dir(target, name)],
+                 f"stahuju model pro přepis {name} (asi {size})", log)
     if not os.path.isfile(p["voice"]):
         _download(VOICE_URL, p["voice"], log, "stahuju český hlas (asi 60 MB)")
     if not os.path.isfile(p["voice"] + ".json"):
@@ -123,6 +156,9 @@ def install(target=LOCAL_DIR, log=print):
     if target.startswith("/usr/"):
         subprocess.run(["chmod", "-R", "a+rX", target], check=False)
     log("hotovo")
+    # Mezisklad stahování (.cache uvnitř složek modelů) už není potřeba.
+    for name in MODELY:
+        shutil.rmtree(os.path.join(_model_dir(target, name), ".cache"), ignore_errors=True)
     return {"ok": True, "where": target}
 
 
@@ -140,11 +176,11 @@ def _install_job():
 
 
 # ── přepis a předčítání ──────────────────────────────────────────────────────
-def _worker(what, arg, data, timeout):
+def _worker(what, arg, data, timeout, model=""):
     found = root()
     if not found:
         raise RuntimeError("Hlas tu není nainstalovaný — Nastavení → Hlas.")
-    p = _paths(found)
+    p = _paths(found, model)
     env = dict(os.environ)
     # Nic se nestahuje za běhu a nic se nezapisuje do sdílené složky.
     env.update({"HF_HUB_OFFLINE": "1", "HF_HUB_DISABLE_TELEMETRY": "1",
@@ -157,12 +193,45 @@ def _worker(what, arg, data, timeout):
     return res.stdout
 
 
-def prepis(wav):
+def _check(wav):
     if not wav or len(wav) > MAX_AUDIO:
         raise ValueError("Nahrávka chybí, nebo je moc dlouhá.")
     if wav[:4] != b"RIFF":
         raise ValueError("Nahrávka není WAV.")
-    return _worker("prepis", "whisper", wav, 180).decode("utf-8", "replace").strip()
+
+
+def prepis_zde(wav, model=""):
+    """Přepis na tomhle stroji."""
+    _check(wav)
+    return _worker("prepis", "whisper", wav, 240, model).decode("utf-8", "replace").strip()
+
+
+def prepis(wav):
+    """Přepis pro hub. Počítač připojený k serveru (brána) pošle nahrávku
+    k přepisu na svůj server — notebook by přesný model počítal i minutu,
+    server ho má za pár vteřin. Nahrávka tak pořád neopouští vlastní stroje.
+    Když server nedosáhne, přepíše se tady, rychlým modelem."""
+    _check(wav)
+    model = chosen_model(root())
+    if not core.CONFIG.get("gateway_user") and core.CONFIG.get("gw_token"):
+        import base64
+        from . import account
+        data, err, _kind = account._call(
+            "/gw/hlas/prepis", core.CONFIG.get("gw_token"),
+            {"wav": base64.b64encode(wav).decode("ascii"), "model": model}, timeout=240)
+        if data and isinstance(data.get("text"), str):
+            return data["text"].strip()
+        core.log(f"hlas: přepis na serveru nevyšel ({err}), přepisuju tady", "warn")
+        if not root():
+            raise RuntimeError(err or "Přepis na serveru nevyšel.")
+        return prepis_zde(wav, "small" if _has_model(root(), "small") else "")
+    return prepis_zde(wav, model)
+
+
+def dostupny():
+    """Jde tu přepisovat? Buď lokálně, nebo přes server (počítač s bránou)."""
+    return bool(root()) or (not core.CONFIG.get("gateway_user")
+                            and bool(core.CONFIG.get("gw_token")))
 
 
 def rec(text):

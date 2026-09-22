@@ -516,7 +516,8 @@ class Handler(BaseHTTPRequestHandler):
             # Diktování a předčítání (hub/hlas.py) — česky, na tomhle stroji.
             from . import hlas
             if name == "hlas":
-                return self._json({**hlas.state(), "job": core.job_state("hlas")})
+                return self._json({**hlas.state(), "job": core.job_state("hlas"),
+                                   "prepis": hlas.dostupny()})
             if self.command != "POST":
                 return self._json({"error": "Jen POST."}, 405)
             if name == "hlas-install":
@@ -908,8 +909,11 @@ class Handler(BaseHTTPRequestHandler):
             allowed = ("project_dirs", "brain_dir", "onboarded", "vault_autosync",
                        "newtab", "extra_projects", "show_archived",
                        "agents", "default_agent", "project_agents",
-                       "remote_keep_running", "dev_mode", "memory_autosave")
+                       "remote_keep_running", "dev_mode", "memory_autosave",
+                       "hlas_model")
             updates = {k: v for k, v in payload.items() if k in allowed}
+            if "hlas_model" in updates and updates["hlas_model"] not in ("turbo", "small"):
+                return self._json({"error": "Neznámý model pro přepis."}, 400)
             if not updates:
                 return self._json({"error": "Nic k uložení."}, 400)
             try:

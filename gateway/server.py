@@ -671,6 +671,10 @@ class Handler(BaseHTTPRequestHandler):
             # (prohlížeč) cookie — obojí řeší _gw_claude.
             if route == "/gw/claude":
                 return self._gw_claude(method)
+            # Přepis řeči pro hub na počítači (hub/hlas.py): notebook by přesný
+            # model počítal dlouho, server ho má za pár vteřin. Token zařízení.
+            if route == "/gw/hlas/prepis":
+                return self._gw_hlas(method)
 
             user = self._user()
 
@@ -1071,6 +1075,39 @@ class Handler(BaseHTTPRequestHandler):
                            "url": f"{scheme}://{host}/login?handoff={code}"})
 
     # ---- Claude na vlastním předplatném ----
+    _hlas_slots = threading.BoundedSemaphore(2)   # přepisy naráz (paměť, procesor)
+
+    def _gw_hlas(self, method):
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length > 20 * 1024 * 1024:
+            self.close_connection = True
+            return self._json({"error": "Nahrávka je moc dlouhá."}, 413)
+        form = self._read_form()
+        if method != "POST":
+            return self._json({"error": "Jen POST."}, 405)
+        user = self._bearer()
+        if not user:
+            return self._json({"error": "Nepřihlášeno."}, 401)
+        from hub import hlas
+        if not hlas.root():
+            return self._json({"error": "Na serveru není hlas nainstalovaný."}, 503)
+        if not self._hlas_slots.acquire(timeout=60):
+            return self._json({"error": "Server teď přepisuje za ostatní — zkus to za chvíli."}, 503)
+        try:
+            import base64
+            wav = base64.b64decode(str(form.get("wav") or ""), validate=False)
+            text = hlas.prepis_zde(wav, str(form.get("model") or ""))
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, 400)
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
+            return self._json({"error": f"Přepis selhal: {exc}"}, 500)
+        finally:
+            self._hlas_slots.release()
+        return self._json({"text": text})
+
     def _gw_claude(self, method):
         """Na čem Claude v prostoru jede; připojení a odpojení předplatného.
 

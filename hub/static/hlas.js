@@ -49,7 +49,10 @@
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true}});
+        // Potlačení ozvěny je pro hovor, ne pro diktování — hlas jím zbytečně
+        // trpí. Šum a hlasitost prohlížeč srovnat smí.
+        audio: {channelCount: 1, echoCancellation: false, noiseSuppression: true,
+                autoGainControl: true}});
     } catch (err) {
       ctx.close().catch(() => {});
       throw err;
@@ -77,7 +80,7 @@
     return {
       stop() {
         konec();
-        return wav(kusy, ctx.sampleRate);
+        return wav16(kusy, ctx.sampleRate);
       },
       zrusit: konec,
       // Kolik vzorků už přišlo — podle toho se pozná mikrofon, který nic nedává.
@@ -85,26 +88,66 @@
     };
   }
 
-  function wav(kusy, rate) {
+  /* Nahrávka jako WAV 16 kHz mono pro Whisper. Prohlížeč nahrává na 44,1
+     nebo 48 kHz a převzorkovat se musí s filtrem: prosté „každý třetí
+     vzorek“ zvuk zkreslí (aliasing) a přepis pak plete slova. */
+  async function wav16(kusy, rate) {
     let delka = 0;
     for (const k of kusy) delka += k.length;
     const vse = new Float32Array(delka);
     let o = 0;
     for (const k of kusy) { vse.set(k, o); o += k.length; }
-    // Převzorkování na 16 kHz — víc Whisper nepotřebuje a nahrávka je třikrát menší.
     const cil = 16000;
-    const n = Math.floor(vse.length * cil / rate);
+    let pcm = vse;
+    if (rate !== cil && vse.length) {
+      pcm = null;
+      const Off = global.OfflineAudioContext || global.webkitOfflineAudioContext;
+      if (Off) {
+        try {
+          const n = Math.ceil(vse.length * cil / rate);
+          const off = new Off(1, n, cil);
+          const buf = off.createBuffer(1, vse.length, rate);
+          buf.getChannelData(0).set(vse);
+          const src = off.createBufferSource();
+          src.buffer = buf;
+          src.connect(off.destination);
+          src.start(0);
+          const out = await new Promise((hotovo, chyba) => {
+            off.oncomplete = (ev) => hotovo(ev.renderedBuffer);
+            const p = off.startRendering();
+            if (p && p.then) p.then(hotovo, chyba);
+          });
+          pcm = out.getChannelData(0);
+        } catch (_) { pcm = null; }
+      }
+      if (!pcm) {
+        // Záloha: průměr přes okno — hrubý, ale pořád filtr.
+        const krok = rate / cil;
+        const n = Math.floor(vse.length / krok);
+        pcm = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+          const a = Math.floor(i * krok), b = Math.min(vse.length, Math.floor((i + 1) * krok));
+          let sum = 0;
+          for (let j = a; j < b; j++) sum += vse[j];
+          pcm[i] = sum / Math.max(1, b - a);
+        }
+      }
+    }
+    // Tichou nahrávku zesílit (nanejvýš 8×): Whisper slabý hlas snadno přeslechne.
+    let spicka = 0;
+    for (let i = 0; i < pcm.length; i++) { const a = Math.abs(pcm[i]); if (a > spicka) spicka = a; }
+    const zisk = spicka > 0 ? Math.min(8, 0.9 / spicka) : 1;
+    const n = pcm.length;
     const buf = new ArrayBuffer(44 + n * 2);
     const v = new DataView(buf);
-    const str = (at, s) => { for (let i = 0; i < s.length; i++) v.setUint8(at + i, s.charCodeAt(i)); };
+    const str = (at, t) => { for (let i = 0; i < t.length; i++) v.setUint8(at + i, t.charCodeAt(i)); };
     str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE');
     str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
     v.setUint32(24, cil, true); v.setUint32(28, cil * 2, true); v.setUint16(32, 2, true);
     v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, n * 2, true);
-    const krok = rate / cil;
     for (let i = 0; i < n; i++) {
-      const s = Math.max(-1, Math.min(1, vse[Math.floor(i * krok)] || 0));
-      v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      const x = Math.max(-1, Math.min(1, pcm[i] * zisk));
+      v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true);
     }
     return new Uint8Array(buf);
   }
@@ -123,7 +166,8 @@
     if (!btn || !input) return;
     btn.hidden = true;
     if (!umiMikrofon()) return;
-    ready().then((ok) => { btn.hidden = !ok; });
+    // Přepis jde i bez hlasu na tomhle stroji — počítač ho pošle na server.
+    ready().then((ok) => { btn.hidden = !(ok || (stav && stav.prepis)); });
     let rec = null, timer = null, start = 0, busy = false;
     const puvodni = input.placeholder;
 
@@ -140,7 +184,7 @@
       const r = rec;
       uklid();
       if (!r) return;
-      const data = r.stop();
+      const data = await r.stop();
       if (data.length < 44 + 16000) {           // pod půl vteřiny = omyl
         if (opts.notice) opts.notice('Nahrávka byla moc krátká.');
         return;

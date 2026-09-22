@@ -40,10 +40,12 @@ def prepis(model_dir):
                          local_files_only=True)
     segments, _info = model.transcribe(
         audio, language="cs", beam_size=5, vad_filter=True,
-        # Věty, jak je lidi píšou Claudovi: s diakritikou, interpunkcí a slovy,
-        # která Whisper jinak komolí (Claude, hub, commit, deploy…).
-        initial_prompt="Ahoj Claude, v hubu prosím udělej commit, push a deploy na "
-                       "server. Oprav to v Obsidianu a pošli mi výsledek.")
+        # Každá věta sama za sebe: navazování na předchozí text u krátkého
+        # diktování nepomáhá a Whisper se jím umí zacyklit.
+        condition_on_previous_text=False,
+        # Slova, která Whisper jinak komolí. Hotwords jen napovídají — na
+        # rozdíl od úvodního textu (initial_prompt) je nedopisuje do přepisu.
+        hotwords="Claude, Claude Code, hub, commit, push, deploy, Obsidian, server")
     text = " ".join(s.text.strip() for s in segments).strip()
     sys.stdout.write(text)
 

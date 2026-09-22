@@ -1472,6 +1472,27 @@
         status.className = 'set-status ok';
         status.textContent = 'Hlas je připravený.';
         if (!row.parentNode) box.appendChild(row);
+        // Přesnost, nebo rychlost přepisu (hub/hlas.py, MODELY).
+        const vyber = el('div', 'onb-list hlas-model');
+        const moznosti = [
+          ['turbo', 'Přesný přepis (doporučeno)', 'Česky zhruba dvakrát méně chyb; věta trvá asi 10 s.'],
+          ['small', 'Rychlý přepis', 'Asi 3 s na větu, ale plete víc slov.'],
+        ];
+        for (const [id, nazev, popis] of moznosti) {
+          const m = (s.models || {})[id] || {};
+          const r = el('label', 'onb-row');
+          const inp = el('input');
+          inp.type = 'radio';
+          inp.name = 'hlas-model';
+          inp.checked = s.model === id;
+          inp.disabled = !m.installed;
+          inp.onchange = () => save({hlas_model: id}).then(() => window.HubHlas && HubHlas.refresh());
+          r.appendChild(inp);
+          r.appendChild(el('span', null, nazev + ' — ' + popis +
+                           (m.installed ? '' : ' (na tomhle stroji není)')));
+          vyber.appendChild(r);
+        }
+        box.insertBefore(vyber, btns);
         const test = el('button', 'actionbtn', 'Vyzkoušet předčítání');
         test.onclick = () => window.HubHlas && HubHlas.speak(
           'Ahoj, tady je hub. Tohle je český hlas, kterým ti budu číst odpovědi.', null, io.toast);
