@@ -2640,3 +2640,16 @@ html:has(> body.is-touch), body.is-touch { height: var(--app-h, 100%); }
      systému (na iPhonu proužek dole), ne navíc. */
   .composer { padding: 4px 8px max(4px, calc(env(safe-area-inset-bottom) - 12px)); }
 }
+
+/* Otevřené chaty na úvodní stránce (hub.js renderWelcomeOpen). */
+.welcome-open { width: min(560px, 100%); margin: 10px 0 6px; text-align: left; }
+.welcome-open .wcol-title { padding-left: 8px; }
+.welcome-open-item { align-items: center; }
+.welcome-open-item .open-dot {
+  flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+}
+.welcome-open-item .wcol-note { color: var(--accent); }
+@media (max-width: 820px) {
+  .welcome-open .wcol-title { padding-left: 12px; }
+  .welcome-open-item { padding: 12px; border-radius: 12px; font-size: 15.5px; background: var(--bg-card); margin-bottom: 6px; }
+}

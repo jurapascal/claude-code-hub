@@ -12,6 +12,8 @@ let STATE = null;          // /api/state payload
 let WS = null;
 let TABS = [];             // {ref,id,title,kind,path,term,fit,pane,el,exited}
 let ACTIVE = null;
+// Po otevření appky zůstat na Domů (restore nepřepíná do posledního chatu).
+let START_HOME = true;
 let DARK = true;
 let refSeq = 0;
 
@@ -1339,6 +1341,32 @@ function kdy(ts) {
 
 /* Dva sloupce: kde se naposledy dělalo a co zůstalo rozdělané. Obojí je
    zkratka k tomu, co člověk stejně otevře jako první. */
+/* Otevřené chaty na úvodní stránce. Appka po otevření nepřeskočí do
+   posledního chatu (restore) — zůstane na Domů a tady je, kam pokračovat. */
+function renderWelcomeOpen() {
+  const box = $('welcome-open');
+  if (!box) return;
+  box.textContent = '';
+  const tabs = TABS.filter(t => !t.exited);
+  box.hidden = !tabs.length;
+  if (!tabs.length) return;
+  box.appendChild(Object.assign(document.createElement('div'),
+    {className: 'wcol-title', textContent: 'OTEVŘENÉ CHATY'}));
+  for (const t of tabs) {
+    const b = document.createElement('button');
+    b.className = 'wcol-item welcome-open-item';
+    b.innerHTML = '<span class="open-dot"></span><span class="wcol-name"></span>' +
+                  '<span class="wcol-note">pokračovat ›</span>';
+    b.querySelector('.wcol-name').textContent = t.title;
+    const dot = t.el && t.el.querySelector('.tab-agent');
+    const color = dot && dot.style.getPropertyValue('--agent-color');
+    if (t.vault === 'firma') b.querySelector('.open-dot').style.background = 'var(--firma)';
+    else if (color) b.querySelector('.open-dot').style.background = color;
+    b.onclick = () => activate(t);
+    box.appendChild(b);
+  }
+}
+
 function renderWelcomeCols() {
   const wrap = $('welcome-cols');
   wrap.textContent = '';
@@ -1681,7 +1709,9 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
   paintAgent(tab);   // až teď — dřív tab své tlačítko ještě nemá
 
   TABS.push(tab);
-  if (!background || !ACTIVE) activate(tab);
+  // Při prvním načtení (restore) se nepřepíná — appka zůstane na Domů.
+  if (!background || (!ACTIVE && !START_HOME)) activate(tab);
+  else if (!ACTIVE) renderWelcomeOpen();
   return tab;
 }
 
@@ -1765,6 +1795,7 @@ function activate(tab) {
   // Bez tabu (activate(null)) je vidět úvod — i když jsou taby otevřené:
   // domů se dá kdykoli (logo v liště, Domů v šuplíku) a taby běží dál.
   $('welcome').hidden = !!tab;
+  if (!tab) renderWelcomeOpen();
   syncActionbar(tab);
   if (tab) {
     refit(tab);
@@ -1885,6 +1916,7 @@ function closeTab(tab, {remote = false} = {}) {
   const next = TABS[TABS.length - 1];
   if (next) activate(next);
   else { $('welcome').hidden = false; $('clockify').hidden = true; $('actionbar').hidden = true; }
+  renderWelcomeOpen();
 }
 
 function startRename(tab) {
@@ -1913,6 +1945,7 @@ function startRename(tab) {
 /* Název změněný v jiném okně. Kdo ho tu zrovna přepisuje, tomu se nepřepíše. */
 function setTitle(tab, name) {
   tab.title = name;
+  if (!ACTIVE) renderWelcomeOpen();
   const holder = tab.el.querySelector('.tab-title');
   if (!holder.querySelector('input')) holder.textContent = name;
 }
@@ -2429,6 +2462,13 @@ function restore(list) {
       paintAgent(tab);
     }
     attachTab(tab);
+  }
+  // První načtení stránky: zůstat na Domů s přehledem otevřených chatů.
+  // Po znovupřipojení (výpadek sítě) zůstává tab, na kterém člověk byl.
+  if (START_HOME) {
+    START_HOME = false;
+    activate(before && TABS.includes(before) ? before : null);
+    return;
   }
   const keep = before && TABS.includes(before) ? before : TABS[TABS.length - 1];
   if (keep && keep !== ACTIVE) activate(keep);

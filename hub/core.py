@@ -2315,6 +2315,59 @@ def accept_bypass():
     os.replace(tmp, path)
 
 
+def trust_folder(path):
+    """Označí složku v ~/.claude.json jako důvěryhodnou, ať se Claude Code při
+    každém novém tabu neptá „Do you trust the files in this folder?“ — tab
+    otevírá člověk sám nad svou složkou, tím už souhlasil.
+
+    ~/.claude.json přepisuje za běhu i Claude Code, takže opatrně: nic, když
+    je složka už důvěryhodná; soubor, který nejde přečíst, se nepřepisuje; a
+    když se mezi čtením a zápisem změnil, zkusí se to znovu nad novým obsahem.
+    Vrací True, když je složka po volání důvěryhodná."""
+    if not path:
+        return False
+    target = os.path.join(HOME, ".claude.json")
+    key = os.path.abspath(os.path.expanduser(path))
+    for _pokus in range(3):
+        try:
+            before = os.stat(target).st_mtime_ns
+            with open(target, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except FileNotFoundError:
+            before, data = None, {}
+        except (OSError, ValueError):
+            return False
+        if not isinstance(data, dict):
+            return False
+        projects = data.setdefault("projects", {})
+        if not isinstance(projects, dict):
+            return False
+        entry = projects.setdefault(key, {})
+        if not isinstance(entry, dict):
+            return False
+        if entry.get("hasTrustDialogAccepted") is True:
+            return True
+        entry["hasTrustDialogAccepted"] = True
+        tmp = target + ".hub-tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+            now = os.stat(target).st_mtime_ns if before is not None else None
+            if now != before:
+                os.remove(tmp)
+                continue                  # Claude Code mezitím zapsal — znovu
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, target)
+            return True
+        except OSError:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            return False
+    return False
+
+
 _MODEL_ID = re.compile(r"^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(?:\[[^\]]*\])?$")
 
 

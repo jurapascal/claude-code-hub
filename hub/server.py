@@ -333,6 +333,13 @@ class Hub:
             script, env = core.cmd_agent(path, agent,
                                          slash="/" + kind.split(":", 1)[1])
             return script, path, env
+        # Claude Code se u nové složky ptá, jestli jí věří — tab nad ní ale
+        # otevírá člověk sám, tak se to rovnou potvrdí (core.trust_folder).
+        if (agent or core.default_agent()) == "claude" and path:
+            try:
+                core.trust_folder(path)
+            except Exception as exc:
+                core.log_error("důvěra ke složce", exc)
         script, env = core.cmd_agent(path, agent, model=model, resume=resume, fork=fork,
                                      vault=vault, prompt=prompt)
         return script, path, env
