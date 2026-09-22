@@ -18,6 +18,8 @@
 # připravená verze) — prostor to ukáže v Nastavení → Aktualizace.
 #
 # Ručně: claude-hub-update
+#        claude-hub-update --hned   # nečekat: zastavit prostory a bránu přepnout
+#                                   # hned (rozdělanou práci v nich to přeruší)
 #
 # Celé ve funkcích a spouštěné až posledním řádkem: install.sh tenhle soubor
 # během běhu přepíše novou verzí a bash by jinak dočítal už jiný obsah.
@@ -129,9 +131,20 @@ main() {
     fi
     uklidit
 
-    # 2. Bránu přepnout, až neběží žádný prostor.
+    # 2. Bránu přepnout, až neběží žádný prostor. S --hned je zastaví správce
+    # sám — otevřený prohlížeč si prostor hned spustí znovu, proto dokola,
+    # dokud nejsou všechny dole, a hned potom přepnutí (install.sh je krátký).
+    if [ "$HNED" = 1 ]; then
+        local pokus
+        for pokus in 1 2 3 4 5; do
+            claude-hub-admin sessions 2>/dev/null | awk '/^claude-hub-/{print $NF}' |
+                while read -r email; do claude-hub-admin stop "$email" >/dev/null 2>&1; done
+            [ "$(claude-hub-admin sessions 2>/dev/null | grep -c '^claude-hub-' || true)" -eq 0 ] && break
+            sleep 1
+        done
+    fi
     running="$(claude-hub-admin sessions 2>/dev/null | grep -c '^claude-hub-' || true)"
-    if [ "${running:-0}" -gt 0 ]; then
+    if [ "${running:-0}" -gt 0 ] && [ "$HNED" != 1 ]; then
         status true "Verze ${latest#v} je připravená — prostory se na ni přepnou, až je lidi aktualizují. Brána se přepne, až nepoběží žádný prostor (teď běží: $running)." "" "${latest#v}"
         return 0
     fi
@@ -163,5 +176,7 @@ main() {
     status true "Aktualizováno na ${latest#v}." "${latest#v}" "${latest#v}"
 }
 
+HNED=0
+[ "${1:-}" = "--hned" ] && HNED=1
 main "$@"
 exit
