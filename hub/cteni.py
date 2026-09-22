@@ -331,6 +331,10 @@ def _fronta(entry):
                  "why": str(entry.get("reason") or "")}]
     if op == "popAll":
         return [{"kind": "unqueue", "all": True}]
+    if op == "dequeue":
+        # Hned za tím přijde zpráva z fronty jako obyčejné `user` — čtení
+        # podle toho pozná, že nepřišla „odjinud“ (viz cteni.js, ztracene).
+        return [{"kind": "dequeue"}]
     return []
 
 

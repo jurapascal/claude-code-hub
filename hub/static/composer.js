@@ -622,7 +622,11 @@
       }
       // Víceřádkový text musí dorazit jako vložení, jinak by se každý řádek
       // odeslal zvlášť. Jednořádkový jde rovnou — bez uvozovacích sekvencí.
-      toPty(body.includes('\n') ? '\x1b[200~' + body + '\x1b[201~' : body);
+      // Taky text, který začíná otazníkem: v prázdném poli Claude Code
+      // otazník neznamená znak, ale nápovědu se zkratkami — samotné „?"
+      // by se tak nikdy neodeslalo. Vložení ho předá doslova.
+      const vlozit = body.includes('\n') || body.startsWith('?');
+      toPty(vlozit ? '\x1b[200~' + body + '\x1b[201~' : body);
       setTimeout(() => toPty('\r'), 180);
       /* Pojistka na ztracený Enter. Hned po startu si Claude Code delší dávku
          znaků vezme jako vložení a Enter za ní spolkne — text pak zůstane

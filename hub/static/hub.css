@@ -2560,3 +2560,8 @@ select option { background-color: var(--bg-card); color: var(--fg-bright); }
   .cteni-say pre { font-size: 12.5px; }
   .cteni-say ul, .cteni-say ol { padding-left: 1.3em; }
 }
+
+/* Zpráva, kterou Claude Code z fronty zahodil (restart tabu) — cteni.js. */
+.cteni-me.ztracena .cteni-bubble { opacity: .7; border-style: dashed;
+  border-color: color-mix(in srgb, var(--red) 55%, var(--border)); }
+.cteni-me.ztracena .cteni-stitek { color: var(--red); }

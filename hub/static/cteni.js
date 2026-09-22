@@ -451,8 +451,32 @@
       }
     }
 
+    /* Zprávy ve frontě, které Claude Code zahodil. Fronta žije jen v jeho
+       paměti: restart tabu (nebo pád) ji smaže a v přepisu po ní zbyde jen
+       zařazení. Pozná se to podle další zprávy, která z fronty nepřišla —
+       frontou by před ní šel `dequeue`. Takové bubliny zůstanou vidět, ale
+       řeknou pravdu: neodešly. */
+    let zFrontyDalsi = false;
+    function ztracene(krome) {
+      for (const c of cekajici.splice(0)) {
+        if (c.key === krome) { c.row.remove(); continue; }
+        c.row.classList.remove('fronta');
+        c.row.classList.add('ztracena');
+        const st = c.row.querySelector('.cteni-stitek');
+        if (st) st.textContent = 'Neodešlo — Claude Code frontu při restartu zahodil. Pošli to znovu.';
+      }
+    }
+
     function pridej(b) {
+      if (b.kind === 'dequeue') {
+        zFrontyDalsi = true;
+        return;
+      }
       if (b.kind === 'me') {
+        if (!b.mid) {
+          if (zFrontyDalsi) zFrontyDalsi = false;
+          else if (cekajici.length) ztracene(b.key);
+        }
         if (b.key) zFronty(b.key);           // z fronty rovnou do konverzace
         potvrd(b);
         mount.appendChild(bublina(b, b.mid ? 'mid' : '',
