@@ -215,13 +215,37 @@
   // visualViewport umí přijít i jindy — a každé takové „přepočítej" jde přes
   // refit až do pty, kde ConPTY na Windows překreslí celou obrazovku.
   if (touch && window.visualViewport) {
-    let pending = 0;
-    const nudge = () => {
-      clearTimeout(pending);
-      pending = setTimeout(() => window.dispatchEvent(new Event('resize')), 120);
+    /* Výška appky = to, co je opravdu vidět (--app-h, hub.css). Firefox na
+       Androidu i Safari na iPhonu při klávesnici stránku nezmenší, jen ji
+       posunou, aby bylo vidět pole — a po zavření klávesnice posun nechají:
+       pod polem na psaní pak zůstal prázdný pruh. Takhle se appka vejde
+       nad klávesnici, a jakmile zajede, vrátí se celá na místo. */
+    const root = document.documentElement;
+    const vv = window.visualViewport;
+    let pending = 0, last = 0;
+    const sync = () => {
+      const h = Math.round(vv.height);
+      if (h !== last) {
+        root.style.setProperty('--app-h', h + 'px');
+        last = h;
+      }
+      // Stránka se sama nikdy neposouvá (body má overflow: hidden) — každý
+      // posun je od prohlížeče kvůli klávesnici a má zmizet.
+      if (window.scrollY || document.scrollingElement.scrollTop) {
+        window.scrollTo(0, 0);
+        document.scrollingElement.scrollTop = 0;
+      }
     };
-    visualViewport.addEventListener('resize', nudge);
-    visualViewport.addEventListener('scroll', nudge);
+    const nudge = () => {
+      sync();
+      clearTimeout(pending);
+      pending = setTimeout(() => { sync(); window.dispatchEvent(new Event('resize')); }, 120);
+    };
+    vv.addEventListener('resize', nudge);
+    vv.addEventListener('scroll', nudge);
+    // Po zavření klávesnice (fokus pryč z pole) ještě jednou, až dojede animace.
+    document.addEventListener('focusout', () => setTimeout(nudge, 350));
+    sync();
   }
 
   /* ── service worker ───────────────────────────────────────────────────── */
