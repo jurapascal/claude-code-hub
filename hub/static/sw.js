@@ -17,8 +17,8 @@ div{max-width:22rem;text-align:center}b{color:#e0843c}
 button{margin-top:18px;padding:10px 18px;border-radius:9px;border:1px solid #3a3f47;
 background:#1b2129;color:#e8e3d3;font:inherit}</style>
 <div><p><b>Hub není k zastižení.</b></p>
-<p>Zkontroluj, že na počítači běží Claude Code Hub a že je telefon připojený
-do Tailscale.</p>
+<p>Zkontroluj připojení k internetu. Když se připojuješ k počítači, musí na
+něm běžet Claude Code Hub a telefon musí být v Tailscale.</p>
 <button onclick="location.reload()">Zkusit znovu</button></div>`;
 
 self.addEventListener('install', () => self.skipWaiting());

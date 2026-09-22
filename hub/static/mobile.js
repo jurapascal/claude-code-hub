@@ -225,6 +225,42 @@
   }
 
   /* ── service worker ───────────────────────────────────────────────────── */
+  /* ── instalace na plochu ─────────────────────────────────────────────── */
+  /* Android (Chrome, Edge, Samsung) pošle `beforeinstallprompt` — ten se
+     schová a vyvolá z nabídky v liště. Safari na iPhonu instalaci skriptem
+     nedovolí: tam nabídka ukáže, kde to v Safari najít. Když hub už běží
+     z ikony na ploše, nenabízí se nic. */
+  let installEv = null;
+  window.addEventListener('beforeinstallprompt', (ev) => {
+    ev.preventDefault();
+    installEv = ev;
+  });
+  window.addEventListener('appinstalled', () => { installEv = null; });
+  const standalone = () => matchMedia('(display-mode: standalone)').matches ||
+                           window.navigator.standalone === true;
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+              (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  window.HubInstall = {
+    // Co nabídnout: 'prompt' (Android), 'ios' (návod), nebo '' (nic).
+    kind() {
+      if (standalone()) return '';
+      if (installEv) return 'prompt';
+      return ios ? 'ios' : '';
+    },
+    async run(notice) {
+      if (installEv) {
+        const ev = installEv;
+        installEv = null;
+        ev.prompt();
+        try { await ev.userChoice; } catch (_) { /* zavřeno */ }
+        return;
+      }
+      if (ios && notice) {
+        notice('V Safari klepni na Sdílet (čtvereček se šipkou) → Přidat na plochu.');
+      }
+    },
+  };
+
   // Registruje se jen v bezpečném kontextu; přes http na tailnet adrese ho
   // prohlížeč stejně odmítne a hub funguje i bez něj, jen se nedá nainstalovat.
   if ('serviceWorker' in navigator && window.isSecureContext) {

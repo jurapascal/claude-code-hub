@@ -439,8 +439,16 @@ class HubManager:
 # ── stránky, které patří bráně (ne hubu) ─────────────────────────────────────
 def _page(title, body):
     return ("""<!doctype html><html lang=cs><meta charset=utf-8>
-<meta name=viewport content="width=device-width,initial-scale=1">
+<meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>""" + html.escape(title) + """</title>
+<link rel=manifest href="/manifest.webmanifest">
+<link rel=icon href="/favicon.ico" sizes=any>
+<link rel=apple-touch-icon href="/icon-192.png">
+<meta name=theme-color content="#16150f">
+<meta name=mobile-web-app-capable content=yes>
+<meta name=apple-mobile-web-app-capable content=yes>
+<meta name=apple-mobile-web-app-status-bar-style content=black-translucent>
+<meta name=apple-mobile-web-app-title content="Claude Hub">
 <style>
 :root{color-scheme:dark}
 *{box-sizing:border-box}
@@ -545,6 +553,22 @@ jednou. Ulož si je (správce hesel, vytisknout). Znovu se neukážou.</p>
 </div>""")
 
 
+# Veřejné soubory PWA — nic tajného, stejné pro všechny. Berou se ze zdroje
+# hubu, ze kterého jede brána.
+PWA_FILES = {
+    "/manifest.webmanifest": ("application/manifest+json", "no-cache"),
+    "/sw.js": ("text/javascript; charset=utf-8", "no-cache"),
+    "/favicon.ico": ("image/x-icon", "public, max-age=86400"),
+    "/icon-32.png": ("image/png", "public, max-age=86400"),
+    "/icon-192.png": ("image/png", "public, max-age=86400"),
+    "/icon-256.png": ("image/png", "public, max-age=86400"),
+    "/icon-512.png": ("image/png", "public, max-age=86400"),
+    "/icon-512-maskable.png": ("image/png", "public, max-age=86400"),
+}
+PWA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "hub", "static")
+
+
 # ── HTTP handler ──────────────────────────────────────────────────────────────
 class Handler(BaseHTTPRequestHandler):
     server_version = "ClaudeHubGateway"
@@ -639,6 +663,11 @@ class Handler(BaseHTTPRequestHandler):
             parsed = urllib.parse.urlparse(self.path)
             route = parsed.path
 
+            # Soubory pro instalaci na plochu (PWA). Prohlížeč si manifest
+            # i ikony stahuje bez přihlašovací cookie — kdyby chtěly přihlášení,
+            # Android by instalaci nenabídl a iPhone by neměl ikonu.
+            if route in PWA_FILES:
+                return self._pwa_file(route)
             # Napojení z appky Claude (MCP + OAuth): vlastní přihlášení
             # a tokeny, cookie brány se tu nepoužívá (gateway/mcp.py).
             if mcp.route(self, method, route):
@@ -722,6 +751,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": f"Brána: {exc}"}, 502)
             except Exception:
                 pass
+
+    def _pwa_file(self, route):
+        ctype, cache = PWA_FILES[route]
+        try:
+            with open(os.path.join(PWA_DIR, route.lstrip("/")), "rb") as fh:
+                body = fh.read()
+        except OSError:
+            return self._send(404, b"404")
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", cache)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     # ---- firemní Obsidian ----
     def _firma_publish(self, method, user):

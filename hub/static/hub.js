@@ -2200,6 +2200,12 @@ function topbarMenu(btn) {
     {icon: 'i-chart', label: 'Statistiky', run: () => HubStats.open(hubIO())},
     {icon: 'i-refresh', label: 'Načíst znovu', run: () => reload()},
   );
+  // Instalace na plochu (PWA) — jen v prohlížeči, ne když už hub běží z ikony.
+  const inst = window.HubInstall && HubInstall.kind();
+  if (inst) {
+    items.push({icon: 'i-phone', label: 'Nainstalovat na plochu', color: 'var(--accent)',
+                run: () => HubInstall.run(toast)});
+  }
   const box = btn.getBoundingClientRect();
   // Zprava: nabídka se otevírá pod ikonou a nesmí přetéct za okraj.
   showMenu(box.right - 230, box.bottom - 3, items);
