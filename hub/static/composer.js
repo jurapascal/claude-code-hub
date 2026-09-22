@@ -671,7 +671,11 @@
       atts.length = 0;
       renderAtts();
       autogrow();
-      input.focus();
+      // Na telefonu po odeslání schovat klávesnici — jinak zakrývá půlku
+      // obrazovky s odpovědí, na kterou se teď čeká. Na počítači zůstává
+      // kurzor v poli, ať jde hned psát dál.
+      if (document.body.classList.contains('is-touch')) input.blur();
+      else input.focus();
     }
 
     function insert(text, {focus = true} = {}) {

@@ -1769,9 +1769,13 @@ function activate(tab) {
     claimSize(tab);
     if (tab.links) tab.links.update();      // skrytý tab odkazy nečetl
     if (tab.cteni) tab.cteni.wake();        // a čtení je o dotaz pozadu
-    tab.term.focus();
-    // Když je vidět bublina, píše se do ní — fokus patří jí.
-    if (tab.composer) tab.composer.focus();
+    // Na telefonu fokus nebrat: vyjela by klávesnice a zakryla půlku
+    // obrazovky, i když člověk chtěl tab jen vidět. Do pole si klepne sám.
+    if (!document.body.classList.contains('is-touch')) {
+      tab.term.focus();
+      // Když je vidět bublina, píše se do ní — fokus patří jí.
+      if (tab.composer) tab.composer.focus();
+    }
   }
 }
 
