@@ -10,6 +10,7 @@ přes `--password` (hodí se do skriptu, ale zůstane v historii shellu).
     python3 -m gateway.admin list
     python3 -m gateway.admin passwd jmeno@firma.cz
     python3 -m gateway.admin role jmeno@firma.cz user
+    python3 -m gateway.admin jmeno jmeno@firma.cz "Jméno Příjmení"
     python3 -m gateway.admin vault jmeno@firma.cz "Jméno Brain"
     python3 -m gateway.admin disable jmeno@firma.cz
     python3 -m gateway.admin enable jmeno@firma.cz
@@ -150,6 +151,12 @@ def cmd_zamky(a, args):
 def cmd_passwd(a, args):
     a.set_password(args.email, _ask_password(args.password))
     print(f"Heslo pro {args.email} změněno (a všechna zařízení odhlášena).")
+
+
+def cmd_jmeno(a, args):
+    a.set_name(args.email, args.jmeno)
+    print(f"{args.email} se teď jmenuje „{' '.join(args.jmeno.split())}“. "
+          "V hubu se to ukáže po dalším startu jeho prostoru.")
 
 
 def cmd_role(a, args):
@@ -596,6 +603,11 @@ def build_parser():
     ro.add_argument("email")
     ro.add_argument("role", choices=("user", "admin"))
     ro.set_defaults(func=cmd_role)
+
+    jm = sub.add_parser("jmeno", help="změnit jméno uživatele")
+    jm.add_argument("email")
+    jm.add_argument("jmeno")
+    jm.set_defaults(func=cmd_jmeno)
 
     va = sub.add_parser("vault", help="přejmenovat vault")
     va.add_argument("email")

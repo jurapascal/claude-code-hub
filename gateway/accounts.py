@@ -297,6 +297,17 @@ class Accounts:
             self.db.execute("UPDATE users SET role = ? WHERE email = ?",
                             (role, email))
 
+    def set_name(self, email, name):
+        """Jméno, jak ho hub ukazuje (pozdrav, členové, přístupy)."""
+        name = " ".join(str(name or "").split())
+        if len(name) > 80:
+            raise ValueError("Jméno je moc dlouhé.")
+        with self._lock:
+            cur = self.db.execute("UPDATE users SET name = ? WHERE email = ?",
+                                  (name, (email or "").strip().lower()))
+            if not cur.rowcount:
+                raise ValueError(f"{email} tu žádný účet nemá.")
+
     def set_vault(self, email, vault):
         with self._lock:
             cur = self.db.execute("UPDATE users SET vault = ? WHERE email = ?",
