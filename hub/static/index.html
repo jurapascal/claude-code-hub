@@ -72,8 +72,10 @@
   <button id="btn-drawer" class="iconbtn drawer-toggle" title="Projekty a konverzace">
     <svg class="ico"><use href="#i-menu"/></svg></button>
   <div class="topbar-title">
-    <svg class="ico brand-ico"><use href="#i-hub"/></svg>
-    <strong>Claude Code</strong><button id="btn-place" class="topbar-badge"></button>
+    <!-- Logo a název = domů na úvodní stránku (i s otevřenými taby). -->
+    <button id="btn-home" class="topbar-home" title="Úvodní stránka">
+      <svg class="ico brand-ico"><use href="#i-hub"/></svg><strong>Claude Code</strong></button>
+    <button id="btn-place" class="topbar-badge"></button>
     <!-- Jen na telefonu: jméno otevřeného tabu uprostřed lišty (mobile.js),
          lišta s taby se tam nevejde. -->
     <span id="topbar-tab" class="topbar-tab"></span>
@@ -108,6 +110,8 @@
       <button id="btn-drawer-x" class="iconbtn" title="Zavřít panel">
         <svg class="ico"><use href="#i-close"/></svg></button>
     </div>
+    <button id="btn-drawer-home" class="drawer-new drawer-home">
+      <svg class="ico"><use href="#i-hub"/></svg> Domů</button>
     <button id="btn-drawer-new" class="drawer-new">
       <svg class="ico"><use href="#i-compose"/></svg> Nový tab</button>
     <div id="open-section" class="open-section" hidden>

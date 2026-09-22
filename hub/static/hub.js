@@ -1762,7 +1762,9 @@ function activate(tab) {
     t.el.classList.toggle('active', t === tab);
     t.pane.classList.toggle('active', t === tab);
   }
-  $('welcome').hidden = TABS.length > 0;
+  // Bez tabu (activate(null)) je vidět úvod — i když jsou taby otevřené:
+  // domů se dá kdykoli (logo v liště, Domů v šuplíku) a taby běží dál.
+  $('welcome').hidden = !!tab;
   syncActionbar(tab);
   if (tab) {
     refit(tab);
@@ -1778,6 +1780,13 @@ function activate(tab) {
     }
   }
 }
+
+/* Úvodní stránka i s otevřenými taby — taby běží dál, klik na tab vrátí zpátky. */
+function goHome() {
+  activate(null);
+  if (window.HubMobile) HubMobile.closeDrawer();
+}
+window.hubHome = goHome;
 
 function refit(tab) {
   if (!tab || tab.pane.offsetWidth === 0) return;
@@ -2548,6 +2557,7 @@ async function main() {
   $('btn-settings').onclick = () => HubSettings.open({...hubIO(), state: STATE});
   $('btn-stats').onclick = () => HubStats.open(hubIO());
   $('btn-menu').onclick = (ev) => topbarMenu(ev.currentTarget);
+  $('btn-home').onclick = goHome;
   setInterval(renderGreeting, 5 * 60 * 1000);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') renderGreeting();

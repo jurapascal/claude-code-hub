@@ -154,6 +154,8 @@
   if (newTop) newTop.onclick = () => newTab(newTop);
   const drawerNew = $('btn-drawer-new');
   if (drawerNew) drawerNew.onclick = () => { closeDrawer(); if (newTop) newTab(newTop); };
+  const drawerHome = $('btn-drawer-home');
+  if (drawerHome) drawerHome.onclick = () => { if (window.hubHome) window.hubHome(); else closeDrawer(); };
   const drawerX = $('btn-drawer-x');
   if (drawerX) drawerX.onclick = closeDrawer;
 
