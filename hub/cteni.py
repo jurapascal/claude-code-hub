@@ -90,6 +90,22 @@ _OZNAMENI = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
 # Poznámka, kterou Claude Code předřadí výsledku agenta pro Clauda („control
 # tags below are neutralized…"). Člověku nic neříká, do karty nepatří.
 _POZNAMKA_HARNESS = re.compile(r"^\s*\[harness:[^\n]*\]\s*")
+# Výpis slash příkazu (/login, /logout, /model…). Claude Code ho zapíše jako
+# zprávu od člověka, jen obalenou značkou — bez ní by ve čtení nebyl vidět.
+_VYPIS = re.compile(r"<local-command-(stdout|stderr)>(.*?)</local-command-\1>", re.S)
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
+
+def _vypisy(text):
+    """Bloky `out` z výpisů slash příkazů — co Claude Code odpověděl mimo
+    konverzaci („Login successful", chyba přihlášení…)."""
+    out = []
+    for m in _VYPIS.finditer(text if isinstance(text, str) else ""):
+        obsah = _ANSI.sub("", m.group(2)).strip()
+        if obsah:
+            out.append({"kind": "out", "text": _zkrat(obsah, MAX_RESULT),
+                        "err": m.group(1) == "stderr"})
+    return out
 
 
 def _text_cloveka(obsah):
@@ -396,6 +412,8 @@ def _bloky_zpravy(entry):
         if isinstance(obsah, str):
             if "<task-notification>" in obsah:
                 out.extend(_oznameni(obsah))
+            if "<local-command-" in obsah:
+                out.extend(_vypisy(obsah))
             od = _zprava_od_session(obsah)
             if od:
                 return out + [od]

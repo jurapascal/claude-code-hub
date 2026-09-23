@@ -82,6 +82,13 @@
   // Hláška, po které Claude Code čeká jen na Enter: po přihlášení („continue")
   // i po neplatném kódu („retry" — jinak by se z chyby nedalo myší ven).
   const CONTINUE = /Press Enter to (continue|retry)/i;
+  /* Obrazovky, na kterých musí být vidět terminál, i když je tab ve čtení
+     (cteni.js): přihlašovací odkaz, čekání na kód, „Press Enter" po přihlášení
+     a konec Claude Code (po /logout zbyde shell). Nic z toho se do přepisu
+     konverzace nezapíše, takže pod čtením by zůstala prázdná stránka. */
+  // Claude Code skončil a v tabu zbyl shell (hub/core.py cmd_agent).
+  const ENDED = /\[ session ukon/;
+  const TERM_NEEDED = /oauth\/authorize|Opening browser to sign in|Browser didn't open\?|Paste (the )?code here|Press Enter to (continue|retry)|\[ session ukon/i;
 
   /* Dialog, který volby nečísluje — stojí prostě pod sebou a vybranou označuje
      jedině šipka („Yes, I trust this folder" hned po startu). Že jde o nabídku
@@ -1054,7 +1061,7 @@
                      {label: '↓', title: 'O položku níž', run: () => press('\x1b[B')},
                      {label: 'Vybrat (Enter)', run: () => press('\r')},
                      {label: 'Zrušit (Esc)', ghost: true, run: () => press('\x1b')});
-      } else if (!rows.length && lines.length && CONTINUE.test(text)) {
+      } else if (!rows.length && lines.length && CONTINUE.test(text) && !ENDED.test(text)) {
         // Čeká se jen na Enter (po přihlášení a podobně) — tlačítko do lišty,
         // ať se nemusí hledat terminál pod ní.
         buttons.push({label: /retry/i.test(text) ? 'Zkusit znovu (Enter)' : 'Pokračovat (Enter)',
@@ -1398,6 +1405,18 @@
       dirty = true;
     }
 
+    /* Je na obrazovce něco, co se musí vyřídit v terminálu (TERM_NEEDED)?
+       Čte se celý viditelný terminál — odkaz stojí nad polem na kód. */
+    function needsTerminal() {
+      if (!AG.full || !tab.cteni) return false;
+      const buf = term.buffer.active;
+      for (let i = 0; i < term.rows; i++) {
+        const row = buf.getLine(buf.viewportY + i);
+        if (row && TERM_NEEDED.test(row.translateToString(true))) return true;
+      }
+      return false;
+    }
+
     function looksIdle() {
       if (tab.exited) return false;
       const buf = term.buffer.active;
@@ -1449,7 +1468,9 @@
           cekaTimer = setTimeout(() => apply(), READY_MS - vydrzel + 30);
         }
       }
-      const cteni = !!tab.cteni && !tab.pane.classList.contains('asking');
+      const naTerminal = needsTerminal();
+      tab.pane.classList.toggle('terminal', naTerminal);
+      const cteni = !!tab.cteni && !naTerminal && !tab.pane.classList.contains('asking');
       const want = !hiddenByUser && (idle || cteni);
       if (want !== shown && (force || Date.now() - flippedAt >= DWELL_MS)) {
         flippedAt = Date.now();
@@ -1470,7 +1491,7 @@
       // Měřit jde až s nasazenou třídou: složená bublina je jenom proužek
       // a vyšla by z ní čtvrtinová výška.
       if (AG.full) readBanner();
-      if (shown && tab.cteni) {
+      if (shown && tab.cteni && !naTerminal) {
         /* Ve čtení je terminál schovaný, takže není co přesně překrývat.
            Přeměřování podle Claudeova vstupního pole (fitOver) tu bublinu
            při každém překreslení výpisu natahovalo a smršťovalo a zkracovalo

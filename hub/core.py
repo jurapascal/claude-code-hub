@@ -2718,7 +2718,7 @@ def cmd_agent(path, agent_id="", slash="", model="", resume="", fork=False, vaul
     w = sh_quote(to_shell_path(wrapper))
     args = "".join(" " + sh_quote(a) for a in argv)
     script = (f'cd {p} && bash {w}{args}; '
-              f'echo; echo "[ session ukončena — tab zůstává jako shell ]"; exec bash')
+              f'echo; echo "[ session ukončena — tab zůstává jako shell, claude + Enter ho spustí znovu ]"; exec bash')
     env = agents.env_for(spec, model)
     # Barva úvodní hlavičky v tabu říká totéž co tečka na tabu: KDE se píše.
     # Nad firemním trezorem fialově, v prostoru na serveru modře, na počítači

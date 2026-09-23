@@ -697,7 +697,7 @@ body { display: flex; flex-direction: column; }
 }
 /* Přes čtení (cteni.js) je terminál schovaný — jeho tlačítka by visela nad
    textem konverzace na místech, kde v terminálu zrovna stojí adresa. */
-.pane.cteni-on:not(.asking) .links { display: none; }
+.pane.cteni-on:not(.asking):not(.terminal) .links { display: none; }
 /* Výplň barvou terminálu — to ona adresu schová. */
 .link {
   position: absolute;
@@ -2039,6 +2039,8 @@ select option { background-color: var(--bg-card); color: var(--fg-bright); }
   display: flex; flex-direction: column;
 }
 .pane.asking .cteni { display: none; }
+/* Přihlášení a konec Claude Code — to je jen v terminálu (composer.js TERM_NEEDED). */
+.pane.terminal .cteni { display: none; }
 .cteni-scroll {
   flex: 1; min-height: 0; overflow-y: auto;
   padding: 16px 20px calc(var(--composer-h, 0px) + 18px);
@@ -2209,6 +2211,18 @@ select option { background-color: var(--bg-card); color: var(--fg-bright); }
   border: 1px solid color-mix(in srgb, var(--red) 40%, var(--border));
 }
 .cteni-pozor-ico { color: var(--red); flex: none; }
+/* Výpis slash příkazu (/login, /model…) — tlumeně, ať se neplete s Claudem. */
+.cteni-vypis {
+  display: flex; gap: 9px; align-items: baseline; align-self: flex-start;
+  max-width: 100%; padding: 6px 12px; border-radius: 10px;
+  font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.5;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  color: var(--dim); background: var(--bg-card); border: 1px solid var(--border);
+}
+.cteni-vypis-ico { flex: none; color: var(--accent); }
+.cteni-vypis.chyba { color: var(--fg-bright);
+  border-color: color-mix(in srgb, var(--red) 40%, var(--border)); }
+.cteni-vypis.chyba .cteni-vypis-ico { color: var(--red); }
 
 /* Agenti na pozadí — proužek na konci konverzace, klepnutím k jejich kartě. */
 .cteni-pozadi {

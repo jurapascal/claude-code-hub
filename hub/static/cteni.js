@@ -499,6 +499,13 @@
         }
         return;
       }
+      if (b.kind === 'out') {
+        // Výpis slash příkazu (/login, /logout…) — odpověď Claude Code, ne Clauda.
+        const box = el('div', 'cteni-vypis' + (b.err ? ' chyba' : ''));
+        box.append(el('span', 'cteni-vypis-ico', b.err ? '⚠' : '›'), el('span', '', b.text));
+        mount.appendChild(box);
+        return;
+      }
       if (b.kind === 'say') {
         const box = el('div', 'cteni-say vault-md');
         const html = markdown(b.text);
