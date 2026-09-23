@@ -1763,6 +1763,7 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
                  `<span class="tab-close" title="Zavřít tab">${icon('i-close')}</span>`;
   el.querySelector('.tab-title').textContent = title;
   el.onclick = (ev) => {
+    if (ev.target.closest('input')) return;       // pole na přejmenování
     if (ev.target.closest('.tab-close')) { requestCloseTab(tab); return; }
     activate(tab);
   };
@@ -1987,12 +1988,21 @@ function startRename(tab) {
   const holder = tab.el.querySelector('.tab-title');
   const input = document.createElement('input');
   input.value = tab.title;
+  input.maxLength = 60;
   holder.textContent = '';
+  // Tab je tlačítko: mezera v poli by ho „stiskla" (keyup → click), tab by se
+  // přepnul, pole ztratilo fokus a z názvu by zbylo jen první slovo. Tažení
+  // tabu by zase bralo výběr textu myší.
+  tab.el.draggable = false;
   holder.appendChild(input);
   input.focus();
   input.select();
+  let done = false;
   const finish = () => {
-    const name = input.value.trim() || tab.title;
+    if (done) return;
+    done = true;
+    tab.el.draggable = true;
+    const name = input.value.replace(/\s+/g, ' ').trim() || tab.title;
     tab.title = name;
     holder.textContent = name;
     if (tab.id) send({t: 'rename', id: tab.id, title: name});
@@ -2000,10 +2010,20 @@ function startRename(tab) {
   input.onblur = finish;
   input.onkeydown = (ev) => {
     if (ev.key === 'Enter') { ev.preventDefault(); finish(); }
-    if (ev.key === 'Escape') { ev.preventDefault(); holder.textContent = tab.title; }
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      done = true;
+      tab.el.draggable = true;
+      holder.textContent = tab.title;
+    }
+    ev.stopPropagation();
+  };
+  input.onkeyup = (ev) => {
+    if (ev.key === ' ') ev.preventDefault();
     ev.stopPropagation();
   };
   input.onclick = (ev) => ev.stopPropagation();
+  input.ondblclick = (ev) => ev.stopPropagation();
 }
 
 /* Název změněný v jiném okně. Kdo ho tu zrovna přepisuje, tomu se nepřepíše. */
