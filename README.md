@@ -186,7 +186,40 @@ sudo apt install gir1.2-webkit2-4.1     # nebo prostě chromium
 
 ## Instalace
 
-Jeden řádek — ale **na každém systému jiný**. Windows má PowerShell, ne bash:
+### Stáhnout a spustit (doporučeno)
+
+Jeden soubor pro tvůj systém — Python ani nic dalšího předem není potřeba.
+Po spuštění se otevře okno, instalace v něm proběhne sama (průběh je vidět)
+a pak naváže průvodce.
+
+| Systém | Soubor |
+|---|---|
+| **Windows** 10/11 | [Claude-Code-Hub-Setup.exe](https://github.com/jurapascal/claude-code-hub/releases/latest/download/Claude-Code-Hub-Setup.exe) |
+| **macOS** Apple Silicon (M1–M4) | [Claude-Code-Hub-mac-apple-silicon.dmg](https://github.com/jurapascal/claude-code-hub/releases/latest/download/Claude-Code-Hub-mac-apple-silicon.dmg) |
+| **macOS** Intel | [Claude-Code-Hub-mac-intel.dmg](https://github.com/jurapascal/claude-code-hub/releases/latest/download/Claude-Code-Hub-mac-intel.dmg) |
+| **Linux** (x86_64) | [Claude-Code-Hub-x86_64.AppImage](https://github.com/jurapascal/claude-code-hub/releases/latest/download/Claude-Code-Hub-x86_64.AppImage) |
+
+Instalačky nejsou podepsané certifikátem Microsoftu ani Applu, takže poprvé
+se systém ohradí:
+
+- **Windows:** modré okno „Systém Windows ochránil váš počítač" → *Další
+  informace* → *Přesto spustit*. Instaluje se jen pro tebe, bez práv správce
+  (do `%LOCALAPPDATA%\ClaudeCodeHub`). Git, Claude Code a Obsidian
+  doinstaluje přes winget sám; u Gitu Windows jednou požádá o povolení.
+- **macOS:** otevři `.dmg`, přetáhni *Claude Code Hub* do *Aplikací* a spusť.
+  Když macOS napíše, že appku nejde ověřit: *Nastavení systému → Soukromí
+  a zabezpečení* → dole *Přesto otevřít* (jen napoprvé).
+- **Linux:** soubor označ jako spustitelný (vlastnosti souboru → *Povolit
+  spouštění*, nebo `chmod +x Claude-Code-Hub-x86_64.AppImage`) a spusť.
+  Po instalaci je hub i v nabídce aplikací.
+
+Další aktualizace už jdou z appky (Nastavení → Aktualizace), instalačku znovu
+stahovat není potřeba. Instalačky staví `.github/workflows/instalacky.yml`
+ke každé vydané verzi, zdroj je v `packaging/`.
+
+### Jedním řádkem v terminálu
+
+Pro pokročilé a servery. **Na každém systému jiný**. Windows má PowerShell, ne bash:
 `curl -fsSL … | bash` tam skončí na `A parameter cannot be found that matches
 parameter name 'fsSL'`, protože `curl` je v PowerShellu jenom jiné jméno pro
 `Invoke-WebRequest`.
@@ -791,6 +824,11 @@ i typ (Git / Node / PHP / Shopify).
 ## Obsah repa
 
 ```
+packaging/                instalačky ke stažení: launcher.py (spouštěč v balíku), stage.py
+                          (přenosný Python + zdroj), linux/ (AppImage), windows/ (Inno Setup), mac/ (.dmg)
+hub/setup.py              instalace v okně: install.sh --app / install.ps1 -App s průběhem pro stránku
+hub/static/setup.js       obrazovka instalace při prvním spuštění staženého balíku
+.github/workflows/instalacky.yml  sestavení instalaček ke každé značce v* a přidání k vydání
 get.sh                    jednořádková instalace (curl … | bash) — stáhne repo a spustí install.sh
 get.ps1                   totéž pro Windows (irm … | iex)
 install.sh                instalačka pro Linux/macOS

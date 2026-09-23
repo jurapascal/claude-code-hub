@@ -2773,6 +2773,8 @@ async function applyReturn() {
  * Sem se tedy dostane, jen když to nevyšlo (server neodpovídá, přihlášení
  * vypršelo) — nebo když se okno ze serveru vrátilo. */
 async function startScreen(returned) {
+  // Hub puštěný instalačkou ke stažení: nejdřív se musí nainstalovat.
+  if (STATE.setup) return HubSetup.open(hubIO());
   const onLocal = (opts) => {
     // Napoprvé se hub nastavuje tady, ne v instalačce — ta běží jednou a v
     // terminálu, takže po ní nebylo kde nastavení změnit.

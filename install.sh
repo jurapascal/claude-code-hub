@@ -27,12 +27,21 @@ CONFIG="$CLAUDE_DIR/hub-config.json"
 
 ASSUME_YES=false
 MINIMAL=false
+APP=false
 for arg in "$@"; do
     case "$arg" in
         --yes) ASSUME_YES=true ;;
         --minimal) MINIMAL=true ;;
+        # Instalačka ke stažení (AppImage, .dmg) pouští tohle z okna hubu
+        # (hub/setup.py): bez otázek a navíc doinstaluje Claude Code.
+        --app) ASSUME_YES=true; APP=true ;;
     esac
 done
+
+# Python, na který mají mířit hooky, slash příkazy a položka v nabídce.
+# Instalačka ke stažení nese vlastní (HUB_PYTHON) — na Macu jiný být nemusí.
+PY="${HUB_PYTHON:-python3}"
+command -v "$PY" >/dev/null 2>&1 || [ -x "$PY" ] || PY=python3
 # Přes `curl … | bash` je na stdin skript, ne klávesnice. Terminál uživatele
 # je pořád na /dev/tty, takže se dá ptát dál.
 # Zkouška v subshellu: existence /dev/tty nestačí (bez řídicího terminálu se
@@ -52,13 +61,13 @@ echo -e "  ${D}─────────────────────�
 # ── 1. Závislosti ────────────────────────────────────────────────────────────
 # Hub je web appka v lokálním okně: stačí Python 3 ze standardní knihovny.
 # GTK ani VTE už potřeba nejsou.
-if ! command -v python3 >/dev/null 2>&1; then
+if ! command -v "$PY" >/dev/null 2>&1 && [ ! -x "$PY" ]; then
     warn "Chybí python3"
     echo -e "     ${D}Debian/Ubuntu/Zorin: sudo apt install python3${R}"
     echo -e "     ${D}Fedora:              sudo dnf install python3${R}"
     exit 1
 fi
-ok "Python 3 ($(python3 --version 2>&1 | cut -d' ' -f2))"
+ok "Python 3 ($("$PY" --version 2>&1 | cut -d' ' -f2))"
 
 # Diakritika: tab, který naběhne pod LANG=C, ořeže každý znak s háčkem. Hub si
 # UTF-8 locale dopočítá sám (hub/core.py), tady jde jen o to říct, když ho
@@ -98,6 +107,13 @@ else
     echo -e "     ${D}Nativní okno: sudo apt install gir1.2-webkit2-4.1  (nebo chromium)${R}"
 fi
 
+if ! command -v claude >/dev/null 2>&1 && $APP; then
+    # Oficiální instalačka Claude Code jde do ~/.local/bin, bez sudo.
+    info "instaluju Claude Code…"
+    if curl -fsSL https://claude.ai/install.sh | bash >/dev/null 2>&1; then
+        export PATH="$HOME/.local/bin:$PATH"
+    fi
+fi
 if command -v claude >/dev/null 2>&1; then
     ok "Claude Code CLI ($(command -v claude))"
 else
@@ -257,6 +273,8 @@ fi
 VAULT_FOUND="$(detect_vault)"
 if [ -n "$VAULT_FOUND" ]; then
     ok "vault: $VAULT_FOUND"
+elif $APP; then
+    info "paměť (Obsidian vault) nastavíš v průvodci hned po instalaci"
 elif $ASSUME_YES; then
     info "bez vaultu — paměť zůstane vypnutá (spusť instalačku bez --yes a založíš ho)"
 else
@@ -306,7 +324,7 @@ else
         echo ""
     fi
 
-    python3 - "$CONFIG" "$PROJECT_DIRS_CSV" "$VAULT" "$ICON_DIR/claude-code.png" \
+    "$PY" - "$CONFIG" "$PROJECT_DIRS_CSV" "$VAULT" "$ICON_DIR/claude-code.png" \
              "$CLAUDE_DIR/ftp-deploy.sh" <<'PYEOF'
 import json, os, sys
 cfg_path, dirs_csv, vault, icon, ftp = sys.argv[1:6]
@@ -327,7 +345,7 @@ fi
 
 # Co skutečně stojí v konfigu (i když ho instalačka teď nepsala) — šablony
 # skillů to potřebují, aby /newsletter a spol. hledaly projekty na správném místě.
-PROJECT_DIRS_LIST="$(python3 -c "
+PROJECT_DIRS_LIST="$("$PY" -c "
 import json, os, sys
 try:
     cfg = json.load(open(sys.argv[1]))
@@ -336,7 +354,7 @@ except Exception:
 dirs = [os.path.expanduser(d) for d in cfg.get('project_dirs') or []]
 print(', '.join(d for d in dirs if os.path.isdir(d)))" "$CONFIG" 2>/dev/null)"
 
-VAULT="$(python3 -c "
+VAULT="$("$PY" -c "
 import json, os, sys
 try:
     cfg = json.load(open(sys.argv[1]))
@@ -445,7 +463,7 @@ for dir in "$SRC"/skills/*/; do
         -e "s|{{CLAUDE_DIR}}|$CLAUDE_DIR|g" \
         -e "s|{{FTP_DEPLOY}}|$CLAUDE_DIR/ftp-deploy.sh|g" \
         -e "s|{{STATE_FILE}}|$STATE_FILE|g" \
-        -e "s|{{PYTHON}}|python3|g" \
+        -e "s|{{PYTHON}}|$PY|g" \
         "$dir/SKILL.md" > "$CLAUDE_DIR/skills/$name/SKILL.md"
     INSTALLED="$INSTALLED /$name"
 done
@@ -468,7 +486,7 @@ Comment=Claude Code Hub — projekty a paměť v jednom okně s taby
 Icon=$ICON_DIR/claude-code.png
 Terminal=false
 Categories=Development;Utility;
-Exec=python3 $CLAUDE_DIR/claude-hub.py
+Exec="$PY" "$CLAUDE_DIR/claude-hub.py"
 StartupNotify=true
 StartupWMClass=Claude Code Hub
 EOF
@@ -493,8 +511,8 @@ fi
 if $MINIMAL; then
     info "--minimal: do settings.json nesahám"
 else
-    python3 "$CLAUDE_DIR/tools/settings_merge.py" --claude-dir "$CLAUDE_DIR" \
-        --python python3 --hooks $BYPASS_FLAG 2>&1 | while read -r line; do
+    "$PY" "$CLAUDE_DIR/tools/settings_merge.py" --claude-dir "$CLAUDE_DIR" \
+        --python "$PY" --hooks $BYPASS_FLAG 2>&1 | while read -r line; do
             case "$line" in
                 chyba:*)  warn "${line#chyba: }" ;;
                 *"nechávám být"*|*"beze změny"*|*"už "*) ok "$line" ;;
@@ -516,10 +534,10 @@ fi
 # přepnutí projektu pryč. tools/playwright_profile.py profil připraví a
 # přihlášení převezme z toho nejpoužívanějšího ze starých.
 PW_TOOL="$CLAUDE_DIR/tools/playwright_profile.py"
-PW_PROFILE="$(python3 "$PW_TOOL" --claude-dir "$CLAUDE_DIR" --path 2>/dev/null)"
+PW_PROFILE="$("$PY" "$PW_TOOL" --claude-dir "$CLAUDE_DIR" --path 2>/dev/null)"
 
 prepare_playwright_profile() {
-    python3 "$PW_TOOL" --claude-dir "$CLAUDE_DIR" 2>&1 | while read -r line; do
+    "$PY" "$PW_TOOL" --claude-dir "$CLAUDE_DIR" 2>&1 | while read -r line; do
         case "$line" in
             chyba:*)     warn "${line#chyba: }" ;;
             varování:*)  warn "${line#varování: }" ;;
@@ -639,7 +657,7 @@ if command -v claude >/dev/null 2>&1; then
 fi
 
 # Závěrečná kontrola: jeden výpis, ze kterého je vidět, co na stroji opravdu je.
-python3 "$CLAUDE_DIR/claude-hub.py" --doctor || true
+"$PY" "$CLAUDE_DIR/claude-hub.py" --doctor || true
 
 echo ""
 echo -e "  ${A}✦${R} Hotovo. Spusť: ${D}python3 $CLAUDE_DIR/claude-hub.py${R}  (nebo ikonu Claude Code Hub v nabídce)"

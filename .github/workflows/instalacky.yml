@@ -1,0 +1,118 @@
+name: Instalačky
+
+# Ke každé vydané verzi (značka v*) instalačky ke stažení: Setup.exe pro
+# Windows, AppImage pro Linux a .dmg pro Mac (Apple Silicon i Intel). Přidají
+# se k vydání na GitHubu, odkud je stahuje stránka i README. Ručně: Actions →
+# Instalačky → Run workflow (postaví je z main a nechá jako artefakty).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: AppImage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash packaging/linux/build.sh dist
+      - name: Zkouška — spouštěč v AppImage naběhne
+        run: |
+          chmod +x dist/*.AppImage
+          APPIMAGE_EXTRACT_AND_RUN=1 timeout 60 dist/Claude-Code-Hub-x86_64.AppImage --doctor > doctor.txt 2>&1 || true
+          cat doctor.txt
+          grep -q "platforma" doctor.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*.AppImage
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Balík (Python + pywinpty + zdroj)
+        id: stage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python packaging/stage.py dist/stage-windows x86_64-pc-windows-msvc --pip pywinpty truststore
+      - name: Zkouška — terminál i spouštěč naběhnou
+        run: |
+          ./dist/stage-windows/python/python.exe -c "import winpty, truststore; print('pywinpty ok')"
+          ./dist/stage-windows/python/python.exe dist/stage-windows/hub/claude-hub.py --doctor
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+          & $iscc "/DAppVersion=${{ steps.stage.outputs.version }}" `
+                  "/DStage=$PWD\dist\stage-windows" "/DOutDir=$PWD\dist" `
+                  packaging\windows\setup.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/Claude-Code-Hub-Setup.exe
+          if-no-files-found: error
+
+  mac:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [arm64, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: .dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAC_ARCH: ${{ matrix.arch }}
+        run: bash packaging/mac/build.sh dist
+      - name: Zkouška — spouštěč v appce naběhne
+        if: matrix.arch == 'arm64'
+        run: |
+          hdiutil attach dist/*.dmg -mountpoint /tmp/hubdmg
+          "/tmp/hubdmg/Claude Code Hub.app/Contents/Resources/python/bin/python3" \
+            "/tmp/hubdmg/Claude Code Hub.app/Contents/Resources/hub/claude-hub.py" --doctor
+          hdiutil detach /tmp/hubdmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  vydani:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows, mac]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Přidat k vydání
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          ls -la dist
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" \
+              --notes "Stáhni instalačku pro svůj systém, spusť ji a dál vše proběhne v okně. Návod: README → Instalace."
+          gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber

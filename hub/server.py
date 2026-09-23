@@ -32,7 +32,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (account, chats, clockify, connect, core, cteni, pocitac, predplatne,
-               pty_backend, qr, remote, restart, stats, vzhled)
+               pty_backend, qr, remote, restart, setup, stats, vzhled)
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -630,6 +630,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"model": "", "label": "", "at": ""})
             return self._json(core.tab_model(session.id, session.path or core.HOME,
                                              session.started))
+        if name == "setup":
+            # Instalace v okně (hub/setup.py): bez akce jen průběh.
+            action = payload.get("action") if isinstance(payload, dict) else ""
+            if action == "launch":
+                # Hotovo: pustit nainstalovanou appku a tuhle ukončit.
+                if not setup.state().get("installed"):
+                    return self._json({"error": "Appka ještě není nainstalovaná."}, 400)
+                return self._json(restart.relaunch(HUB))
+            if action == "start":
+                return self._json(setup.start())
+            return self._json(setup.state())
         if name == "state":
             part = self._part
             counts, recent = core.get_memory()
@@ -652,6 +663,8 @@ class Handler(BaseHTTPRequestHandler):
                 "firma": part("firemní Obsidian", core.firma_state, {"vault": "", "name": ""}),
                 "shared": part("sdílené Obsidiany", core.shared_state, []),
                 "onboarded": bool(core.CONFIG.get("onboarded")),
+                # Hub puštěný instalačkou ke stažení: místo tabů instalace.
+                "setup": setup.ACTIVE,
                 # Vlastní název a ikona appky (hub/vzhled.py).
                 "app": part("vzhled appky", vzhled.stav, {}),
                 "config": {"project_dirs": core.CONFIG.get("project_dirs") or [],

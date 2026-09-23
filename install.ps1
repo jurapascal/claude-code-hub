@@ -12,7 +12,16 @@
 # Linux a macOS mají install.sh.
 
 [CmdletBinding()]
-param([switch]$Yes)
+param([switch]$Yes, [switch]$App)
+
+# -App = instalačka ke stažení (Setup.exe) to pouští z okna hubu (hub/setup.py):
+# bez otázek, co chybí (Git, Claude Code, Obsidian, GitHub CLI, Node) se
+# rovnou doinstaluje a výpis jde v UTF-8, ať ho okno přečte i s háčky.
+if ($App) {
+    $Yes = $true
+    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+    $OutputEncoding = [Console]::OutputEncoding
+}
 
 $ErrorActionPreference = 'Stop'
 $Src        = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -32,6 +41,12 @@ function Write-Dim  ($m) { Write-Host "    $m" -ForegroundColor DarkGray }
 # install. Every external program therefore gets checked before it is called.
 function Test-Cmd($name) {
     return [bool](Get-Command $name -ErrorAction SilentlyContinue)
+}
+
+# Doinstalovat chybějící program? S -App ano, jinak se ptá (s -Yes ne).
+function Want-Install($question) {
+    if ($App) { return $true }
+    return (Ask-YesNo $question)
 }
 
 function Ask-YesNo($question) {
@@ -71,8 +86,10 @@ function Update-Path {
 }
 
 function Install-WithWinget($id) {
+    $extra = @()
+    if ($App) { $extra += '--silent' }      # bez průvodců cizích instalaček
     winget install --id $id --source winget `
-        --accept-package-agreements --accept-source-agreements
+        --accept-package-agreements --accept-source-agreements @extra
     Update-Path
 }
 
@@ -90,7 +107,10 @@ if (-not $HasWinget) {
 
 # ── 1. Python ────────────────────────────────────────────────────────────────
 $Python = $null
+# Instalačka ke stažení nese vlastní Python (HUB_PYTHON) — ten má přednost.
+if ($env:HUB_PYTHON -and (Test-Path $env:HUB_PYTHON)) { $Python = $env:HUB_PYTHON }
 foreach ($candidate in @('python', 'python3', 'py')) {
+    if ($Python) { break }
     $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
     if (-not $cmd) { continue }
     # The Microsoft Store stub in WindowsApps is not a real interpreter.
@@ -179,7 +199,7 @@ foreach ($candidate in $bashCandidates) {
 if (-not $GitBash) {
     Write-Warn 'Nenašel jsem Git for Windows (bash.exe)'
     Write-Dim 'Bez něj hub neumí spustit tab — ani Claude Code nemá Bash tool.'
-    if ($HasWinget -and (Ask-YesNo 'Nainstalovat Git for Windows přes winget?')) {
+    if ($HasWinget -and (Want-Install 'Nainstalovat Git for Windows přes winget?')) {
         Install-WithWinget 'Git.Git'
         foreach ($candidate in $bashCandidates) {
             if ($candidate -and (Test-Path $candidate)) { $GitBash = $candidate; break }
@@ -198,7 +218,7 @@ if ($ClaudeCli) {
     Write-Ok "Claude Code CLI ($ClaudeCli)"
 } else {
     Write-Warn "Claude Code CLI ('claude') není v PATH — Hub se spustí, ale taby zůstanou v shellu."
-    if ($HasWinget -and (Ask-YesNo 'Nainstalovat Claude Code přes winget?')) {
+    if ($HasWinget -and (Want-Install 'Nainstalovat Claude Code přes winget?')) {
         Install-WithWinget 'Anthropic.ClaudeCode'
         $ClaudeCli = (Get-Command claude -ErrorAction SilentlyContinue).Source
     } else {
@@ -272,7 +292,7 @@ if (Find-Obsidian) {
     Write-Ok 'Obsidian'
 } else {
     Write-Warn 'Obsidian není nainstalovaný — v něm žije paměť (/save, /learn, /project)'
-    if ($HasWinget -and (Ask-YesNo 'Nainstalovat Obsidian přes winget?')) {
+    if ($HasWinget -and (Want-Install 'Nainstalovat Obsidian přes winget?')) {
         Install-WithWinget 'Obsidian.Obsidian'
         if (Find-Obsidian) { Write-Ok 'Obsidian nainstalován' }
         else { Write-Info 'hotovo, ale zatím ho nevidím — po restartu PowerShellu bude v pořádku' }
@@ -295,7 +315,7 @@ if ($vaultFound) {
 $Gh = Find-Gh
 if (-not $Gh) {
     Write-Warn "GitHub CLI ('gh') není — bez něj se z tohohle stroje nepushuje na GitHub"
-    if ($HasWinget -and (Ask-YesNo 'Nainstalovat GitHub CLI přes winget?')) {
+    if ($HasWinget -and (Want-Install 'Nainstalovat GitHub CLI přes winget?')) {
         Install-WithWinget 'GitHub.cli'
         $Gh = Find-Gh
         if (-not $Gh) { Write-Info 'gh nainstalován, ale chce nový PowerShell — pak: gh auth login' }
@@ -521,7 +541,7 @@ $desktopNew = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Claude Code H
 if ((Remove-OurOldShortcut $desktopOld) -or (Test-Path $desktopNew)) {
     New-Shortcut $desktopNew
     Write-Ok 'zástupce na ploše: Claude Code Hub'
-} elseif (Ask-YesNo 'Přidat zástupce i na plochu?') {
+} elseif (Want-Install 'Přidat zástupce i na plochu?') {
     New-Shortcut $desktopNew
     Write-Ok 'zástupce na ploše'
 }
@@ -594,7 +614,7 @@ function Find-Npx {
 
 $NodeExe = Find-Node
 if (-not $NodeExe -and $ClaudeCli -and $HasWinget -and
-    (Ask-YesNo 'Node.js není nainstalovaný. Nainstalovat LTS přes winget? (kvůli Playwright MCP)')) {
+    (Want-Install 'Node.js není nainstalovaný. Nainstalovat LTS přes winget? (kvůli Playwright MCP)')) {
     Install-WithWinget 'OpenJS.NodeJS.LTS'
     $NodeExe = Find-Node
     if (-not $NodeExe) { Write-Info 'Node se nainstaloval, ale je potřeba nový PowerShell — pak spusť install.ps1 znovu.' }

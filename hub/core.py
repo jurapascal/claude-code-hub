@@ -23,6 +23,8 @@ import uuid
 from . import agents
 
 IS_WINDOWS = os.name == "nt"
+# Hub puštěný instalačkou ke stažení před instalací (hub/setup.py).
+SETUP_MODE = "--setup" in sys.argv[1:]
 IS_MAC = sys.platform == "darwin"
 
 HOME = os.path.expanduser("~")
@@ -1217,6 +1219,10 @@ def save_config(updates):
     """Zapíše změny do hub-config.json (jen předané klíče) a zavolá refresh()."""
     cfg = dict(load_config())
     cfg.update(updates)
+    if SETUP_MODE:
+        # Instalace v okně (hub/setup.py): konfig založí až instalačka — kdyby
+        # existoval dřív, nechala by ho být a nezjistila složky projektů.
+        return cfg
     # Nechceme do souboru vrátit výchozí hodnoty, které tam uživatel nemá —
     # zapisuje se to, co v něm bylo, plus změna.
     os.makedirs(CLAUDE_DIR, exist_ok=True)
@@ -2003,6 +2009,12 @@ def start_update():
     return start_job("update", update_hub)
 
 
+def bundled_runtime():
+    """Běží hub na Pythonu přibaleném v instalačce ke stažení (packaging/)?
+    Pozná se podle značky, kterou tam instalačka nechá."""
+    return os.path.isfile(os.path.join(sys.prefix, "HUB_RUNTIME"))
+
+
 def update_hub():
     """Stáhne nejnovější verzi a přeinstaluje ji. Nikdy nevyhazuje."""
     was = version()
@@ -2020,9 +2032,15 @@ def update_hub():
         argv = [BASH, installer, "--yes"]
     if not os.path.isfile(installer):
         return {"ok": False, "detail": "Ve staženém zdroji chybí instalačka."}
+    env = dict(os.environ)
+    if bundled_runtime():
+        # Hub z instalačky ke stažení jede na přibaleném Pythonu — ať na něj
+        # hooky a zástupce míří i po aktualizaci (v systému jiný být nemusí).
+        from . import setup
+        env = setup.installer_env()
     try:
         r = subprocess.run(argv, cwd=SRC_DIR, capture_output=True, text=True,
-                           timeout=1800)
+                           timeout=1800, env=env)
     except subprocess.TimeoutExpired:
         return {"ok": False, "detail": "Aktualizace trvala moc dlouho."}
     except Exception as exc:

@@ -900,6 +900,41 @@ body { display: flex; flex-direction: column; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--section); }
 
+/* ── instalace v okně (setup.js) ─────────────────────────────────────────── */
+/* Při instalaci za oknem nic není — pozadí je plné, ne průhledné. */
+.onb.setup { background: var(--bg); z-index: 90; }
+.setup-state { font-size: 13px; line-height: 1.5; margin-bottom: 12px; color: var(--fg); }
+.setup-state.busy::before {
+  content: ""; display: inline-block; width: 11px; height: 11px; margin-right: 8px;
+  border: 2px solid var(--accent); border-right-color: transparent; border-radius: 50%;
+  vertical-align: -1px; animation: setup-spin .8s linear infinite;
+}
+.setup-state.ok  { color: var(--green); font-weight: 600; }
+.setup-state.err { color: var(--red); }
+@keyframes setup-spin { to { transform: rotate(360deg); } }
+.setup-steps {
+  list-style: none; margin: 0; padding: 0; font-size: 13px;
+  max-height: 44vh; overflow-y: auto;
+}
+.setup-steps li { padding: 4px 0 4px 24px; position: relative; color: var(--fg); line-height: 1.45; }
+.setup-steps li::before { position: absolute; left: 4px; }
+.setup-steps li.ok::before   { content: "✓"; color: var(--green); }
+.setup-steps li.warn::before { content: "!"; color: var(--yellow, #d29922); font-weight: 700; }
+.setup-steps li.info::before { content: "•"; color: var(--dim); }
+.setup-steps li.info, .setup-steps li.warn { color: var(--dim); }
+.setup-steps li.busy::before {
+  content: ""; width: 9px; height: 9px; top: 8px;
+  border: 2px solid var(--accent); border-right-color: transparent; border-radius: 50%;
+  animation: setup-spin .8s linear infinite;
+}
+.setup-log { margin-top: 14px; font-size: 12px; color: var(--dim); }
+.setup-log summary { cursor: pointer; }
+.setup-log pre {
+  margin: 8px 0 0; padding: 10px 12px; max-height: 30vh; overflow: auto;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  font-family: ui-monospace, monospace; font-size: 11.5px; white-space: pre-wrap;
+}
+
 /* ── průvodce prvním spuštěním ───────────────────────────────────────────── */
 .onb {
   position: fixed; inset: 0; z-index: 80;
