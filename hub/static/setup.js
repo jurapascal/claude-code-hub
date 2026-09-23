@@ -55,7 +55,7 @@
     const go = root.querySelector('.setup-go');
     const retry = root.querySelector('.setup-retry');
     let timer = null;
-    let shown = -1;
+    let shown = '';
 
     function say(text, kind) {
       stateBox.className = 'setup-state ' + (kind || '');
@@ -64,8 +64,10 @@
 
     function draw(st) {
       const lines = st.lines || [];
-      if (lines.length !== shown) {
-        shown = lines.length;
+      // Překreslit i po doběhnutí — poslední krok už se nemá točit.
+      const key = lines.length + (st.running ? 'r' : 'd');
+      if (key !== shown) {
+        shown = key;
         const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
         log.textContent = lines.join('\n');
         if (atBottom) log.scrollTop = log.scrollHeight;
@@ -108,7 +110,7 @@
     }
 
     async function start() {
-      shown = -1;
+      shown = '';
       try { draw(await io.api('setup', {action: 'start'})); } catch (err) {
         say('Instalaci se nepodařilo spustit: ' + err.message, 'err');
         retry.hidden = false;

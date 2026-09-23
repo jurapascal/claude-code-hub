@@ -27,6 +27,39 @@ IS_WINDOWS = os.name == "nt"
 SETUP_MODE = "--setup" in sys.argv[1:]
 IS_MAC = sys.platform == "darwin"
 
+
+
+def _refresh_windows_path():
+    """PATH z registru (systém + uživatel) navíc k tomu, co proces zdědil.
+
+    Proces si PATH přečte jednou při startu. Když se mezitím něco doinstaluje
+    (instalace v okně pustí winget — Claude Code, Git, gh), hub by to až do
+    odhlášení z Windows „neviděl" a hlásil by, že žádný agent není. Naměřeno
+    ve virtuálce s Windows 11: Claude Code ve složce WinGet/Links, hub bez agenta."""
+    try:
+        import winreg
+    except ImportError:
+        return
+    parts = []
+    for root, key in ((winreg.HKEY_LOCAL_MACHINE,
+                       r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+                      (winreg.HKEY_CURRENT_USER, "Environment")):
+        try:
+            with winreg.OpenKey(root, key) as k:
+                value, _type = winreg.QueryValueEx(k, "Path")
+            parts += [os.path.expandvars(p) for p in str(value).split(";") if p]
+        except OSError:
+            continue
+    have = os.environ.get("PATH", "").split(os.pathsep)
+    seen = {p.lower() for p in have}
+    extra = [p for p in parts if p.lower() not in seen]
+    if extra:
+        os.environ["PATH"] = os.pathsep.join(have + extra)
+
+
+if IS_WINDOWS:
+    _refresh_windows_path()
+
 HOME = os.path.expanduser("~")
 CLAUDE_DIR = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude")
 CONFIG_PATH = os.path.join(CLAUDE_DIR, "hub-config.json")

@@ -30,6 +30,7 @@ _LOCK = threading.Lock()
 STATE = {"running": False, "done": False, "ok": False, "lines": [], "error": "",
          "started": 0.0, "finished": 0.0}
 MAX_LINES = 400
+LOG_PATH = os.path.join(core.CLAUDE_DIR, "hub-setup.log")
 TIMEOUT = 45 * 60          # prohlížeč pro Playwright a Obsidian stahují dlouho
 
 
@@ -109,7 +110,14 @@ def _run(argv):
     with _LOCK:
         STATE.update(running=False, done=True, ok=ok, error=error,
                      finished=time.time())
+        lines = list(STATE["lines"])
     core.log(f"instalace v okně: {'ok' if ok else error}")
+    # Celý výpis na disk — když se něco nepovede, je podle čeho hledat příčinu.
+    try:
+        with open(LOG_PATH, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines + ["", error or "ok"]) + "\n")
+    except OSError:
+        pass
 
 
 def start():

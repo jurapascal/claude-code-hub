@@ -245,6 +245,9 @@ def extra_bin_dirs():
     dirs = [os.path.join(home, n) for n in names]
     if sys.platform == "darwin":
         dirs += ["/opt/homebrew/bin", "/usr/local/bin"]
+    if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+        # winget dává odkazy na nainstalované CLI sem (Claude Code, gh).
+        dirs.append(os.path.join(os.environ["LOCALAPPDATA"], "Microsoft", "WinGet", "Links"))
     return [d for d in dirs if os.path.isdir(d)]
 
 
