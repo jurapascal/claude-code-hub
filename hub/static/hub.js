@@ -1308,6 +1308,7 @@ function renderWelcome() {
 
   renderWelcomeCols();
   renderWelcomeStats();
+  renderWelcomeUpdate();
 
   const facts = [];
   const mem = STATE.memory || {};
@@ -2837,13 +2838,46 @@ function readUpdateCache() {
   return null;
 }
 
+/* Nastavení rovnou na záložce Aktualizace — ta si novou verzi sama zjistí,
+   takže stačí kliknout. `start` aktualizaci rovnou i spustí. */
+function openUpdateSettings(start) {
+  HubSettings.open({...hubIO(), state: STATE, tab: 'aktualizace', startUpdate: !!start});
+}
+
+// Co nabízí pruh na úvodu: {latest, run}. Plní ho kontrola na počítači
+// (showUpdate) i na serveru (checkServerUpdate).
+let welcomeUpdate = null;
+
+function renderWelcomeUpdate() {
+  const box = $('welcome-update');
+  if (!box) return;
+  box.textContent = '';
+  box.hidden = !welcomeUpdate;
+  if (!welcomeUpdate) return;
+  const text = document.createElement('div');
+  text.className = 'welcome-update-text';
+  const title = document.createElement('b');
+  title.textContent = `Je venku nová verze ${welcomeUpdate.latest}`;
+  text.appendChild(title);
+  text.appendChild(document.createTextNode(
+    ` (máš ${STATE.version.version}). Aktualizuj, ať máš nejnovější, a pak začni pracovat.`));
+  const btn = document.createElement('button');
+  btn.className = 'btn primary';
+  btn.innerHTML = icon('i-up') + '<span>Aktualizovat</span>';
+  btn.onclick = welcomeUpdate.run;
+  box.appendChild(text);
+  box.appendChild(btn);
+}
+
 function showUpdate(latest) {
   const btn = $('btn-update');
   $('btn-update-text').textContent = `Nová verze ${latest}`;
   btn.title = `Je venku verze ${latest}, máš ${STATE.version.version}. ` +
-              `Klikni pro aktualizaci v nastavení.`;
+              `Klikni a aktualizuj.`;
   btn.hidden = false;
-  btn.onclick = () => HubSettings.open({...hubIO(), state: STATE});
+  btn.onclick = () => openUpdateSettings(false);
+  welcomeUpdate = {latest, run: () => openUpdateSettings(true)};
+  renderWelcomeUpdate();
 }
 
 async function checkForUpdate() {
@@ -2872,7 +2906,7 @@ async function checkForUpdate() {
   // spuštění, dokud člověk neaktualizuje.
   if (!cached || bare(cached.latest) !== bare(info.latest)) {
     toast(`Je venku nová verze Hubu ${info.latest} (máš ${info.version}). ` +
-          `Aktualizovat můžeš v nastavení.`);
+          `Klikni na „Nová verze" nahoře a aktualizuj.`);
   }
 }
 
@@ -2923,6 +2957,8 @@ async function checkServerUpdate() {
               `${STATE.version.version}. Klikni a přepni se.`;
   btn.hidden = false;
   btn.onclick = () => showServerUpdate(true);
+  welcomeUpdate = {latest: srvNewest, run: () => window.hubServerUpdate()};
+  renderWelcomeUpdate();
   showServerUpdate(false);
 }
 // Po návratu k oknu (telefon z kapsy, druhý monitor) se zeptá hned.

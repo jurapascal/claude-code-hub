@@ -1404,6 +1404,19 @@ body { display: flex; flex-direction: column; }
 /* Zalomení řádku uvnitř flexu: nad ním se otevírá práce, pod ním nastavení. */
 .welcome-break { flex-basis: 100%; height: 0; }
 .welcome-facts { margin-top: 18px; font-size: 12px; color: var(--dim); }
+/* Nová verze na úvodu: napřed aktualizovat, pak pracovat. */
+.welcome-update {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 18px; max-width: 560px; padding: 12px 14px;
+  background: var(--bg-card); border: 1px solid var(--accent);
+  border-radius: var(--radius); font-size: 13px; color: var(--fg);
+  text-align: left;
+}
+.welcome-update[hidden] { display: none; }
+.welcome-update-text { flex: 1 1 260px; }
+.welcome-update-text b { color: var(--fg-bright); }
+.welcome-update .btn { display: inline-flex; align-items: center; gap: 7px; }
 
 /* Verze v patičce vede rovnou do nastavení — jinak by to bylo jen číslo. */
 .footer-ver {

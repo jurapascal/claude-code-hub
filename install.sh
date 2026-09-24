@@ -12,9 +12,12 @@
 #
 # Windows má vlastní install.ps1.
 #
-# Použití: bash install.sh [--yes] [--minimal]
+# Použití: bash install.sh [--yes] [--minimal] [--update]
 #     --yes      bez otázek — doinstaluje, co jde, přihlášení a bypass přeskočí
 #     --minimal  jen hub: nic nedoinstalovává, do settings.json nesahá
+#     --update   aktualizace z tlačítka v hubu: jen soubory appky, příkazy
+#                a hooky. Skilly, Obsidian, gh, Playwright ani kontrola se
+#                znovu neřeší — ty už nainstalované jsou.
 set -u
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,10 +31,15 @@ CONFIG="$CLAUDE_DIR/hub-config.json"
 ASSUME_YES=false
 MINIMAL=false
 APP=false
+UPDATE=false
 for arg in "$@"; do
     case "$arg" in
         --yes) ASSUME_YES=true ;;
         --minimal) MINIMAL=true ;;
+        # Aktualizace z hubu (core.update_hub): stroj je nastavený, jde jen o
+        # nové soubory. Dřív se pouštěla celá instalace včetně stahování
+        # skillů a Playwrightu a trvala zbytečně dlouho.
+        --update) ASSUME_YES=true; UPDATE=true ;;
         # Instalačka ke stažení (AppImage, .dmg) pouští tohle z okna hubu
         # (hub/setup.py): bez otázek a navíc doinstaluje Claude Code.
         --app) ASSUME_YES=true; APP=true ;;
@@ -55,7 +63,11 @@ info() { echo -e "  ${A}▸${R} $1"; }
 warn() { echo -e "  ${Y}⚠${R} $1"; }
 
 echo ""
-echo -e "  ${A}✦${R} Claude Code Hub — instalace"
+if $UPDATE; then
+    echo -e "  ${A}✦${R} Claude Code Hub — aktualizace"
+else
+    echo -e "  ${A}✦${R} Claude Code Hub — instalace"
+fi
 echo -e "  ${D}────────────────────────────────────${R}"
 
 # ── 1. Závislosti ────────────────────────────────────────────────────────────
@@ -69,6 +81,7 @@ if ! command -v "$PY" >/dev/null 2>&1 && [ ! -x "$PY" ]; then
 fi
 ok "Python 3 ($("$PY" --version 2>&1 | cut -d' ' -f2))"
 
+if ! $UPDATE; then
 # Diakritika: tab, který naběhne pod LANG=C, ořeže každý znak s háčkem. Hub si
 # UTF-8 locale dopočítá sám (hub/core.py), tady jde jen o to říct, když ho
 # systém nemá vůbec z čeho vzít.
@@ -120,6 +133,7 @@ else
     warn "Claude Code CLI ('claude') není v PATH — Hub se spustí, ale taby zůstanou v shellu."
     echo -e "     ${D}curl -fsSL https://claude.ai/install.sh | bash${R}"
 fi
+fi   # ! $UPDATE
 
 # ── 2. Obsidian a GitHub CLI ─────────────────────────────────────────────────
 # Hub běží i bez obojího, ale bez Obsidianu nemá paměť kde bydlet (/save, /learn,
@@ -226,7 +240,9 @@ detect_vault() {
 }
 
 echo ""
-if $MINIMAL; then
+if $UPDATE; then
+    :   # aktualizace: programy i vault už stroj má
+elif $MINIMAL; then
     info "--minimal: Obsidian ani gh nedoinstalovávám"
 else
     # Doinstalovává se bez ptaní: obojí k hubu patří (paměť, push) a otázka
@@ -256,7 +272,9 @@ else
         else warn "nevyšlo — návod: https://github.com/cli/cli#installation"; fi
     fi
 fi
-if command -v gh >/dev/null 2>&1 && ! gh auth status >/dev/null 2>&1; then
+if $UPDATE; then
+    :
+elif command -v gh >/dev/null 2>&1 && ! gh auth status >/dev/null 2>&1; then
     info "gh není přihlášený k GitHubu"
     if ask "Přihlásit se teď (otevře prohlížeč)?"; then
         gh auth login || warn "přihlášení nedoběhlo — kdykoli později: gh auth login"
@@ -270,8 +288,11 @@ fi
 
 # Vault až po gh: cizí stroj si tvůj vault naklonuje z privátního repa, a na to
 # musí být `gh` napřed přihlášený.
-VAULT_FOUND="$(detect_vault)"
-if [ -n "$VAULT_FOUND" ]; then
+VAULT_FOUND=""
+$UPDATE || VAULT_FOUND="$(detect_vault)"
+if $UPDATE; then
+    :
+elif [ -n "$VAULT_FOUND" ]; then
     ok "vault: $VAULT_FOUND"
 elif $APP; then
     info "paměť (Obsidian vault) nastavíš v průvodci hned po instalaci"
@@ -386,7 +407,9 @@ install_skills() {
     git clone --quiet --depth 1 "https://github.com/$SKILLS_REPO.git" "$target"
 }
 
-if $MINIMAL; then
+if $UPDATE; then
+    :   # skilly jsou obsah, ne appka — aktualizace je znovu nestahuje
+elif $MINIMAL; then
     info "--minimal: skilly nestahuju"
 elif ! $HAS_VAULT; then
     :   # bez vaultu nemají kam
@@ -533,6 +556,7 @@ fi
 # každý tab v hubu dostal vlastní prohlížeč a přihlášení do Googlu bylo po
 # přepnutí projektu pryč. tools/playwright_profile.py profil připraví a
 # přihlášení převezme z toho nejpoužívanějšího ze starých.
+if ! $UPDATE; then
 PW_TOOL="$CLAUDE_DIR/tools/playwright_profile.py"
 PW_PROFILE="$("$PY" "$PW_TOOL" --claude-dir "$CLAUDE_DIR" --path 2>/dev/null)"
 
@@ -658,6 +682,14 @@ fi
 
 # Závěrečná kontrola: jeden výpis, ze kterého je vidět, co na stroji opravdu je.
 "$PY" "$CLAUDE_DIR/claude-hub.py" --doctor || true
+fi   # ! $UPDATE — Playwright, Clockify, přihlášení a kontrola
+
+if $UPDATE; then
+    echo ""
+    echo -e "  ${A}✦${R} Aktualizováno."
+    echo ""
+    exit 0
+fi
 
 echo ""
 echo -e "  ${A}✦${R} Hotovo. Spusť: ${D}python3 $CLAUDE_DIR/claude-hub.py${R}  (nebo ikonu Claude Code Hub v nabídce)"

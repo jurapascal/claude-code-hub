@@ -8,11 +8,13 @@
 # Použití (PowerShell, BEZ práv správce):
 #     powershell -ExecutionPolicy Bypass -File install.ps1
 #     powershell -ExecutionPolicy Bypass -File install.ps1 -Yes   (bez otázek)
+#     ... install.ps1 -Update   (aktualizace z hubu: jen soubory appky, příkazy
+#                                a hooky — skilly, Obsidian, gh ani Playwright ne)
 #
 # Linux a macOS mají install.sh.
 
 [CmdletBinding()]
-param([switch]$Yes, [switch]$App)
+param([switch]$Yes, [switch]$App, [switch]$Update)
 
 # -App = instalačka ke stažení (Setup.exe) to pouští z okna hubu (hub/setup.py):
 # bez otázek, co chybí (Git, Claude Code, Obsidian, GitHub CLI, Node) se
@@ -22,6 +24,10 @@ if ($App) {
     [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
     $OutputEncoding = [Console]::OutputEncoding
 }
+
+# -Update = tlačítko Aktualizovat v hubu (core.update_hub). Stroj je nastavený,
+# jde jen o nové soubory; dřív se pouštěla celá instalace včetně skillů.
+if ($Update) { $Yes = $true }
 
 $ErrorActionPreference = 'Stop'
 $Src        = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -96,10 +102,10 @@ function Install-WithWinget($id) {
 $HasWinget = Test-Cmd winget
 
 Write-Host ''
-Write-Host '  ✦ Claude Code Hub — instalace' -ForegroundColor DarkYellow
+Write-Host $(if ($Update) { '  ✦ Claude Code Hub — aktualizace' } else { '  ✦ Claude Code Hub — instalace' }) -ForegroundColor DarkYellow
 Write-Host '  ────────────────────────────────────' -ForegroundColor DarkGray
 
-if (-not $HasWinget) {
+if (-not $HasWinget -and -not $Update) {
     Write-Warn 'winget na tomhle systému není — co bude chybět, si musíš doinstalovat ručně:'
     Write-Dim 'Python: python.org/downloads · Git: git-scm.com/downloads/win'
     Write-Dim 'Claude Code: irm https://claude.ai/install.ps1 | iex'
@@ -287,6 +293,7 @@ function New-Vault($path) {
     }
 }
 
+if (-not $Update) {   # aktualizace: programy i vault už stroj má
 Write-Host ''
 if (Find-Obsidian) {
     Write-Ok 'Obsidian'
@@ -344,6 +351,7 @@ if ($Gh) {
         Write-Dim 'Později: gh auth login'
     }
 }
+}   # -not $Update
 
 # ── 6. Kde má tenhle počítač co ──────────────────────────────────────────────
 function Detect-ProjectDirs {
@@ -420,7 +428,9 @@ function Count-Skills($path) {
     return @(Get-ChildItem $path -Recurse -Filter 'SKILL.md' -ErrorAction SilentlyContinue).Count
 }
 
-if (-not $HasVault) {
+if ($Update) {
+    # skilly jsou obsah, ne appka — aktualizace je znovu nestahuje
+} elseif (-not $HasVault) {
     # bez vaultu nemají kam
 } elseif ((Test-Path $BrainSkills) -and
           @(Get-ChildItem $BrainSkills -Force -ErrorAction SilentlyContinue).Count -gt 0) {
@@ -571,6 +581,13 @@ try {
     }
 } catch {
     Write-Warn "settings.json se nepodařilo upravit: $($_.Exception.Message)"
+}
+
+if ($Update) {
+    Write-Host ''
+    Write-Host '  ✦ Aktualizováno.' -ForegroundColor DarkYellow
+    Write-Host ''
+    exit 0
 }
 
 # ── 11. Playwright MCP ───────────────────────────────────────────────────────

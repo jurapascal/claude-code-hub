@@ -2058,11 +2058,14 @@ def update_hub():
     installer = os.path.join(SRC_DIR, "install.sh")
     if IS_WINDOWS:
         installer = os.path.join(SRC_DIR, "install.ps1")
-        argv = ["powershell", "-ExecutionPolicy", "Bypass", "-File", installer, "-Yes"]
+        argv = ["powershell", "-ExecutionPolicy", "Bypass", "-File", installer, "-Update"]
     else:
         if not BASH:
             return {"ok": False, "detail": "Na stroji není bash."}
-        argv = [BASH, installer, "--yes"]
+        argv = [BASH, installer, "--update"]
+    # --update/-Update = jen soubory appky, příkazy a hooky. Celá instalace
+    # (skilly, Obsidian, gh, Playwright, kontrola) se při každé aktualizaci
+    # pouštěla znovu a trvala zbytečně dlouho — stroj už nastavený je.
     if not os.path.isfile(installer):
         return {"ok": False, "detail": "Ve staženém zdroji chybí instalačka."}
     env = dict(os.environ)

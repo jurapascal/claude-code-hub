@@ -1798,15 +1798,23 @@
       watchUpdate();
     };
 
-    // Když se stránka načte během běžící aktualizace, navážeme na ni.
-    io.api('update-status').then(st => {
+    // Když se stránka načte během běžící aktualizace, navážeme na ni. Jinak
+    // se hned zeptáme na novou verzi — kdo sem přišel přes „Nová verze",
+    // má ji vidět a jen kliknout. Tlačítko Aktualizovat na úvodu ji rovnou
+    // i spustí (startUpdate).
+    const start = !!io.startUpdate;
+    io.startUpdate = false;
+    io.api('update-status').then(async (st) => {
       if (st.running) {
         status.className = 'set-status busy';
         status.textContent = 'Aktualizuju…';
         doIt.disabled = true;
         check.disabled = true;
         watchUpdate();
+        return;
       }
+      await check.onclick();
+      if (start && !doIt.hidden) doIt.onclick();
     }).catch(() => {});
 
     btns.appendChild(check);
