@@ -1714,11 +1714,11 @@
           status.textContent = v.why || 'Nepodařilo se zjistit.';
         } else if (v.update_available) {
           status.className = 'set-status warn';
-          status.textContent = `Je dostupná verze ${v.latest} (máš ${v.version}).`;
+          status.textContent = `Na GitHubu je nová verze ${v.latest} (máš ${v.version}).`;
           doIt.hidden = false;
         } else {
           status.className = 'set-status ok';
-          status.textContent = `Máš nejnovější verzi (${v.version}).`;
+          status.textContent = `Na GitHubu je ${v.latest} — máš nejnovější verzi.`;
         }
       } catch (err) {
         status.className = 'set-status warn';
@@ -1817,8 +1817,14 @@
       if (start && !doIt.hidden) doIt.onclick();
     }).catch(() => {});
 
+    // Co v které verzi přibylo — vydání na GitHubu.
+    const gh = el('button', 'actionbtn', 'Vydání na GitHubu');
+    gh.onclick = () => io.open('https://github.com/' +
+      ((state.version && state.version.repo) || 'jurapascal/claude-code-hub') + '/releases');
+
     btns.appendChild(check);
     btns.appendChild(doIt);
+    btns.appendChild(gh);
     box.appendChild(btns);
     return box;
   }

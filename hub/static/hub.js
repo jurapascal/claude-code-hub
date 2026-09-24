@@ -1039,12 +1039,13 @@ function renderFooter() {
   foot.textContent = '';
   foot.appendChild(document.createTextNode(
     [STATE.user, date].filter(Boolean).join('  ·  ') + '  ·  '));
-  // Verze je zároveň cesta do nastavení — tam se s ní stejně něco dělá.
+  // Verze vede rovnou na Aktualizace: ty se hned zeptají GitHubu, co je
+  // nejnovější, a mají odkaz na seznam vydání.
   const ver = document.createElement('button');
   ver.className = 'footer-ver';
   ver.textContent = 'v' + STATE.version.version;
-  ver.title = 'Nastavení a aktualizace';
-  ver.onclick = () => HubSettings.open({...hubIO(), state: STATE});
+  ver.title = 'Aktualizace — jaká verze je na GitHubu';
+  ver.onclick = () => openUpdateSettings(false);
   foot.appendChild(ver);
 }
 
