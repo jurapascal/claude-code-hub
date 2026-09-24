@@ -559,6 +559,16 @@
     let idleSince = 0;       // odkdy Claude Code bez přestávky čeká na zadání
     let cekaTimer = null;
     let codePrompt = false;  // Claude Code čeká na kód z přihlášení (LOGIN_CODE)
+    /* Terminál se drží, dokud se Claude Code nevrátí ke klidnému promptu.
+       Na telefonu jinak tab skákal mezi terminálem, bublinou a prázdným
+       čtením: po otevření klávesnice se terminál zmenší, přihlašovací odkaz
+       odroluje z obrazovky a TERM_NEEDED ho přestane vidět. */
+    let termHold = false;
+    // Karta s dotazem uhne až po chvíli bez dotazu — mezi dvěma dialogy
+    // (motiv → způsob přihlášení) je na okamžik prázdno a čtení by problesklo.
+    const ASK_HOLD_MS = 700;
+    let askingNow = false;
+    let askOffTimer = null;
     let normalPlaceholder = '';
     /* Bublina se ukáže, když je dole klidný prompt — jenže tím, že se ukáže,
        terminál zkrátí; agent překreslí TUI a prompt může zmizet. Pak by se
@@ -1076,7 +1086,8 @@
         blocks.map(b => b.lines.join('\n')).join('\n\n'),
         hint,
         buttons.map(b => b.label).join('|'),
-      ].join(' ');
+      ].join('\u0000');
+      askingNow = !!rows.length;
       if (sig === answerSig) return;
       answerSig = sig;
 
@@ -1084,7 +1095,18 @@
       // karty platilo pro ten předchozí.
       askRoot.classList.remove('peek');
       askRoot.hidden = !rows.length;
-      tab.pane.classList.toggle('asking', !!rows.length);
+      if (rows.length) {
+        clearTimeout(askOffTimer);
+        askOffTimer = null;
+        tab.pane.classList.add('asking');
+      } else if (tab.pane.classList.contains('asking') && !askOffTimer) {
+        askOffTimer = setTimeout(() => {
+          askOffTimer = null;
+          if (askingNow) return;
+          tab.pane.classList.remove('asking');
+          schedule();
+        }, ASK_HOLD_MS);
+      }
       if (rows.length) {
         askTitle.textContent = title;
         askTitle.hidden = !title;
@@ -1406,13 +1428,22 @@
     }
 
     /* Je na obrazovce něco, co se musí vyřídit v terminálu (TERM_NEEDED)?
-       Čte se celý viditelný terminál — odkaz stojí nad polem na kód. */
+       Čte se celý viditelný terminál — odkaz stojí nad polem na kód.
+       Zalomené řádky se slepují: na úzkém telefonu se odkaz i „Paste code
+       here" lámou přes víc řádků a „oauth/authorize" rozťaté vejpůl by se
+       po řádcích nenašlo nikdy. */
     function needsTerminal() {
       if (!AG.full || !tab.cteni) return false;
       const buf = term.buffer.active;
-      for (let i = 0; i < term.rows; i++) {
-        const row = buf.getLine(buf.viewportY + i);
-        if (row && TERM_NEEDED.test(row.translateToString(true))) return true;
+      let line = '';
+      for (let i = 0; i <= term.rows; i++) {
+        const row = i < term.rows ? buf.getLine(buf.viewportY + i) : null;
+        if (row && row.isWrapped) {
+          line += row.translateToString(true);
+          continue;
+        }
+        if (line && TERM_NEEDED.test(line)) return true;
+        line = row ? row.translateToString(true) : '';
       }
       return false;
     }
@@ -1468,7 +1499,9 @@
           cekaTimer = setTimeout(() => apply(), READY_MS - vydrzel + 30);
         }
       }
-      const naTerminal = needsTerminal();
+      if (needsTerminal()) termHold = true;
+      else if (termHold && idle && !codePrompt) termHold = false;
+      const naTerminal = termHold && AG.full && !!tab.cteni;
       tab.pane.classList.toggle('terminal', naTerminal);
       const cteni = !!tab.cteni && !naTerminal && !tab.pane.classList.contains('asking');
       const want = !hiddenByUser && (idle || cteni);
@@ -1722,6 +1755,7 @@
         offResize.dispose();
         sizes.disconnect();
         if (pending) clearTimeout(pending);
+        clearTimeout(askOffTimer);
         root.remove();
         askRoot.remove();
         tab.pane.classList.remove('asking');
