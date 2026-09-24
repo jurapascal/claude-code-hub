@@ -16,6 +16,7 @@ the page that was used last (typing or focus), so pages don't fight over it.
 """
 import base64
 import codecs
+import gzip
 import hashlib
 import json
 import mimetypes
@@ -371,6 +372,30 @@ HUB = Hub()
 
 
 # ── HTTP ─────────────────────────────────────────────────────────────────────
+# Statické soubory se posílají zkomprimované a s ETagem. Dřív šlo při každém
+# otevření 1,5 MB bez komprese a bez cache — na počítači to nevadí, ale telefon
+# přes Tailscale nebo bránu na tom čekal. `no-cache` = prohlížeč si soubor
+# nechá, ale před použitím se zeptá; nezměněný soubor je pak jen 304 bez těla
+# a po aktualizaci hubu se nový stáhne hned (ETag je z mtime a velikosti).
+_GZIP_TYPES = ("text/", "application/javascript", "application/json",
+               "image/svg+xml", "application/manifest+json")
+_GZIP_MIN = 1024
+_GZIP_CACHE = {}          # cesta → (mtime_ns, velikost, zkomprimované tělo)
+_GZIP_LOCK = threading.Lock()
+
+
+def _gzipped(full, st, body):
+    key = (st.st_mtime_ns, st.st_size)
+    with _GZIP_LOCK:
+        hit = _GZIP_CACHE.get(full)
+    if hit and hit[:2] == key:
+        return hit[2]
+    packed = gzip.compress(body, compresslevel=6, mtime=0)
+    with _GZIP_LOCK:
+        _GZIP_CACHE[full] = key + (packed,)
+    return packed
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "ClaudeCodeHub"
     protocol_version = "HTTP/1.1"
@@ -426,7 +451,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        # Vlastní Cache-Control v `extra` má přednost — dřív odcházely oba.
+        if not any(k.lower() == "cache-control" for k in (extra or {})):
+            self.send_header("Cache-Control", "no-store")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -434,8 +461,14 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def _json(self, obj, code=200):
-        self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"),
-                   "application/json; charset=utf-8")
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        extra = None
+        # Dlouhá konverzace ve čtení má stovky kB — na telefonu je to znát.
+        # Kdo gzip neohlásí (brána, urllib), dostane data jako dřív.
+        if len(body) >= 4096 and "gzip" in self.headers.get("Accept-Encoding", ""):
+            body = gzip.compress(body, compresslevel=5, mtime=0)
+            extra = {"Content-Encoding": "gzip", "Vary": "Accept-Encoding"}
+        self._send(code, body, "application/json; charset=utf-8", extra)
 
     # ---- routes ----
     def do_GET(self):
@@ -505,6 +538,21 @@ class Handler(BaseHTTPRequestHandler):
         ctype = mimetypes.guess_type(full)[0] or "application/octet-stream"
         if ctype.startswith("text/") or ctype in ("application/javascript",):
             ctype += "; charset=utf-8"
+        st = os.stat(full)
+        extra = dict(extra or {})
+        if rel != "index.html":
+            # index.html se upravuje podle vzhledu (a nese cookie párování),
+            # ten zůstává no-store. Zbytek se ověřuje ETagem.
+            etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
+            extra["ETag"] = etag
+            extra["Cache-Control"] = "no-cache"
+            if self.headers.get("If-None-Match") == etag:
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
         with open(full, "rb") as fh:
             body = fh.read()
         if rel == "index.html":
@@ -513,6 +561,12 @@ class Handler(BaseHTTPRequestHandler):
                 body = vzhled.uprav_stranku(body)
             except Exception as exc:
                 core.log_error("vlastní vzhled stránky", exc)
+        if (len(body) >= _GZIP_MIN and ctype.startswith(_GZIP_TYPES)
+                and "gzip" in self.headers.get("Accept-Encoding", "")):
+            body = (gzip.compress(body, compresslevel=6, mtime=0)
+                    if rel == "index.html" else _gzipped(full, st, body))
+            extra["Content-Encoding"] = "gzip"
+            extra["Vary"] = "Accept-Encoding"
         self._send(200, body, ctype, extra)
 
     def _api(self, name, query, payload=None):
