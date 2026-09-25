@@ -3286,8 +3286,10 @@ def mcp_list():
         counts[s["state"]] = counts.get(s["state"], 0) + 1
     # Co z katalogu ještě chybí — UI z toho dělá tlačítka „Přidat".
     # Co má kartu mezi službami (hub/connect.py), se tu podruhé nenabízí.
+    # `clockify-krekrrr` a `clockify-osobni` jsou pořád Clockify: kdo má víc
+    # účtů, pojmenuje si servery po nich a katalog je nemá nabízet znovu.
     missing = [k for k in MCP_CATALOG if not MCP_CATALOG[k].get("service") and not any(
-        s["name"] == k or s["name"].startswith(k + " ") for s in servers)]
+        s["name"] == k or s["name"].startswith((k + " ", k + "-")) for s in servers)]
     return {"ok": True, "servers": servers, "counts": counts,
             "available": missing, "checked": time.time()}
 
