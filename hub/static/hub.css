@@ -2706,6 +2706,9 @@ select option { background-color: var(--bg-card); color: var(--fg-bright); }
 /* Telefon: výška appky podle viditelné plochy (mobile.js, --app-h) — nad
    klávesnicí se vejde celá a po jejím zavření pod polem nezbude pruh. */
 html:has(> body.is-touch), body.is-touch { height: var(--app-h, 100%); }
+/* Z ikony na ploše bez klávesnice celá obrazovka — 100 % tam na iPhonu
+   vyjde o stavový řádek kratší (mobile.js). */
+html:has(> body.is-app.is-touch), body.is-app.is-touch { height: var(--app-h, 100vh); }
 
 /* Logo a název v liště = tlačítko domů (hub.js goHome). Vypadá jako dřív. */
 .topbar-home {

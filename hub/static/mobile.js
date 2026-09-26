@@ -288,10 +288,22 @@
        nad klávesnici, a jakmile zajede, vrátí se celá na místo. */
     const root = document.documentElement;
     const vv = window.visualViewport;
+    /* Z ikony na ploše (is-app) iOS do visualViewport nezapočítá stavový
+       řádek nahoře (black-translucent), takže appka vyšla o jeho výšku nižší
+       a pod polem na psaní zůstal pruh. Tam se výška podle výřezu bere jen
+       při vysunuté klávesnici; jinak platí celá obrazovka (hub.css, 100vh).
+       Klávesnice = výřez o kus nižší než nejvyšší, jaký byl v téhle šířce. */
+    const isApp = document.body.classList.contains('is-app');
+    const tallest = {};
     let pending = 0, last = 0;
     const sync = () => {
       const h = Math.round(vv.height);
-      if (h !== last) {
+      const w = window.innerWidth;
+      tallest[w] = Math.max(tallest[w] || 0, h);
+      const kbd = h < tallest[w] - 120;
+      if (isApp && !kbd) {
+        if (last) { root.style.removeProperty('--app-h'); last = 0; }
+      } else if (h !== last) {
         root.style.setProperty('--app-h', h + 'px');
         last = h;
       }
