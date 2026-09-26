@@ -318,6 +318,7 @@ def add_account(service, label="", account=""):
         hint = (" Zkontroluj název účtu — musí sedět s adresou, na které "
                 "Ecomail otevíráš." if "{account}" in spec["url"] else "")
         return {"ok": False, "detail": f"Přihlášení k {spec['label']} se nerozběhlo.{hint}"}
+    write_claude_md()
     return {**started, "name": name}
 
 
@@ -333,6 +334,9 @@ def remove_account(service, name):
         os.remove(path)
         if not _google_accounts() and GOOGLE_MCP_NAME in _user_servers() and claude:
             _run([claude, "mcp", "remove", GOOGLE_MCP_NAME, "-s", "user"], 30)
+        elif GOOGLE_MCP_NAME in _user_servers() and claude:
+            _ensure_google_server()        # odebraný mohl být ten výchozí
+        write_claude_md()
         core.log("služby: odebrán Google účet")
         core.start_job("mcp", core.mcp_list)
         return {"ok": True, "detail": f"Google účet {name} odebrán."}
@@ -344,9 +348,23 @@ def remove_account(service, name):
     r = _run([claude, "mcp", "remove", name, "-s", "user"], 30)
     if r.returncode != 0:
         return {"ok": False, "detail": (r.stderr or r.stdout or "nepovedlo se").strip()[:300]}
+    write_claude_md()
     core.log(f"služby: odebrán účet {name}")
     core.start_job("mcp", core.mcp_list)
     return {"ok": True, "detail": f"Účet {name} odebrán."}
+
+
+def _google_default():
+    """Účet, pod kterým Google nástroje jedou, když Claude e-mail nezadá.
+
+    Bez něj je `user_google_email` povinný a Claude ho hádá — podle účtu
+    Claude, nebo podle e-mailu někoho z týmu, na kterého narazil. Pro ten
+    přihlášení není, nástroj vrátí „No valid credentials" a Claude pak
+    tvrdí, že Google napojený není. S USER_GOOGLE_EMAIL je parametr
+    nepovinný a bez něj se použije tenhle účet."""
+    accounts = _google_accounts()
+    ok = [a["name"] for a in accounts if a["state"] == "ok"]
+    return (ok or [a["name"] for a in accounts] or [""])[0]
 
 
 def _ensure_google_server():
@@ -354,15 +372,19 @@ def _ensure_google_server():
     claude = _claude()
     cid, secret, _ = google_client()
     args = ["workspace-mcp", "--tool-tier", "extended", "--tools", *GOOGLE_TOOLS]
+    default = _google_default()
     entry = _user_servers().get(GOOGLE_MCP_NAME)
+    env = (entry.get("env") or {}) if isinstance(entry, dict) else {}
     if isinstance(entry, dict) and entry.get("args") == args and \
-            (entry.get("env") or {}).get("GOOGLE_OAUTH_CLIENT_ID") == cid:
+            env.get("GOOGLE_OAUTH_CLIENT_ID") == cid and \
+            env.get("USER_GOOGLE_EMAIL", "") == default:
         return {"ok": True}
     if entry:
         _run([claude, "mcp", "remove", GOOGLE_MCP_NAME, "-s", "user"], 30)
+    extra = ["-e", f"USER_GOOGLE_EMAIL={default}"] if default else []
     r = _run([claude, "mcp", "add", GOOGLE_MCP_NAME, "-s", "user",
               "-e", f"GOOGLE_OAUTH_CLIENT_ID={cid}",
-              "-e", f"GOOGLE_OAUTH_CLIENT_SECRET={secret}",
+              "-e", f"GOOGLE_OAUTH_CLIENT_SECRET={secret}", *extra,
               "--", "uvx", *args])
     if r.returncode != 0:
         return {"ok": False, "detail": (r.stderr or r.stdout or "nepovedlo se").strip()[:300]}
@@ -538,6 +560,7 @@ class _GoogleLogin:
                 return
             _write_google_token(email, token, self.client_id, self.client_secret)
             ensured = _ensure_google_server()
+            write_claude_md()
             self.done = True
             self.ok = ensured["ok"]
             self.message = (f"Google účet {email} je napojený." if self.ok
@@ -739,9 +762,85 @@ def sync_shared():
             if r.returncode != 0:
                 core.log(f"sdílené napojení {name}: {(r.stderr or r.stdout or '').strip()[:200]}",
                          "warn")
+    write_claude_md()
     return len(want)
 
 
 def start_shared_sync():
-    if core.on_gateway():
-        threading.Thread(target=sync_shared, daemon=True, name="sdilene-mcp").start()
+    threading.Thread(target=_sync_on_start, daemon=True, name="napojeni").start()
+
+
+def _sync_on_start():
+    # Google napojený starší verzí hubu ještě nemá výchozí účet.
+    try:
+        if GOOGLE_MCP_NAME in _user_servers() and _google_accounts() and \
+                _claude() and google_client()[0]:
+            _ensure_google_server()
+    except Exception as exc:
+        core.log(f"napojení Google při startu: {exc}", "warn")
+    # sync_shared přehled v CLAUDE.md zapíše samo — když doběhne.
+    if not core.on_gateway() or sync_shared() is None:
+        write_claude_md()
+
+
+# ── přehled napojení pro Clauda ──────────────────────────────────────────────
+NAPOJENI_MARK = ("<!-- claude-hub:napojeni -->", "<!-- /claude-hub:napojeni -->")
+
+
+def _napojeni_block():
+    servers = sorted(n for n, e in _user_servers().items() if isinstance(e, dict))
+    if not servers:
+        return ""
+    google = [a["name"] for a in _google_accounts()] if GOOGLE_MCP_NAME in servers else []
+    default = _google_default() if google else ""
+    lines = [NAPOJENI_MARK[0], "## Napojení (MCP)", "",
+             "V hubu (Nastavení → Napojení) má tenhle uživatel napojené: "
+             + ", ".join(f"`{n}`" for n in servers) + ".",
+             "Jejich nástroje se jmenují `mcp__<napojení>__…` a často jsou",
+             "odložené — v seznamu nástrojů je jen jméno bez popisu. **Než řekneš,",
+             "že něco napojené není, najdi to přes ToolSearch** (třeba `+google`).",
+             "Za nenapojené to považuj, až když se nic nenajde; pak pošli uživatele",
+             "do Nastavení → Napojení."]
+    if google:
+        others = [g for g in google if g != default]
+        lines += ["",
+                  f"**Google:** napojený účet je **{default}**"
+                  + (f" (další: {', '.join(others)})" if others else "") + ".",
+                  "U nástrojů `mcp__google__*` parametr `user_google_email` vynech — doplní",
+                  f"se {default}. Jiný e-mail zadej, jen když uživatel chce jiný",
+                  "z napojených účtů. Nikdy ho nehádej podle účtu Claude ani podle",
+                  "e-mailů jiných lidí — pro ně přihlášení není a nástroj selže."]
+    lines.append(NAPOJENI_MARK[1])
+    return "\n".join(lines) + "\n"
+
+
+def write_claude_md():
+    """Přehled napojení do ~/.claude/CLAUDE.md, mezi značkami (jako firemní
+    blok brány). Jen jména a e-maily účtů, žádné klíče. Zbytek souboru patří
+    uživateli a zůstane; bez napojení se blok smaže."""
+    try:
+        path = os.path.join(core.CLAUDE_DIR, "CLAUDE.md")
+        try:
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+        except FileNotFoundError:
+            text = ""
+        block = _napojeni_block()
+        start, end = text.find(NAPOJENI_MARK[0]), text.find(NAPOJENI_MARK[1])
+        if start >= 0 and end > start:
+            new = text[:start] + block.rstrip("\n") + text[end + len(NAPOJENI_MARK[1]):]
+            if not block:
+                new = new.rstrip("\n") + "\n" if new.strip() else ""
+        elif block:
+            new = (text.rstrip("\n") + "\n\n" if text.strip() else "") + block
+        else:
+            return
+        if new == text:
+            return
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(new)
+        os.replace(tmp, path)
+    except (OSError, UnicodeDecodeError) as exc:
+        core.log(f"přehled napojení do CLAUDE.md: {exc}", "warn")

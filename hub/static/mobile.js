@@ -15,6 +15,7 @@
 
   const NARROW = '(max-width: 820px)';
   const LONG_PRESS_MS = 500;
+  const DOUBLE_TAP_MS = 300;   // dvě ťuknutí rychleji = dvojklik
   const MOVE_TOLERANCE = 10;   // px, nad to je to scroll a ne podržení
 
   const $ = (id) => document.getElementById(id);
@@ -101,8 +102,10 @@
   const openSection = $('open-section');
   const tabTitle = $('topbar-tab');
 
+  let renaming = false;   // pole na přejmenování by překreslení smazalo
+
   function syncTabs() {
-    if (!tabbar || !openBox) return;
+    if (!tabbar || !openBox || renaming) return;
     const tabs = [...tabbar.querySelectorAll('.tab')];
     const active = tabs.find((t) => t.classList.contains('active'));
     const name = (t) => (t.querySelector('.tab-title') || t).textContent.trim();
@@ -124,16 +127,77 @@
       const go = document.createElement('button');
       go.className = 'open-name';
       go.textContent = name(t);
-      go.onclick = () => { t.click(); closeDrawer(); };
+      // Jedno ťuknutí přepne tab, dvě rychle po sobě ho přejmenují jako
+      // dvojklik na počítači. Přepnutí proto chvíli počká, jestli nepřijde druhé.
+      let wait = 0;
+      go.onclick = () => {
+        if (wait) { clearTimeout(wait); wait = 0; renameIn(go, t, row); return; }
+        wait = setTimeout(() => { wait = 0; t.click(); closeDrawer(); }, DOUBLE_TAP_MS);
+      };
       const x = document.createElement('button');
       x.className = 'open-x';
       x.title = 'Zavřít tab';
       x.innerHTML = '<svg class="ico"><use href="#i-close"/></svg>';
       x.onclick = () => { const c = t.querySelector('.tab-close'); if (c) c.click(); };
+      // Podržení (níž) pošle contextmenu — u tabu v šuplíku taky přejmenuje.
+      row.oncontextmenu = (ev) => { ev.preventDefault(); renameIn(go, t, row); };
       row.append(d, go, x);
       openBox.appendChild(row);
     }
   }
+  /* Lišta s taby, kde se přejmenovává dvojklikem, je na telefonu schovaná.
+     Pole se proto otevře na místě jména (v šuplíku nebo nahoře v liště)
+     a nový název dostane hub.js událostí `hub-rename` na tlačítku tabu. */
+  function renameIn(el, t, row) {
+    if (renaming || !t) return;
+    renaming = true;
+    const input = document.createElement('input');
+    input.className = 'open-input';
+    input.value = (t.querySelector('.tab-title') || t).textContent.trim();
+    input.maxLength = 60;
+    input.enterKeyHint = 'done';
+    if (row) row.classList.add('editing');
+    // Pole v tlačítku ne: mezera by ho „stiskla" (viz startRename v hub.js).
+    const inButton = el.tagName === 'BUTTON';
+    const old = el.textContent;
+    if (inButton) el.replaceWith(input);
+    else { el.textContent = ''; el.appendChild(input); }
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = (save) => {
+      if (done) return;
+      done = true;
+      renaming = false;
+      if (row) row.classList.remove('editing');
+      if (inButton) input.replaceWith(el);
+      else el.textContent = old;
+      if (save) t.dispatchEvent(new CustomEvent('hub-rename', {detail: input.value}));
+      syncTabs();
+    };
+    input.onblur = () => finish(true);
+    input.onkeydown = (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); finish(true); }
+      if (ev.key === 'Escape') { ev.preventDefault(); finish(false); }
+      ev.stopPropagation();
+    };
+    // Ťuknutí do pole nesmí projít na tlačítko pod ním (přepnutí tabu).
+    input.onclick = (ev) => ev.stopPropagation();
+  }
+
+  // Jméno tabu nahoře uprostřed: dvojí ťuknutí = přejmenovat.
+  if (tabTitle) {
+    let last = 0;
+    tabTitle.onclick = () => {
+      if (renaming) return;
+      const now = Date.now();
+      if (now - last < DOUBLE_TAP_MS) {
+        last = 0;
+        renameIn(tabTitle, tabbar && tabbar.querySelector('.tab.active'));
+      } else last = now;
+    };
+  }
+
   if (tabbar) {
     let pending = 0;
     new MutationObserver(() => {
@@ -179,7 +243,7 @@
     document.addEventListener('touchstart', (ev) => {
       if (ev.touches.length !== 1) return cancel();
       const t = ev.touches[0];
-      const target = t.target.closest('.card, .tab, .barbtn, .chat-item');
+      const target = t.target.closest('.card, .tab, .open-tab, .barbtn, .chat-item');
       if (!target) return;
       start = {x: t.clientX, y: t.clientY};
       fired = false;

@@ -714,7 +714,13 @@
     // Přepínač na terminál tu není: čtení je výchozí a terminál se ukáže sám,
     // když se Claude na něco zeptá (karta dotazu má i vlastní „Terminál").
     scroll.append(mount, prazdno);
-    root.append(scroll);
+    // Šipka dolů, když je člověk odrolovaný nahoru — jako v appce Claude.
+    const dolu = el('button', 'dolu');
+    dolu.title = 'Dolů na konec';
+    dolu.innerHTML = '<svg class="ico"><use href="#i-up"/></svg>';
+    dolu.hidden = true;
+    dolu.onclick = () => scroll.scrollTo({top: scroll.scrollHeight, behavior: 'smooth'});
+    root.append(scroll, dolu);
     tab.pane.appendChild(root);
     tab.pane.classList.add('cteni-on');
 
@@ -750,9 +756,12 @@
     // Roluje se samo, dokud je člověk u dna. Jak si odroluje nahoru číst,
     // nic mu pod rukama neuteče.
     let uDna = true;
-    scroll.addEventListener('scroll', () => {
-      uDna = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < U_DNA;
-    });
+    const hlidejDno = () => {
+      const zbyva = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight;
+      uDna = zbyva < U_DNA;
+      dolu.hidden = zbyva < scroll.clientHeight / 2;
+    };
+    scroll.addEventListener('scroll', hlidejDno, {passive: true});
 
     async function tik() {
       if (ceka || !zivy) return;
@@ -766,6 +775,7 @@
           prazdno.hidden = true;
           prazdnych = 0;
           if (uDna) scroll.scrollTop = scroll.scrollHeight;
+          else hlidejDno();          // přibylo pod rukama — šipka se ukáže
           // Nový agent: hned zjistit, co dělá, ne až za dvě vteřiny.
           if (proud.agentu() !== agentu) hlidejAgenty(true);
           else hlidejAgenty();

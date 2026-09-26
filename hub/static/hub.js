@@ -1664,6 +1664,20 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
   // Links open in the real browser, not inside the app window.
   term.loadAddon(new WebLinksAddon.WebLinksAddon((_ev, uri) => openLink(uri)));
   term.open(termbox);
+  // Šipka dolů, když je terminál odrolovaný nahoru. Ve čtení má vlastní (cteni.js).
+  const dolu = document.createElement('button');
+  dolu.className = 'dolu term-dolu';
+  dolu.title = 'Dolů na konec';
+  dolu.innerHTML = icon('i-up');
+  dolu.hidden = true;
+  pane.appendChild(dolu);
+  const hlidejDno = () => {
+    const b = term.buffer.active;
+    dolu.hidden = b.baseY - b.viewportY < term.rows / 2;
+  };
+  term.onScroll(hlidejDno);
+  term.onWriteParsed(hlidejDno);   // výpis přibývá, i když se kouká výš
+  dolu.onclick = () => { term.scrollToBottom(); hlidejDno(); };
 
   const tab = {ref, id: id || null, title, kind, path, term, fit, pane, termbox,
                // Agent musí být na tabu hned: bublina se podle něj rozhoduje,
@@ -1788,6 +1802,8 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
     activate(tab);
   };
   el.ondblclick = (ev) => { if (!ev.target.closest('.tab-close')) startRename(tab); };
+  // Telefon lištu s taby schová a přejmenovává v šuplíku (mobile.js).
+  el.addEventListener('hub-rename', (ev) => renameTab(tab, ev.detail));
   wireDrag(el, tab);
   $('tabbar').insertBefore(el, $('btn-new-agent'));
   tab.el = el;
@@ -2022,10 +2038,7 @@ function startRename(tab) {
     if (done) return;
     done = true;
     tab.el.draggable = true;
-    const name = input.value.replace(/\s+/g, ' ').trim() || tab.title;
-    tab.title = name;
-    holder.textContent = name;
-    if (tab.id) send({t: 'rename', id: tab.id, title: name});
+    renameTab(tab, input.value);
   };
   input.onblur = finish;
   input.onkeydown = (ev) => {
@@ -2044,6 +2057,14 @@ function startRename(tab) {
   };
   input.onclick = (ev) => ev.stopPropagation();
   input.ondblclick = (ev) => ev.stopPropagation();
+}
+
+function renameTab(tab, value) {
+  const name = String(value || '').replace(/\s+/g, ' ').trim().slice(0, 60) || tab.title;
+  tab.title = name;
+  tab.el.querySelector('.tab-title').textContent = name;
+  if (!ACTIVE) renderWelcomeOpen();
+  if (tab.id) send({t: 'rename', id: tab.id, title: name});
 }
 
 /* Název změněný v jiném okně. Kdo ho tu zrovna přepisuje, tomu se nepřepíše. */
@@ -2463,9 +2484,12 @@ function handle(msg) {
     // Tab z jiného okna téhož hubu (appka i prohlížeč naráz). Přidá se na
     // pozadí — přepnout na něj by tomu, kdo tu zrovna pracuje, sebralo tab.
     if (!TABS.some(t => t.id === msg.id)) {
+      // I s trezorem — bez něj by firemní tab otevřený v telefonu byl na
+      // počítači v barvě osobního, dokud se okno znovu nepřipojí.
       attachTab(createTab({kind: msg.kind, path: msg.path, title: msg.title,
                            id: msg.id, agent: msg.agent, model: msg.model,
-                           bypass: msg.bypass, resume: msg.resume, background: true}));
+                           bypass: msg.bypass, resume: msg.resume,
+                           vault: msg.vault, background: true}));
     }
   } else if (msg.t === 'tab-closed') {
     const tab = TABS.find(t => t.id === msg.id);
@@ -2565,9 +2589,10 @@ function restore(list) {
                        vault: info.vault, background: true});
     }
     tab.bypass = !!info.bypass;
-    if (info.vault !== undefined && tab.vault !== info.vault) {
+    if (info.vault !== undefined && (tab.vault || '') !== (info.vault || '')) {
       tab.vault = info.vault || '';
       paintAgent(tab);
+      tab.term.options.theme = termTheme(tab);   // i kurzor a výběr v terminálu
     }
     attachTab(tab);
   }
