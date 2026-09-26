@@ -103,6 +103,13 @@ dělá jednu aplikaci:
   i ten, který je sice zapsaný, ale chce přihlásit. Pod seznamem je **katalog**:
   Google Workspace, Context7, Fetch, souborový systém, paměť, Clockify a další
   se napojí kliknutím — buď globálně, nebo jen do jedné složky.
+- **Kdo vidí kterou firemní poznámku** — správci poznámek (pevný seznam lidí
+  na serveru) u každé poznámky firemního Obsidianu vyberou, kdo ji vidí:
+  tlačítkem u poznámky nebo pravým kliknutím na puntík v grafu. Kdo ji vidět
+  nemá, nemá ji v prostoru vůbec — ani jeho Claude.
+- **Sdílená napojení** — napojení na službu (WordPress, Ecomail s klíčem, jiné
+  MCP) si nastavíš jednou a nasdílíš vybraným lidem. Klíče drží server, nikdo
+  z nich je neuvidí; sdílení jde kdykoli zrušit.
 - **Nastavení po sekcích** — vzhled, projekty, taby, paměť, napojení, aktualizace
   a logy se přepínají tlačítky vlevo; vybraná sekce se pamatuje.
 - **Prostor na serveru** — při startu si vybereš, jestli pracovat na počítači,

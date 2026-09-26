@@ -37,6 +37,7 @@ import time
 
 from . import config
 from . import safefs
+from . import poznamky
 from . import shared
 from .isolation import SCOPE_PREFIX
 
@@ -933,14 +934,24 @@ def write_company(user, rel, text, overwrite=False, via=""):
     target = os.path.join(vault, *rel.split("/"))
     if os.path.commonpath([os.path.realpath(os.path.dirname(target)), vault]) != vault:
         raise ValueError("Neplatná cesta ve firemním Obsidianu.")
+    if not poznamky.allowed(user, rel):
+        raise ValueError("Na téhle cestě je poznámka, ke které nemáš přístup — vyber jinou.")
     existed = os.path.exists(target)
     if existed and not overwrite:
         return {"ok": False, "exists": True, "path": rel}
     os.makedirs(os.path.dirname(target), exist_ok=True)
-    tmp = target + ".hub-tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(text)
-    os.replace(tmp, target)
+    if existed and os.path.dirname(rel) in poznamky.masked_dirs():
+        # Ve složce se skrytou poznámkou mají prostory každý soubor přivázaný
+        # zvlášť (poznamky.mask_args) — nový soubor přes rename by v nich
+        # zůstal ve staré podobě až do restartu. Přepsat na místě.
+        with open(target, "r+", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.truncate()
+    else:
+        tmp = target + ".hub-tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, target)
     entry = {"cas": time.strftime("%Y-%m-%d %H:%M:%S"), "email": user.get("email", ""),
              "cil": rel, "prepsano": existed, "znaku": len(text)}
     if via:
@@ -1069,11 +1080,12 @@ def _read_proposal(user, pid):
 def session_spec(user, isolation, mode):
     """Co předat pty backendu, aby se spustila izolovaná instance hubu.
 
-    Vrací (argv, home, unit, verze). `argv` je už obalené izolací a limity;
+    Vrací (argv, home, unit, verze, skryté). `argv` je už obalené izolací a limity;
     `home` je pracovní složka i jediné zapisovatelné místo session; `unit` je
     jméno systemd scope, podle kterého se prostor pozná a zastaví (prázdné,
     když na stroji systemd-run není a limity se nepoužijí); `verze` = verze
-    hubu, na které prostor pojede.
+    hubu, na které prostor pojede; `skryté` = poznámky firemního trezoru,
+    které v prostoru nejsou (gateway/poznamky.py).
     """
     # Bez sandboxu se jiná složka na místo REPO_DIR přivázat nedá — tam jede
     # prostor přímo ze zdroje.
@@ -1088,6 +1100,12 @@ def session_spec(user, isolation, mode):
     # Bez přístupu k firemnímu se do sandboxu vůbec nepřiváže — neuvidí ho
     # ani Claude, ani terminál.
     company = [config.COMPANY_VAULT] if company_level(user) != "none" else []
+    # Poznámky, které uživatel vidět nemá, v sandboxu vůbec nejsou. Jinak než
+    # přes bwrap je vynechat neumíme — tam se radši nepřiváže celý trezor.
+    hidden = poznamky.hidden_for(user) if company else []
+    masks = poznamky.mask_args(config.COMPANY_VAULT, hidden) if hidden and mode == "bwrap" else []
+    if hidden and mode != "bwrap":
+        company = []
     extra_ro = [(kod, REPO_DIR)] + company + [v["path"] for v in shared.vaults_for(user)]
     unit = unit_name(user)
     # Stará cesta u<id> vede v sandboxu na nový domov: cache (uv, npx) mají
@@ -1095,7 +1113,7 @@ def session_spec(user, isolation, mode):
     legacy = os.path.join(USERS_ROOT, slug(user))
     argv = isolation.wrap(mode, inner, home, extra_ro=extra_ro, unit=unit,
                           aliases=[legacy] if legacy != home else [],
-                          ucet=slug(user))
+                          ucet=slug(user), masks=masks)
     if argv[:1] not in (["systemd-run"], ["sudo"]):
         unit = ""                 # bez scope (docker, stroj bez systemd)
-    return argv, home, unit, verze
+    return argv, home, unit, verze, hidden

@@ -31,7 +31,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from hub import __version__, qr
 
-from . import config, isolation, mcp, pocitac, safefs, shared, totp, workspace
+from . import (config, isolation, mcp, mcp_sdilene, pocitac, poznamky, safefs, shared, totp,
+               workspace)
 from .accounts import Accounts
 
 HTML = "text/html; charset=utf-8"
@@ -201,6 +202,9 @@ class HubProc:
         self.conns = 0
         # Sdílené Obsidiany svázané při startu — nové se ukážou až po restartu.
         self.shared = []
+        # Poznámky firemního trezoru, které prostor při startu nedostal
+        # (gateway/poznamky.py) — podle toho hub pozná, že chce restart.
+        self.hidden = []
         # Žeton, kterým se prostor u brány prokazuje, když Claude sahá na
         # počítač uživatele (gateway/pocitac.py). Nový s každým startem.
         self.pocitac_token = ""
@@ -225,7 +229,8 @@ class HubProc:
             # prokazatelně neběží.
             workspace.migrate_home(self.user)
         self.shared = [v["slug"] for v in shared.vaults_for(self.user)]
-        argv, home, unit, verze = workspace.session_spec(self.user, isolation, self.mode)
+        argv, home, unit, verze, self.hidden = workspace.session_spec(
+            self.user, isolation, self.mode)
         self.home = home
         self.unit = unit
         self.version = verze
@@ -702,6 +707,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._pocitac_call(method)
             if route == "/gw/pocitac/ukol":
                 return self._pocitac_ukol(method)
+            # Sdílená napojení: most v prostoru (tools/sdilene_mcp.py) posílá
+            # zprávy žetonem prostoru, jen na loopback.
+            if route == "/gw/mcp-sdilene/volani":
+                return self._mcp_shared_call(method)
             # Přihlášení Clauda v prostoru: appka tokenem zařízení, prostor
             # (prohlížeč) cookie — obojí řeší _gw_claude.
             if route == "/gw/claude":
@@ -723,6 +732,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._firma_publish(method, user)
             if route == "/gw/firma/pristupy":
                 return self._firma_access(method, user)
+            if route == "/gw/firma/poznamky":
+                return self._firma_notes(method, user)
             # Zabezpečení účtu z Nastavení → Účet (hub v prostoru o heslech nic neví).
             if route == "/gw/account":
                 return self._json({"user": user, "twofa": self.accounts.twofa(user["id"]),
@@ -733,6 +744,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._gw_recovery(method, user)
             if route == "/gw/sdilene":
                 return self._gw_shared(user)
+            if route == "/gw/mcp-sdilene":
+                return self._mcp_shared(method, user)
             if route == "/gw/restart":
                 return self._gw_restart(method, user)
             if route == "/gw/verze":
@@ -888,6 +901,51 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             pass
         return self._json({"ok": True, "level": level, "note": note})
+
+    def _firma_notes(self, method, user):
+        """Kdo vidí kterou poznámku firemního Obsidianu (gateway/poznamky.py).
+
+        GET vrátí každému, jestli je správce poznámek a jestli se od startu
+        jeho prostoru přístupy změnily (`zmena` → hub nabídne restart).
+        Správci navíc dostanou omezené poznámky a lidi. POST {cesta, emaily}
+        jen správce, jen ze stránky hubu; prázdné `emaily` = vidí všichni."""
+        if self.accounts.company_level(user) == "none":
+            return self._json({"error": "K firemnímu Obsidianu nemáš přístup."}, 403)
+        manager = poznamky.is_manager(user)
+        if method == "GET":
+            proc = self.hubs.procs.get(user["id"]) if self.hubs else None
+            changed = bool(proc and proc.alive()
+                           and sorted(proc.hidden) != poznamky.hidden_for(user))
+            out = {"spravce": manager, "zmena": changed}
+            if manager:
+                out.update(poznamky=poznamky.listing(), lide=poznamky.people())
+            return self._json(out)
+        if method != "POST":
+            return self._json({"error": "Jen GET nebo POST."}, 405)
+        form = self._read_form()
+        if not self._account_post_ok():
+            return self._json({"error": "Přístupy k poznámkám jde měnit jen v hubu."}, 403)
+        emails = form.get("emaily") or []
+        if not isinstance(emails, (list, str)):
+            return self._json({"error": "Seznam lidí je poškozený."}, 400)
+        try:
+            only = form.get("jen")
+            result = poznamky.set_note(user, form.get("cesta"), emails,
+                                       None if only is None else bool(only))
+        except PermissionError as exc:
+            return self._json({"error": str(exc)}, 403)
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, 400)
+        stopped = 0
+        if self.hubs:
+            # Kdo poznámku přestal vidět a zrovna nepracuje, tomu se prostor
+            # zastaví hned; ostatním zmizí (nebo přibude) při dalším startu.
+            for uid in result["revoked"]:
+                stopped += bool(self.hubs.stop_idle(uid))
+        waiting = len(result["revoked"]) - stopped + len(result["granted"])
+        note = f"{waiting} lidem se to projeví po restartu jejich prostoru" if waiting else ""
+        return self._json({"ok": True, "path": result["path"], "jen": result["jen"],
+                           "people": result["people"], "note": note})
 
     # ---- přihlášení ----
     def _wants_json(self):
@@ -1323,6 +1381,63 @@ class Handler(BaseHTTPRequestHandler):
         if op == "ukol-zrusit":
             return self._json(broker.ukol_cancel(user["id"], args.get("id")))
         return self._json(broker.call(user["id"], op, args, str(form.get("computer") or "")))
+
+    def _mcp_shared(self, method, user):
+        """Sdílená napojení z Nastavení → Napojení (gateway/mcp_sdilene.py).
+
+        Klíče a hesla sem posílá prohlížeč rovnou — hub v prostoru je nikdy
+        nevidí. Změny jen ze stránky hubu (stejný původ + X-Hub-Account)."""
+        if method == "GET":
+            return self._json({"napojeni": mcp_sdilene.for_user(user),
+                               "people": shared.people()})
+        if method != "POST":
+            return self._json({"error": "Jen GET nebo POST."}, 405)
+        form = self._read_form()
+        if not self._account_post_ok():
+            return self._json({"error": "Sdílená napojení jde měnit jen v hubu."}, 403)
+        action = str(form.get("akce") or "")
+        try:
+            if action == "zalozit":
+                result = mcp_sdilene.create(user, form)
+            elif action == "upravit":
+                result = mcp_sdilene.update(user, form)
+            elif action == "smazat":
+                result = mcp_sdilene.delete(user, form.get("slug"))
+            elif action == "test":
+                if not mcp_sdilene.member(user, form.get("slug")):
+                    raise ValueError("Takové napojení nemáš.")
+                result = {"ok": True, "tools": mcp_sdilene.test(user, form.get("slug"))}
+            else:
+                return self._json({"error": "Neznámá akce."}, 400)
+        except PermissionError as exc:
+            return self._json({"error": str(exc)}, 403)
+        except (ValueError, RuntimeError) as exc:
+            return self._json({"error": str(exc)}, 400)
+        return self._json(result)
+
+    def _mcp_shared_call(self, method):
+        """Zpráva z mostu v prostoru pro sdílené napojení. Jen loopback, jen
+        se žetonem běžícího prostoru; členství se ověřuje u každé zprávy."""
+        if self.headers.get("X-Real-IP") or self.headers.get("X-Forwarded-For"):
+            return self._send(404, b"404")
+        if method != "POST":
+            return self._json({"error": "Jen POST."}, 405)
+        user = self.hubs.user_for_pocitac(self.headers.get("X-Hub-Pocitac", "")) \
+            if self.hubs else None
+        if not user:
+            return self._json({"ok": False, "error": "Neplatný žeton prostoru."}, 401)
+        form = self._read_form()
+        if form.get("op") == "seznam":
+            return self._json({"ok": True, "napojeni": [
+                {"slug": n["slug"], "name": n["name"], "owner": n["owner_name"] or n["owner"],
+                 "mcp_name": n["mcp_name"]} for n in mcp_sdilene.for_user(user)]})
+        try:
+            out = mcp_sdilene.call(user, form.get("slug"), form.get("relace"), form.get("zprava"))
+        except PermissionError as exc:
+            return self._json({"ok": False, "error": str(exc), "gone": True})
+        except (ValueError, RuntimeError) as exc:
+            return self._json({"ok": False, "error": str(exc)})
+        return self._json({"ok": True, "zpravy": out})
 
     def _logout(self):
         token = self._cookies().get(config.SESSION_COOKIE, "")

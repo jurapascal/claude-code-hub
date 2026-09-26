@@ -114,11 +114,14 @@
   // Jména, kterým rozumí `/model <jméno>` — přepne rovnou, bez procházení
   // výběru v terminálu. Bez „výchozího": vybraný model má být vidět jménem,
   // a „výchozí" je jenom jiné jméno pro jeden z nich.
+  // Verze v názvech jsou jen výchozí popisek: alias bere vždycky nejnovější
+  // model rodiny a jakmile ho Claude Code ohlásí (hlavička, odpověď), nabídka
+  // ukáže jeho skutečné číslo (modelMenu → labelFor).
   const MODELS = [
-    ['Opus 5', 'opus'],
+    ['Opus 5.5', 'opus'],
     ['Sonnet 5', 'sonnet'],
     ['Haiku 4.5', 'haiku'],
-    ['Fable 5', 'fable'],
+    ['Fable 5.1', 'fable'],
   ];
 
   /* Režimy, jak je Claude Code hlásí pod vstupním polem. Přepíná se jedině
@@ -603,9 +606,12 @@
 
     /* ── odesílání ────────────────────────────────────────────────────────── */
 
+    // Vrací, jestli bajty odešly na server. Bez spojení (telefon ztratil síť,
+    // prostor se restartuje) neodejde nic — a zpráva z bubliny pak počká.
     function toPty(data) {
-      if (tab.id) io.send({t: 'in', id: tab.id, d: data});
+      return !!tab.id && io.send({t: 'in', id: tab.id, d: data}) !== false;
     }
+    const online = () => !io.online || io.online();
 
     const keyRow = buildKeys(toPty);
     root.insertBefore(keyRow, root.querySelector('.composer-box'));
@@ -622,6 +628,102 @@
                    images: (opts.atts || []).filter((p) => IMG_EXT.test(p))}, stav);
     }
 
+    /* ── doručení zprávy do Claude Code ────────────────────────────────────
+       Zpráva z bubliny nesmí cestou zmizet. Proto jde přes frontu, která:
+
+       - čeká na spojení se serverem (telefon bez signálu, restart prostoru) —
+         bez něj se nic nepošle a nic se nepovažuje za odeslané;
+       - posílá zprávy po jedné, text a Enter zvlášť (slepený Enter bere
+         Claude Code jako nový řádek);
+       - ověří, že text ze vstupního pole zmizel. Když tam pořád stojí, Enter
+         se ztratil (Claude Code si ho hned po startu nebo při překreslení
+         spolkne) a pošle se jen Enter znovu — text by v poli byl dvakrát.
+       Když spojení spadne mezi textem a Enterem, po návratu se pozná podle pole:
+       text v něm stojí → dopošle se Enter, není tam → napíše se celý znovu. */
+    const fronta = [];
+    let pumpuje = false;
+    let pryc = false;                // bublina zavřená s tabem
+    const konec = () => tab.exited || pryc;
+    const spi = (ms) => new Promise((res) => setTimeout(res, ms));
+    async function dokud(podminka) {
+      while (!podminka()) await spi(250);
+    }
+    // Čekání na spojení vidí i čtení — jinak by zpráva po 15 s zčervenala.
+    async function naSpojeni() {
+      if (konec() || online()) return;
+      if (io.odeslano) io.odeslano(null, 'spojeni');
+      await dokud(() => konec() || online());
+      if (io.odeslano && !konec()) io.odeslano(null, 'odesila');
+    }
+
+    // Delší vložený text Claude Code v poli nahradí štítkem „[Pasted text #1 …]".
+    function vPoli(zacatek, vlozit) {
+      const dole = visibleBottom(term, PROBE_ROWS);
+      return dole.some((l) => PROMPT.test(l) &&
+        (l.includes(zacatek) || (vlozit && /\[Pasted text/i.test(l))));
+    }
+    const dialogDole = () => visibleBottom(term, DIALOG_ROWS).some((l) => DIALOG.test(l) || CONFIRM.test(l));
+
+    function doruc(body) {
+      fronta.push(body);
+      pumpuj();
+    }
+
+    async function pumpuj() {
+      if (pumpuje) return;
+      pumpuje = true;
+      try {
+        while (fronta.length && !konec()) {
+          await naSpojeni();
+          await dokud(() => konec() || (tab.id && online()));
+          if (konec()) break;
+          await posliJednu(fronta[0]);
+          fronta.shift();
+        }
+      } finally {
+        pumpuje = false;
+        fronta.length = konec() ? 0 : fronta.length;
+      }
+    }
+
+    async function posliJednu(body) {
+      // Víceřádkový text musí dorazit jako vložení, jinak by se každý řádek
+      // odeslal zvlášť. Jednořádkový jde rovnou — bez uvozovacích sekvencí.
+      // Taky text, který začíná otazníkem: v prázdném poli Claude Code
+      // otazník neznamená znak, ale nápovědu se zkratkami — samotné „?"
+      // by se tak nikdy neodeslalo. Vložení ho předá doslova.
+      const vlozit = body.includes('\n') || body.startsWith('?');
+      const data = vlozit ? '\x1b[200~' + body + '\x1b[201~' : body;
+      const zacatek = body.split('\n')[0].trim().slice(0, 24);
+      for (let pokus = 0; pokus < 20 && !konec(); pokus++) {
+        if (!toPty(data)) {                       // text neodešel vůbec
+          await naSpojeni();
+          continue;
+        }
+        await spi(180);
+        let enter = toPty('\r');
+        if (!AG.full || !zacatek) return;           // cizí TUI neumíme přečíst
+        // Kontroly s rostoucím odstupem: jedna mohla trefit chvíli, kdy Claude
+        // Code zrovna překresloval a prompt na obrazovce nebyl.
+        for (const za of [1200, 1800, 2500, 4000, 6000, 9000]) {
+          await spi(za);
+          if (konec()) return;
+          if (!online()) {
+            await naSpojeni();
+            await spi(800);                        // dohrání obrazovky po návratu
+          }
+          if (!vPoli(zacatek, vlozit)) {
+            if (enter) return;                     // pole je prázdné → odešlo
+            break;                                 // Enter ani text nedošly → znovu celé
+          }
+          if (dialogDole()) continue;              // nad polem visí dotaz — počkat
+          enter = toPty('\r') || enter;
+        }
+        if (vPoli(zacatek, vlozit)) return;        // stojí v poli, Enter nebere — nech být
+        if (enter) return;
+      }
+    }
+
     function submit(text, opts = {}) {
       const body = text.replace(/\r/g, '');
       if (!body.trim()) return;
@@ -634,39 +736,12 @@
         if (io.notice && !io.odeslano) io.notice('Claude Code ještě startuje — zpráva odejde, jakmile naběhne.');
         return;
       }
-      if (!tab.id) return;
       if (opts.zeStartu) {
         if (io.odeslano) io.odeslano(null, 'odesila');
       } else {
         ohlas(body, opts, 'odesila');
       }
-      // Víceřádkový text musí dorazit jako vložení, jinak by se každý řádek
-      // odeslal zvlášť. Jednořádkový jde rovnou — bez uvozovacích sekvencí.
-      // Taky text, který začíná otazníkem: v prázdném poli Claude Code
-      // otazník neznamená znak, ale nápovědu se zkratkami — samotné „?"
-      // by se tak nikdy neodeslalo. Vložení ho předá doslova.
-      const vlozit = body.includes('\n') || body.startsWith('?');
-      toPty(vlozit ? '\x1b[200~' + body + '\x1b[201~' : body);
-      setTimeout(() => toPty('\r'), 180);
-      /* Pojistka na ztracený Enter. Hned po startu si Claude Code delší dávku
-         znaků vezme jako vložení a Enter za ní spolkne — text pak zůstane
-         stát v jeho vstupním poli a nic se neděje. Když po chvíli pořád čeká
-         u promptu a v poli je začátek téhle zprávy, Enter se pošle znovu.
-         Odeslaná zpráva by v poli nebyla (Claude by pracoval), takže se nic
-         neodešle dvakrát. */
-      const zacatek = body.split('\n')[0].trim().slice(0, 24);
-      if (AG.full && zacatek) {
-        // Zkouší se víckrát: jedna kontrola mohla trefit chvíli, kdy Claude Code
-        // zrovna překresloval a prompt na obrazovce nebyl.
-        for (const za of [1500, 3000, 5000]) {
-          setTimeout(() => {
-            if (tab.exited) return;
-            const dole = visibleBottom(term, PROBE_ROWS);
-            if (dole.some((l) => PROMPT.test(l) && l.includes(zacatek)) &&
-                dole.some((l) => HINT.test(l))) toPty('\r');
-          }, za);
-        }
-      }
+      doruc(body);
       // Kód z přihlášení do historie nepatří — platí jednou a je to heslo.
       if (!codePrompt) {
         // Dvakrát po sobě to samé je v seznamu jen k horšímu.
@@ -742,6 +817,21 @@
       return near ? near[0] : key;
     }
 
+    /* Rodina modelu z popisku („Opus 5.5" → opus). Novější model téže rodiny
+       je pořád ten, co se vybírá aliasem — v nabídce má být vidět jeho číslo,
+       ne to, které bylo v hubu napsané při vydání. */
+    const family = (text) => (String(text || '').match(/\b(opus|sonnet|haiku|fable)\b/i) || [])[1];
+    function sameFamily(text, key) {
+      const f = family(text);
+      return f ? f.toLowerCase() === key : text === modelName(key);
+    }
+    function labelFor(label, key) {
+      for (const seen of [actual, banner]) {
+        if (seen && sameFamily(seen, key) && /\d/.test(seen)) return seen;
+      }
+      return label;
+    }
+
     /* Co ukázat: čím Claude naposledy odpověděl; jinak volba z nabídky; jinak
        hlavička, se kterou nastartoval; a teprve pak settings.json. */
     function shownModel() {
@@ -800,10 +890,11 @@
         if (AG.modelCmd) submit(AG.modelCmd.replace('{model}', '').trim());
         return;
       }
+      const now = shownModel();
       io.menu(x, y, AG.models.map(([label, key]) => ({
         icon: 'i-star',
-        label: AG.full ? label : label + '  (nový tab)',
-        on: shownModel() === label,
+        label: AG.full ? labelFor(label, key) : label + '  (nový tab)',
+        on: sameFamily(now, key),
         run: () => {
           if (AG.full) {
             submit('/model ' + key);
@@ -1477,6 +1568,25 @@
       return true;
     }
 
+    /* Záloha startu: prompt se pozná podle šipky a nápovědy pod ní. Když
+       nápověda chybí (úzký telefon ji ořízne, jiná verze Claude Code ji píše
+       jinak, na jejím místě je upozornění), zpráva by čekala věčně. Stačí
+       proto i samotná šipka vstupního pole — když na obrazovce není žádný
+       dotaz a terminál už pár vteřin nic nekreslí. */
+    const START_TICHO_MS = 2500;
+    const START_MIN_MS = 4000;
+    function startZaloha() {
+      if (!AG.full || tab.exited || !tab.id || Date.now() - bornAt < START_MIN_MS) return false;
+      if (Date.now() - (tab.lastOut || 0) < START_TICHO_MS) return false;
+      const buf = term.buffer.active;
+      if (buf.viewportY < buf.baseY - 1) return false;
+      if (dialogDole()) return false;
+      return visibleBottom(term, PROBE_ROWS).some((l) => PROMPT.test(l));
+    }
+    // Když terminál mlčí, nic ho nepřekresluje a apply by se nezavolal —
+    // čekající zpráva se proto kontroluje i sama, jednou za vteřinu.
+    const cekaHlidac = setInterval(() => { if (cekaZprava && !odchazi) apply(); }, 1000);
+
     function apply(force) {
       const idle = looksIdle();
       if (idle && !idleNow) idleSince = Date.now();
@@ -1488,7 +1598,8 @@
          se ztratí, zatímco text zůstane stát v jeho poli. Naměřeno. */
       if (cekaZprava && !odchazi) {
         const vydrzel = idle ? Date.now() - idleSince : 0;
-        if (idle && vydrzel >= READY_MS) {
+        if ((idle && vydrzel >= READY_MS) || startZaloha()) {
+          everIdle = true;           // i ze zálohy — jinak by submit zprávu vrátil do čekání
           odchazi = true;
           const zprava = cekaZprava;
           cekaZprava = '';
@@ -1750,6 +1861,9 @@
       visible: () => shown,
       hide: () => { hiddenByUser = true; apply(true); },
       release: () => {
+        pryc = true;
+        fronta.length = 0;
+        clearInterval(cekaHlidac);
         offRender.dispose();
         offScroll.dispose();
         offResize.dispose();

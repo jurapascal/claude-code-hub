@@ -69,6 +69,12 @@ se každou hodinu podívá, jestli je na GitHubu novější vydání. Když ano:
    `install.sh` se stejnými parametry (`/etc/claude-hub/install.conf`)
    a restartuje ji.
 
+Při každém běhu se taky srovná **Claude Code** v `/usr` s nejnovější verzí na
+npm (`npm install -g @anthropic-ai/claude-code@<verze>`). Prostory ho mají jen
+ke čtení, takže se sám neaktualizuje nikdy — bez toho zůstal na verzi
+z instalace a v prostorech chyběly nové modely. Běžící Claude jede dál, nová
+konverzace začne na nové verzi.
+
 Starší verze se mažou (nechávají se tři poslední a každá, ze které ještě jede
 prostor). Výsledek je v `/etc/claude-hub/update.json` a v prostoru v Nastavení
 → Aktualizace.
@@ -201,6 +207,38 @@ jen ze stránky hubu). Z příkazové řádky totéž:
 - Bez záznamu platí `HUB_GW_COMPANY_DEFAULT` (výchozí `write`, tedy stav před
   správou přístupů). Změny se zapisují do `firma/pristupy.jsonl`.
 
+## Kdo vidí kterou firemní poznámku
+
+U každé poznámky firemního Obsidianu jde vybrat, kdo ji vidí
+(`gateway/poznamky.py`). Bez nastavení ji vidí každý, kdo vidí firemní
+Obsidian; s vybranými lidmi jen oni a **správci poznámek**.
+
+- **Kdo to nastavuje:** jen správci poznámek — pevný seznam účtů, nezávislý na
+  roli admin:
+
+      claude-hub-admin poznamky spravci adam@… jiri@… petr@…   # nahradí seznam
+      claude-hub-admin poznamky                                 # co je omezené a pro koho
+
+- **V hubu:** správce má u otevřené firemní poznámky tlačítko **Vidí: …**
+  (Všichni / Jen vybraní), v seznamu u omezených zámek a v grafu kroužek kolem
+  puntíku; pravé tlačítko (na telefonu podržení) na puntík otevře totéž.
+  Brána: `GET/POST /gw/firma/poznamky` (změna jen správce, jen ze stránky hubu).
+- **Natvrdo, ne jen schované:** firemní trezor se do sandboxu přiváže celý
+  ke čtení a přes každou složku, ve které je něco skrytého, se položí prázdný
+  tmpfs, do kterého se zpátky přivážou jen viditelné položky (`mask_args`).
+  Claude, terminál, hub ani napojení z appky Claude o skryté poznámce nevědí.
+  Zápis na její cestu brána odmítne. Bez bwrap (docker) se trezor tomu, kdo
+  má něco skryté, radši nepřiváže vůbec.
+- **Kdy se to projeví:** při dalším startu prostoru. Kdo poznámku přestal vidět
+  a zrovna nepracuje, tomu brána prostor zastaví hned; ostatním hub ve firemním
+  Obsidianu ukáže „Přístupy se změnily · Restartovat prostor".
+- **Složky se skrytou poznámkou** mají v prostorech každý soubor přivázaný
+  zvlášť, takže nový soubor v nich se objeví až po restartu. Existující
+  poznámky v nich brána přepisuje na místě, aby změnu viděli hned.
+- Registr `firma/poznamky-pristupy.json` (podle id účtů a cest), záznam změn
+  `firma/poznamky-pristupy.jsonl`. **Přesun poznámky mimo bránu** (git,
+  Obsidian na počítači) omezení nepřenese — na nové cestě ji uvidí všichni.
+
 ## Napojení z appky Claude (MCP)
 
 Každý si v appce Claude (claude.ai na webu, desktop, mobil) přidá vlastní
@@ -239,6 +277,39 @@ Zabezpečení:
 
       claude-hub-admin mcp                          # kdo má napojení
       claude-hub-admin mcp zrusit jmeno@firma.cz    # zrušit (appka se přihlásí znovu)
+
+## Sdílená napojení (MCP)
+
+Napojení na službu (WordPress, Ecomail s klíčem, cokoli s MCP) si nastaví
+jeden člověk a nasdílí ho vybraným lidem (`gateway/mcp_sdilene.py`). Klíče
+drží brána — do prostorů se nedostanou nikomu, ani vlastníkovi.
+
+- **V hubu:** Nastavení → Napojení → **Sdílená napojení**: šablona (WordPress,
+  vlastní adresa, vlastní příkaz), název, klíče, s kým sdílet. Prohlížeč posílá
+  tajemství rovnou bráně (`/gw/mcp-sdilene`, stejný původ + `X-Hub-Account`),
+  hub v prostoru je nevidí. Po založení se napojení samo vyzkouší
+  (initialize + tools/list). Vlastník mění sdílení a maže; ostatní vidí jen
+  název a kdo ho nasdílel.
+- **Dva druhy:** *adresa* — vzdálený MCP server přes HTTPS, brána přidá
+  uložené hlavičky (`Authorization: Bearer …`); *příkaz* — třeba
+  `npx -y balíček`, klíče v proměnných. Příkaz pouští brána sama v bwrap
+  (systém ke čtení, domov jen `mcp-sdilene/cache/<zkratka>`, žádné domovy,
+  trezory ani databáze), s `--die-with-parent`; proces na člověka a sezení
+  Claude Code, nečinný se ukončí po `HUB_GW_MCP_SHARED_IDLE` (15 min), naráz
+  nejvýš `HUB_GW_MCP_SHARED_PROCS` (24).
+- **V prostoru:** hub při startu (a po změně v nastavení) zaregistruje za každé
+  napojení stdio most `tools/sdilene_mcp.py <zkratka>` jako `sdilene-<zkratka>`
+  a nepotřebné odebere. Most posílá zprávy na `/gw/mcp-sdilene/volani` —
+  loopback, žeton prostoru (`X-Hub-Pocitac`), přes nginx 404. Nové napojení
+  uvidí Claude Code od další konverzace.
+- **Odebrání platí hned:** členství se ověřuje u každé zprávy, odebranému
+  brána spojení ukončí.
+- **Co to neumí:** služby, které chtějí přihlášení přes OAuth (oficiální MCP
+  Ecomailu, Freelo, Canva) — ty si dál napojuje každý sám. Sdílet jde jen to,
+  co jde ověřit klíčem nebo heslem.
+- Registr `gateway/mcp-sdilene/registr.json` (0600, i s tajemstvími), záznam
+  změn bez tajemství `zmeny.jsonl`. Přehled: `claude-hub-admin mcp-sdilene`.
+  Smazání účtu ho odebere ze sdílení a jeho vlastní napojení smaže.
 
 ## Firemní skilly
 

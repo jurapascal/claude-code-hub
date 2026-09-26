@@ -93,6 +93,25 @@ uklidit() {
     done
 }
 
+# Claude Code v /usr. Prostory ho mají jen ke čtení, takže se sám neaktualizuje
+# nikdy — bez tohohle zůstal na verzi z instalace (2.1.266) a v prostorech
+# chyběly nové modely. Běžící Claude jede dál na starém, nová konverzace už na
+# novém; npm soubory vyměňuje přejmenováním, běžícím procesům je nesebere.
+aktualizovat_claude() {
+    local mam nejnovejsi
+    command -v npm >/dev/null 2>&1 || return 0
+    mam="$(claude --version 2>/dev/null | awk '{print $1}')"
+    nejnovejsi="$(timeout 60 npm view @anthropic-ai/claude-code version 2>/dev/null)"
+    [ -n "$nejnovejsi" ] || return 0
+    [ "$mam" = "$nejnovejsi" ] && return 0
+    if timeout 600 npm install -g --no-fund --no-audit "@anthropic-ai/claude-code@$nejnovejsi" \
+            >>"$LOG" 2>&1; then
+        echo "$(date '+%F %T') Claude Code ${mam:-?} → $nejnovejsi" >>"$LOG"
+    else
+        echo "$(date '+%F %T') Claude Code se nepodařilo aktualizovat na $nejnovejsi" >>"$LOG"
+    fi
+}
+
 main() {
     [ "$(id -u)" -eq 0 ] || { echo "Pusť jako root." >&2; exit 1; }
     [ -f "$CONF" ] || { echo "Chybí $CONF — pusť gateway/install.sh." >&2; exit 1; }
@@ -100,6 +119,7 @@ main() {
     # shellcheck disable=SC1090
     . "$CONF"
     install -d -m 755 /etc/claude-hub
+    aktualizovat_claude
 
     if [ ! -d "$REPO_DIR/.git" ]; then
         status false "Zdroj v $REPO_DIR není git — aktualizace přeskočena (pusť gateway/install.sh)."

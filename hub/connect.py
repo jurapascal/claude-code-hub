@@ -38,6 +38,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import unicodedata
@@ -681,3 +682,66 @@ def login_cancel(login_id):
     if login:
         login.cancel()
     return {"ok": True}
+
+
+# ── sdílená napojení (jen v prostoru na serveru) ─────────────────────────────
+SHARED_PREFIX = "sdilene-"
+_shared_lock = threading.Lock()
+
+
+def _gateway_call(body, timeout=15):
+    """Loopback brány se žetonem prostoru — stejná cesta jako most na počítač."""
+    url = os.environ.get("HUB_POCITAC_URL", "").rstrip("/")
+    token = os.environ.get("HUB_POCITAC_TOKEN", "")
+    if not url or not token:
+        return None
+    req = urllib.request.Request(url + "/gw/mcp-sdilene/volani",
+                                 data=json.dumps(body).encode("utf-8"), method="POST",
+                                 headers={"Content-Type": "application/json",
+                                          "X-Hub-Pocitac": token})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def sync_shared():
+    """Srovná `sdilene-*` v Claude Code s tím, co s uživatelem kdo sdílí.
+
+    Každé sdílené napojení je v Claude Code stdio most tools/sdilene_mcp.py —
+    klíče drží brána (gateway/mcp_sdilene.py). Nová napojení uvidí Claude Code
+    od další konverzace; odebraná brána odmítne hned, tady se jen uklidí.
+    Volá se při startu hubu a když se v nastavení se sdílením něco změní.
+    Vrací počet napojení, nebo None mimo prostor na serveru."""
+    claude = _claude()
+    data = _gateway_call({"op": "seznam"})
+    if not claude or not data or not data.get("ok"):
+        return None
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script = os.path.join(root, "tools", "sdilene_mcp.py")
+    python = sys.executable or "python3"
+    with _shared_lock:
+        have = {n: s for n, s in _user_servers().items() if n.startswith(SHARED_PREFIX)}
+        want = {n["mcp_name"]: n["slug"] for n in data.get("napojeni") or []
+                if isinstance(n, dict) and re.fullmatch(r"sdilene-[a-z0-9-]{1,40}",
+                                                        str(n.get("mcp_name") or ""))}
+        for name, spec in have.items():
+            if name in want and spec.get("command") == python \
+                    and spec.get("args") == [script, want[name]]:
+                continue
+            _run([claude, "mcp", "remove", name, "-s", "user"])
+        for name, slug in want.items():
+            spec = have.get(name) or {}
+            if spec.get("command") == python and spec.get("args") == [script, slug]:
+                continue
+            r = _run([claude, "mcp", "add", name, "-s", "user", "--", python, script, slug])
+            if r.returncode != 0:
+                core.log(f"sdílené napojení {name}: {(r.stderr or r.stdout or '').strip()[:200]}",
+                         "warn")
+    return len(want)
+
+
+def start_shared_sync():
+    if core.on_gateway():
+        threading.Thread(target=sync_shared, daemon=True, name="sdilene-mcp").start()

@@ -45,8 +45,8 @@ CATALOG = {
         },
         "auth": {"cmd": "claude", "slash": "/login",
                  "note": "Spustí se Claude Code, přihlášení je přes /login."},
-        "models": [["Opus 5", "opus"], ["Sonnet 5", "sonnet"],
-                   ["Haiku 4.5", "haiku"], ["Fable 5", "fable"]],
+        "models": [["Opus 5.5", "opus"], ["Sonnet 5", "sonnet"],
+                   ["Haiku 4.5", "haiku"], ["Fable 5.1", "fable"]],
         "model_arg": "--model {model}",
         "model_cmd": "/model {model}",
         # Bypass mezi režimy (Shift+Tab), ale nestartuje se v něm — zapne ho

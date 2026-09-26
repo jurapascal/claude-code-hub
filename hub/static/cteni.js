@@ -201,7 +201,7 @@
        Co se odešle z bubliny, je vidět hned — i když Claude zrovna pracuje
        a zprávu si vezme až za chvíli. Stav pod ní říká, kde je:
          odesílá se → ve frontě (Claude ji zatím nevidí) → v konverzaci. */
-    const NEDOSLO_MS = 15000;
+    const NEDOSLO_MS = 30000;   // bublina zkouší Enter ~25 s (composer.js, posliJednu)
     function norm(t) {
       return String(t || '').replace(/<\/?pasted_content\b[^>]*>/g, '')
         .replace(/\s+/g, ' ').trim().toLowerCase();
@@ -214,20 +214,51 @@
       start: 'Čeká, až Claude Code naběhne…',
       odesila: 'Odesílá se…',
       nedoslo: 'Claude Code zprávu zatím nepřevzal — mrkni do terminálu',
+      // Slash příkaz (/usage, /model…) Claude Code často do přepisu nezapíše
+      // vůbec, nebo až po zavření svého okna — čekat na potvrzení nemá smysl.
+      prikaz: 'Příkaz poslán Claude Code',
+      // Bublina zprávu drží, dokud se spojení nevrátí — pak odejde sama.
+      spojeni: 'Čeká na spojení se serverem — odejde sama',
     };
+    // Jak dlouho štítek u slash příkazu zůstane, než zmizí sám.
+    const PRIKAZ_MS = 8000;
+    // Tak dlouho se start čeká bez poznámky; pak nejspíš visí na dotazu.
+    const START_DLOUHO_MS = 45000;
+    const jePrikaz = (m) => /^\/[a-z][\w:-]*(\s|$)/i.test(m.text || '');
     function nastavMistni(m, stav) {
+      if (stav === 'odesila' && jePrikaz(m)) stav = 'prikaz';
       m.stav = stav;
       m.row.className = 'cteni-me cteni-ceka mistni ' + stav;
       m.row.querySelector('.cteni-stitek').textContent = STITEK[stav];
       clearTimeout(m.timer);
       if (stav === 'odesila') m.timer = setTimeout(() => nastavMistni(m, 'nedoslo'), NEDOSLO_MS);
+      if (stav === 'prikaz') m.timer = setTimeout(() => potvrdMistni(m), PRIKAZ_MS);
+      if (stav === 'start') {
+        m.timer = setTimeout(() => {
+          if (m.stav === 'start') {
+            m.row.querySelector('.cteni-stitek').textContent =
+              'Claude Code pořád startuje — nejspíš se na něco ptá, mrkni do terminálu';
+          }
+        }, START_DLOUHO_MS);
+      }
+    }
+    function potvrdMistni(m) {
+      clearTimeout(m.timer);
+      m.row.remove();
+      const i = mistni.indexOf(m);
+      if (i >= 0) mistni.splice(i, 1);
     }
     function odeslano(z, stav) {
-      if (!z) {                                  // zpráva ze startu právě odešla
-        for (const m of mistni) if (m.stav === 'start') nastavMistni(m, 'odesila');
+      if (!z) {
+        if (stav === 'spojeni') {                // spojení spadlo — neodeslané čekají
+          for (const m of mistni) if (m.stav === 'odesila' || m.stav === 'nedoslo') nastavMistni(m, 'spojeni');
+          return;
+        }
+        // zpráva ze startu právě odešla, nebo se vrátilo spojení
+        for (const m of mistni) if (m.stav === 'start' || m.stav === 'spojeni') nastavMistni(m, 'odesila');
         return;
       }
-      const m = {norm: norm(z.text), row: bublina(z, '', ' ')};
+      const m = {norm: norm(z.text), text: String(z.text || '').trim(), row: bublina(z, '', ' ')};
       mistni.push(m);
       fronta.appendChild(m.row);
       nastavMistni(m, stav === 'start' ? 'start' : 'odesila');
@@ -235,10 +266,7 @@
     }
     function potvrd(b) {
       for (const m of mistni.slice()) {
-        if (!sedi(m, b)) continue;
-        clearTimeout(m.timer);
-        m.row.remove();
-        mistni.splice(mistni.indexOf(m), 1);
+        if (sedi(m, b)) potvrdMistni(m);
       }
     }
     function zFronty(key) {

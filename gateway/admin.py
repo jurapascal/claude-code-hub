@@ -46,7 +46,7 @@ import subprocess
 import sys
 import time
 
-from . import config, isolation, shared, workspace
+from . import config, isolation, mcp_sdilene, poznamky, shared, workspace
 from .accounts import Accounts
 
 
@@ -489,6 +489,8 @@ def cmd_remove(a, args):
     if not user:
         return
     shared.forget_user(user["id"])
+    poznamky.forget_user(user["id"])
+    mcp_sdilene.forget_user(user["id"])
     # Prostor smazaného účtu nemá komu běžet — a nikdo by ho už nezastavil.
     for name in _units(user):
         isolation.stop_scope(name)
@@ -559,6 +561,38 @@ def cmd_firma(a, args):
                                        user["id"], args.level)
     print(f"{args.email}: {old} → {args.level}. Projeví se při dalším startu jeho prostoru"
           " (zápis a napojení z appky Claude hned).")
+
+
+def cmd_poznamky(a, args):
+    """Kdo vidí kterou poznámku firemního Obsidianu a kdo to smí nastavovat.
+    Poznámkám se to nastavuje v hubu; tady jen výpis a správci."""
+    if args.action == "spravci":
+        if args.emails:
+            print("Správci poznámek: " + ", ".join(poznamky.set_managers(args.emails)))
+        else:
+            ids = poznamky.managers()
+            names = [(a.by_id(i) or {}).get("email", f"#{i}") for i in ids]
+            print("Správci poznámek: " + (", ".join(names) if names else
+                  "nikdo — nastav: claude-hub-admin poznamky spravci <e-mail> …"))
+        return
+    ids = poznamky.managers()
+    print("Správci: " + (", ".join((a.by_id(i) or {}).get("email", f"#{i}") for i in ids)
+                         or "nikdo"))
+    notes = poznamky.listing()
+    if not notes:
+        print("Všechny poznámky vidí každý, kdo vidí firemní Obsidian.")
+    for rel, people in notes.items():
+        print(f"{rel}\n    vidí: " + (", ".join(p["email"] for p in people) or "jen správci"))
+
+
+def cmd_mcp_sdilene(a, args):
+    """Sdílená napojení: kdo je založil a s kým je sdílí (bez tajemství)."""
+    items = mcp_sdilene.all_items()
+    if not items:
+        print("Žádné sdílené napojení.")
+    for n in items:
+        print(f"{n['name']} ({n['slug']}, {n['kind']}) — založil {n['owner'] or '?'}\n"
+              f"    používají: {', '.join(n['members']) or 'nikdo'}")
 
 
 def cmd_mcp(a, args):
@@ -673,6 +707,15 @@ def build_parser():
     fi.add_argument("email", nargs="?", default="")
     fi.add_argument("level", nargs="?", default="", help="none / read / write")
     fi.set_defaults(func=cmd_firma)
+
+    pz = sub.add_parser("poznamky", help="kdo vidí kterou firemní poznámku; správci poznámek")
+    pz.add_argument("action", nargs="?", default="status", choices=("status", "spravci"))
+    pz.add_argument("emails", nargs="*", default=[],
+                    help="u spravci: nový seznam správců (nahradí starý)")
+    pz.set_defaults(func=cmd_poznamky)
+
+    sub.add_parser("mcp-sdilene", help="sdílená napojení (MCP): kdo je založil a kdo je používá"
+                   ).set_defaults(func=cmd_mcp_sdilene)
 
     mc = sub.add_parser("mcp", help="napojení z appky Claude: výpis, zrušení")
     mc.add_argument("action", nargs="?", default="status", choices=("status", "zrusit"))

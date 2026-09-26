@@ -135,6 +135,8 @@
     const near = new Map(nodes.map((n) => [n, new Set()]));
     for (const l of links) { near.get(l.a).add(l.b); near.get(l.b).add(l.a); }
     let colors = readColors();
+    // Poznámky s omezeným přístupem (vault.js, jen správci) — kroužek kolem.
+    let marked = new Set();
     const paintNodes = () => {
       for (const n of nodes) n.color = colorFor(n, groups, folders, colors);
     };
@@ -246,6 +248,13 @@
           ctx.strokeStyle = ACCENT;
           ctx.stroke();
         }
+        if (marked.has(n.path)) {
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, r + 3 / view.scale, 0, Math.PI * 2);
+          ctx.lineWidth = 1.5 / view.scale;
+          ctx.strokeStyle = colors.bright;
+          ctx.stroke();
+        }
       }
       // Jména: při oddálení jen u větších uzlů, ať to není kaše (jako v Obsidianu).
       const limit = 3 + (1 - clamp(view.scale, 0.1, 2)) * 12 * (1 + (cfg.textFadeMultiplier || 0));
@@ -312,18 +321,39 @@
       }
       return best;
     };
-    let panFrom = null, moved = false;
+    let panFrom = null, moved = false, held = null, heldDone = false, downAt = null;
     canvas.addEventListener('pointerdown', (ev) => {
       canvas.setPointerCapture(ev.pointerId);
       moved = false;
+      heldDone = false;
+      downAt = {x: ev.clientX, y: ev.clientY};
       const p = at(ev);
       dragged = nodeAt(p);
       if (dragged) { dragged.vx = dragged.vy = 0; kick(); }
       else panFrom = {x: ev.clientX - view.x, y: ev.clientY - view.y};
+      // Podržení prstu na puntíku = totéž co pravé tlačítko myši.
+      clearTimeout(held);
+      if (dragged && ev.pointerType !== 'mouse' && opts.onNodeMenu && !dragged.missing) {
+        const n = dragged;
+        held = setTimeout(() => {
+          if (moved || dragged !== n) return;
+          heldDone = !!opts.onNodeMenu(n.path);
+        }, 550);
+      }
+    });
+    canvas.addEventListener('contextmenu', (ev) => {
+      if (!opts.onNodeMenu) return;
+      const n = nodeAt(at(ev));
+      if (n && !n.missing && opts.onNodeMenu(n.path)) ev.preventDefault();
     });
     canvas.addEventListener('pointermove', (ev) => {
       const p = at(ev);
-      if (dragged) { dragged.x = p.x; dragged.y = p.y; moved = true; kick(); return; }
+      if (dragged) {
+        // Prst se při podržení vždycky trochu pohne — to ještě není tažení.
+        if (!moved && ev.pointerType !== 'mouse' && downAt &&
+            Math.hypot(ev.clientX - downAt.x, ev.clientY - downAt.y) < 8) return;
+        dragged.x = p.x; dragged.y = p.y; moved = true; kick(); return;
+      }
       if (panFrom) { view.x = ev.clientX - panFrom.x; view.y = ev.clientY - panFrom.y; moved = true; return; }
       const found = nodeAt(p);
       if (found !== hover) {
@@ -333,7 +363,9 @@
       }
     });
     const release = (ev) => {
-      if (dragged && !moved && opts.onOpenNote && !dragged.missing) opts.onOpenNote(dragged.path);
+      clearTimeout(held);
+      if (ev && ev.button === 2) { dragged = null; panFrom = null; return; }
+      if (dragged && !moved && !heldDone && opts.onOpenNote && !dragged.missing) opts.onOpenNote(dragged.path);
       dragged = null; panFrom = null;
       if (ev && canvas.hasPointerCapture && canvas.hasPointerCapture(ev.pointerId)) {
         canvas.releasePointerCapture(ev.pointerId);
@@ -359,6 +391,7 @@
       destroy() { stopped = true; cancelAnimationFrame(raf); box.remove(); },
       setFilter(text) { filter = text; applyFilter(); },
       setFocus(path) { focus = path || ''; applyFilter(); },
+      setMarked(paths) { marked = new Set(paths || []); },
       setOption(key, value) { cfg[key] = value; applyFilter(); kick(); },
       options: () => Object.assign({}, cfg),
       counts: () => ({nodes: shown.length, links: shownLinks.length}),

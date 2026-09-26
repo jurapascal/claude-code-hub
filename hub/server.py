@@ -1105,6 +1105,10 @@ class Handler(BaseHTTPRequestHandler):
                 result = connect.remove_account(payload.get("service", ""),
                                                 payload.get("name", ""))
                 return self._json(result, 200 if result.get("ok") else 400)
+            if action == "shared-sync":
+                # Sdílená napojení se změnila (nastavení mluví s bránou samo);
+                # srovnat registrace v Claude Code.
+                return self._json({"ok": True, "count": connect.sync_shared()})
             if action == "google-client":
                 result = connect.save_google_client(payload.get("client_id", ""),
                                                     payload.get("client_secret", ""))
@@ -1430,6 +1434,7 @@ def start():
     pocitac.OPEN_TAB = open_ukol_tab
     pocitac.NOTIFY = HUB.broadcast
     pocitac.start()
+    connect.start_shared_sync()
     return httpd, f"http://127.0.0.1:{port}/?t={urllib.parse.quote(token)}"
 
 

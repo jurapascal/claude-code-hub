@@ -288,6 +288,10 @@
     const b = node('button', 'vault-item' + (path === current ? ' on' : ''), baseName(path));
     b.dataset.path = path;
     b.title = path;
+    if (restricted(path)) {
+      b.classList.add('locked');
+      b.title = path + ' — vidí jen ' + whoText(path);
+    }
     if (snippet) b.appendChild(node('small', '', snippet));
     return b;
   }
@@ -457,6 +461,7 @@
     setState(mode === 'edit' ? (proposes() ? 'úpravy se potvrzují kartou' : 'ukládá se samo') : '');
     if (mode === 'edit' && editor) editor.setDoc(lastText);
     if (graph) graph.setFocus(current);
+    whoButton();
 
     q('.vault-panel').scrollTop = 0;
     if (heading) scrollToHeading(heading);
@@ -692,8 +697,12 @@
     if (!box || wrap.hidden) return;
     graph = root.HubGraph.render(q('.graph-mount'), data, {
       onOpenNote: (path) => { closeGraph(); load(path); },
+      // Správce poznámek: pravým tlačítkem (na dotyku podržením) na puntík
+      // nastaví, kdo poznámku vidí. Vrací, jestli se něco otevřelo.
+      onNodeMenu: (path) => !!(acl && acl.spravce) && (openWho(path), true),
     });
     graph.setFocus(current);
+    graph.setMarked(lockedPaths());
     graphPanel(data);
   }
 
@@ -777,6 +786,13 @@
     slider(display, 'Mizení textu', 'textFadeMultiplier', -1, 3, 0.1);
     toggle(display, 'Šipky', 'showArrow');
 
+    if (acl && acl.spravce) {
+      const access = section('Přístupy');
+      access.appendChild(node('p', 'graph-note',
+        'Puntík s kroužkem vidí jen vybraní lidé. Pravým tlačítkem (na telefonu ' +
+        'podržením) na puntík nastavíš, kdo poznámku vidí.'));
+    }
+
     const forces = section('Síly');
     slider(forces, 'Střed', 'centerStrength', 0, 3, 0.1);
     slider(forces, 'Odpuzování', 'repelStrength', 1, 40, 1);
@@ -855,6 +871,7 @@
     box = null;
     current = '';
     back = [];
+    acl = null;
     mode = 'read';
     lastText = '';
     dirty = false;
@@ -947,6 +964,152 @@
     }
   }
 
+  /* ── kdo vidí kterou firemní poznámku (jen správci poznámek) ──────────────
+     Rozhoduje brána (/gw/firma/poznamky, gateway/poznamky.py): omezenou
+     poznámku ostatní v prostoru vůbec nemají. Správci poznámek je pevný
+     seznam lidí na serveru, ne role admin. */
+  let acl = null;         // {spravce, zmena, poznamky: {cesta: [{email, name}]}, lide}
+
+  const restricted = (path) => !!(acl && acl.poznamky && acl.poznamky[path]);
+  const whoText = (path) => {
+    const people = (acl && acl.poznamky && acl.poznamky[path]) || [];
+    return people.length ? people.map((p) => p.name || p.email).join(', ') : 'správci';
+  };
+
+  async function aclFetch(method, body) {
+    const res = await fetch('/gw/firma/poznamky', {
+      method, credentials: 'same-origin',
+      headers: body ? {'Content-Type': 'application/json', 'X-Hub-Account': '1'} : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Brána odpověděla ' + res.status);
+    return data;
+  }
+
+  async function loadAcl() {
+    if (!io || io.vault !== 'firma') return;
+    try {
+      acl = await aclFetch('GET');
+    } catch (err) {
+      acl = null;                      // bez brány (počítač) nic takového není
+      return;
+    }
+    if (!box) return;
+    const notice = q('.vault-notice');
+    notice.hidden = !acl.zmena;
+    if (acl.zmena) {
+      notice.textContent = 'Přístupy k firemním poznámkám se změnily. ';
+      const b = node('button', 'btn ghost', 'Restartovat prostor');
+      b.onclick = () => io.restartSpace &&
+        io.restartSpace('Změněné přístupy k firemním poznámkám se do prostoru načtou po restartu.');
+      notice.appendChild(b);
+    }
+    renderList();
+    whoButton();
+    if (graph) graph.setMarked(lockedPaths());
+  }
+
+  const lockedPaths = () => new Set(acl && acl.spravce ? Object.keys(acl.poznamky || {}) : []);
+
+  function whoButton() {
+    const b = q('.vault-who');
+    if (!b) return;
+    b.hidden = !(acl && acl.spravce && current);
+    if (b.hidden) return;
+    b.textContent = restricted(current) ? '🔒 Vidí: ' + whoText(current) : 'Vidí: všichni';
+    b.classList.toggle('on', restricted(current));
+  }
+
+  async function openWho(path) {
+    if (!acl || !acl.spravce || !path) return;
+    const chosen = new Set(((acl.poznamky || {})[path] || []).map((p) => p.email));
+    let only = chosen.size > 0;
+    const wrap = node('div', 'onb set-modal vault-access-modal firma');
+    wrap.innerHTML = `
+      <div class="onb-box acc-box">
+        <div class="onb-head">
+          <div>
+            <div class="onb-title">Kdo vidí poznámku</div>
+            <div class="onb-sub who-path"></div>
+          </div>
+          <span class="spacer"></span>
+          <button class="set-x acc-close" title="Zavřít (Esc)">×</button>
+        </div>
+        <div class="acc-list">
+          <div class="acc-seg who-mode">
+            <button type="button" class="acc-opt" data-only="0">Všichni</button>
+            <button type="button" class="acc-opt" data-only="1">Jen vybraní</button>
+          </div>
+          <p class="who-hint"></p>
+          <div class="who-people"></div>
+        </div>
+        <div class="who-foot">
+          <button class="btn ghost acc-close">Zrušit</button>
+          <button class="btn who-save">Uložit</button>
+        </div>
+      </div>`;
+    document.body.appendChild(wrap);
+    wrap.querySelector('.who-path').textContent = path;
+    const shut = () => { wrap.remove(); document.removeEventListener('keydown', esc, true); };
+    function esc(ev) { if (ev.key === 'Escape') { ev.stopPropagation(); shut(); } }
+    document.addEventListener('keydown', esc, true);
+    for (const b of wrap.querySelectorAll('.acc-close')) b.onclick = shut;
+    wrap.addEventListener('click', (ev) => { if (ev.target === wrap) shut(); });
+    const list = wrap.querySelector('.who-people');
+    const paint = () => {
+      for (const b of wrap.querySelectorAll('.who-mode .acc-opt')) {
+        b.classList.toggle('on', (b.dataset.only === '1') === only);
+      }
+      wrap.querySelector('.who-hint').textContent = only
+        ? 'Poznámku uvidí jen zaškrtnutí a správci poznámek. Ostatní ji ve svém prostoru nebudou mít vůbec — ani Claude.'
+        : 'Poznámku vidí každý, kdo vidí firemní Obsidian.';
+      list.hidden = !only;
+    };
+    for (const b of wrap.querySelectorAll('.who-mode .acc-opt')) {
+      b.onclick = () => { only = b.dataset.only === '1'; paint(); };
+    }
+    for (const p of acl.lide || []) {
+      const row = node('label', 'acc-row who-row');
+      const box_ = document.createElement('input');
+      box_.type = 'checkbox';
+      const who = node('div', 'acc-who');
+      who.append(node('strong', '', p.name || p.email), node('span', 'acc-mail', p.email));
+      row.append(box_, who);
+      if (p.spravce) {
+        box_.checked = true;
+        box_.disabled = true;
+        row.appendChild(node('span', 'acc-admin', 'správce · vidí vždy'));
+      } else if (p.firma === 'none') {
+        box_.disabled = true;
+        row.appendChild(node('span', 'acc-admin', 'nevidí firemní Obsidian'));
+      } else {
+        box_.checked = chosen.has(p.email);
+        box_.onchange = () => (box_.checked ? chosen.add(p.email) : chosen.delete(p.email));
+      }
+      list.appendChild(row);
+    }
+    paint();
+    const save = wrap.querySelector('.who-save');
+    save.onclick = async () => {
+      const emails = only ? [...chosen] : [];
+      if (only && !emails.length &&
+          !confirm('Nikoho jsi nevybral — poznámku uvidí jen správci poznámek. Pokračovat?')) return;
+      save.disabled = true;
+      try {
+        const out = await aclFetch('POST', {cesta: path, emaily: emails, jen: only});
+        io.toast(path + ': ' + (!out.jen ? 'vidí všichni'
+          : 'vidí jen ' + (out.people.length ? out.people.join(', ') + ' a správci' : 'správci')) +
+                 (out.note ? ' — ' + out.note : ''));
+        shut();
+        await loadAcl();
+      } catch (err) {
+        io.toast(err.message);
+        save.disabled = false;
+      }
+    };
+  }
+
   async function open(opts) {
     close();
     io = opts;
@@ -973,6 +1136,7 @@
         </div>
         <div class="onb-body set-body">
           <nav class="set-nav vault-nav">
+            <div class="vault-notice" hidden></div>
             <input class="vault-search" type="search" placeholder="Hledat v poznámkách…" autocomplete="off">
             <div class="vault-list"></div>
           </nav>
@@ -982,6 +1146,7 @@
               <span class="vault-path"></span>
               <span class="vault-state"></span>
               <span class="vault-date"></span>
+              <button class="btn ghost vault-who" title="Kdo tuhle poznámku vidí" hidden></button>
               <div class="vault-modes" hidden>
                 <button class="vault-mode on" data-mode="read">Čtení</button>
                 <button class="vault-mode" data-mode="edit">Úpravy</button>
@@ -1031,6 +1196,7 @@
     // (/gw/firma/pristupy) — tlačítko je jen cesta k ní.
     q('.vault-access').hidden = !(io && io.vault === 'firma' && io.admin);
     q('.vault-access').onclick = openAccess;
+    q('.vault-who').onclick = () => openWho(current);
     for (const b of box.querySelectorAll('.vault-mode')) {
       b.onclick = () => setMode(b.dataset.mode);
     }
@@ -1077,6 +1243,7 @@
     q('.onb-title').textContent = io.title || ('Osobní Obsidian — ' + (tree.name || 'trezor'));
     q('.onb-sub').textContent = tree.exists === false ? 'trezor nenalezen' : plural(notes.length);
     renderList();
+    loadAcl();
     if (!notes.length) {
       failure(tree.exists === false ? 'Složka trezoru neexistuje.' : 'V trezoru zatím nejsou žádné poznámky.');
       return;

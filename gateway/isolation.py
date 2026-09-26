@@ -97,7 +97,7 @@ def check(mode, host):
 
 
 def wrap(mode, argv, home, extra_ro=(), extra_rw=(), limits=None, unit="",
-         aliases=(), ucet=""):
+         aliases=(), ucet="", masks=()):
     """argv, kterým se session doopravdy spustí.
 
     `home` je domov uživatele na bráně — jediné místo, kam smí zapisovat.
@@ -114,12 +114,14 @@ def wrap(mode, argv, home, extra_ro=(), extra_rw=(), limits=None, unit="",
     a zastaví; prázdné = náhodné, jako dřív.
     `aliases` jsou cesty, které mají v sandboxu vést na domov (odkaz) — stará
     jména domova, na která ukazují cesty zapečené v cache. Jen u bwrap.
+    `masks` jsou hotové argumenty bwrap po přivázání `extra_ro` — skryté
+    poznámky firemního trezoru (gateway/poznamky.py). Jen u bwrap.
     """
     limits = LIMITS if limits is None else limits
     if mode == "none":
         return _limited(list(argv), limits, unit)
     if mode == "bwrap":
-        sandbox = _bwrap(argv, home, extra_ro, extra_rw, aliases)
+        sandbox = _bwrap(argv, home, extra_ro, extra_rw, aliases, masks)
         if PER_USER and ucet and unit:
             # Scope zakládá root ve SYSTÉMOVÉM manažeru (--uid), ne v uživatelském
             # manažeru účtu hub. Limity si spouštěč nastaví sám, proto `limits`
@@ -158,7 +160,7 @@ def _limited(argv, limits, unit=""):
     return scope + argv
 
 
-def _bwrap(argv, home, extra_ro, extra_rw=(), aliases=()):
+def _bwrap(argv, home, extra_ro, extra_rw=(), aliases=(), masks=()):
     cmd = ["bwrap",
            # Systém ke čtení. Zápis nikam mimo domov: i kdyby session někoho
            # napadlo sáhnout na /usr, nemá kam.
@@ -209,7 +211,7 @@ def _bwrap(argv, home, extra_ro, extra_rw=(), aliases=()):
     for path in extra_rw:
         if os.path.exists(path):
             cmd += ["--bind", path, path]
-    return cmd + ["--"] + list(argv)
+    return cmd + list(masks) + ["--"] + list(argv)
 
 
 # ── běžící prostory ──────────────────────────────────────────────────────────

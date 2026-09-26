@@ -43,8 +43,23 @@ if (window.HubHlas) {
   HubHlas.init({api, url: (name) => `/api/${name}?t=${encodeURIComponent(TOKEN)}`});
 }
 
+// Vrací, jestli zpráva odešla — bez spojení se nic neposílá a volající
+// (bublina, composer.js) to musí vědět, aby zprávu nepovažoval za doručenou.
 function send(msg) {
-  if (WS && WS.readyState === WebSocket.OPEN) WS.send(JSON.stringify(msg));
+  if (!WS || WS.readyState !== WebSocket.OPEN) return false;
+  try {
+    WS.send(JSON.stringify(msg));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Spojení, do kterého smí bublina poslat zprávu. Chvíli po znovupřipojení
+// ještě ne: server teprve posílá výpis tabů a terminály se dohrávají, podle
+// obrazovky se tedy nedá poznat, jestli zpráva stojí ve vstupním poli.
+function online() {
+  return !!WS && WS.readyState === WebSocket.OPEN && Date.now() - (WS.openedAt || 0) > 600;
 }
 
 function openExternal(path, kind, file) {
@@ -489,6 +504,8 @@ function openVault(path, vault, title) {
     obsidian: !firma && !shared && !onServer() && !!STATE.obsidian,
     openInObsidian: (p) => api('open-path', {kind: 'vault-note', file: p})
       .catch(() => toast('Obsidian se nepodařilo otevřít.')),
+    // Změněné přístupy k firemním poznámkám se načtou restartem prostoru.
+    restartSpace,
   });
 }
 
@@ -1693,6 +1710,7 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
   if (kind === 'project' || kind.startsWith('slash:')) {
     tab.composer = HubComposer.install(tab, {
       send,
+      online,
       menu: showMenu,
       upload: uploadFiles,
       quote: shellQuote,
@@ -2396,7 +2414,10 @@ function closePicker() { $('modal').hidden = true; settlePicker(null); }
 function connect() {
   const wsProto = location.protocol === 'https:' ? 'wss://' : 'ws://';
   WS = new WebSocket(`${wsProto}${location.host}/ws?t=${encodeURIComponent(TOKEN)}`);
-  WS.onopen = () => send({t: 'hello'});
+  WS.onopen = () => {
+    WS.openedAt = Date.now();
+    WS.send(JSON.stringify({t: 'hello'}));
+  };
   WS.onmessage = (ev) => handle(JSON.parse(ev.data));
   WS.onclose = () => setTimeout(connect, 1000);
 }
@@ -2410,6 +2431,7 @@ function handle(msg) {
     if (tab) {
       tab.term.write(recolor(tab, msg.d));
       const now = Date.now();
+      tab.lastOut = now;
       if (now - (tab.lastInput || 0) > 400) {
         (tab.outTimes = tab.outTimes || []).push(now);
         if (tab.outTimes.length > 12) tab.outTimes.shift();
