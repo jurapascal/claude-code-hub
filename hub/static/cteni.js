@@ -185,12 +185,18 @@
     const fronta = el('div', 'cteni-fronta');
     const pozadi = el('button', 'cteni-pozadi');
     pozadi.hidden = true;
+    // Příkazy a hlídání, které Claude pustil na pozadí (/api/cteni-pozadi).
+    // Agenti mají vlastní kartu a proužek výš, tady se neopakují.
+    const ulohy = el('div', 'cteni-ulohy');
+    ulohy.hidden = true;
+    let ulohyData = [];
     const cekajici = [];              // ze serveru: {key, row}
     const mistni = [];                // odeslané odsud, v přepisu ještě nejsou
 
     function naKonec() {
       if (prace) mount.appendChild(prace);
       mount.appendChild(pozadi);
+      mount.appendChild(ulohy);
       mount.appendChild(fronta);
     }
 
@@ -511,6 +517,51 @@
       hlidej();
     }
 
+    function trvani(ms) {
+      const min = Math.floor(ms / 60000);
+      if (min < 1) return 'chvilku';
+      if (min < 60) return min + ' min';
+      return Math.floor(min / 60) + ' h ' + (min % 60) + ' min';
+    }
+    function kresliUlohy() {
+      const seznam = historie ? [] : ulohyData.filter((u) => u.name !== 'Agent');
+      ulohy.hidden = !seznam.length;
+      ulohy.textContent = '';
+      if (!seznam.length) return;
+      const hlava = el('div', 'cteni-ulohy-hlava');
+      hlava.append(el('span', 'cteni-pozadi-tecka'),
+                   el('span', '', seznam.length === 1 ? 'Na pozadí běží'
+                     : 'Na pozadí běží ' + seznam.length + '×'));
+      ulohy.appendChild(hlava);
+      for (const u of seznam) {
+        const row = el('details', 'cteni-uloha');
+        const sum = el('summary');
+        const budik = u.name === 'ScheduleWakeup';
+        const ted = Date.now() - posun;
+        sum.append(el('span', 'cteni-uloha-druh',
+                      budik ? 'ozve se' : u.name === 'Monitor' ? 'hlídá' : 'příkaz'),
+                   el('span', 'cteni-uloha-co', u.title || u.name),
+                   el('span', 'cteni-uloha-cas', budik
+                     ? (u.do > ted ? 'za ' + trvani(u.do - ted + 59000) : 'teď')
+                     : u.od ? trvani(ted - u.od) : ''));
+        row.appendChild(sum);
+        if (u.detail) row.appendChild(el('pre', 'cteni-uloha-detail', u.detail));
+        ulohy.appendChild(row);
+      }
+    }
+    function ulohyZe(res) {
+      if (!res) return;
+      if (res.now) posun = Date.now() - res.now;
+      const otevrene = new Set([...ulohy.querySelectorAll('details[open]')].map((d) => d.dataset.id));
+      ulohyData = res.tasks || [];
+      kresliUlohy();
+      // Rozbalený detail zůstane rozbalený i po překreslení.
+      [...ulohy.querySelectorAll('details')].forEach((d, i) => {
+        const u = ulohyData.filter((x) => x.name !== 'Agent')[i];
+        if (u) { d.dataset.id = u.id; if (otevrene.has(u.id)) d.open = true; }
+      });
+    }
+
     /* Hodiny u běžících agentů a proužek „pracují na pozadí". */
     let tikani = null;
     function bezici() {
@@ -734,12 +785,14 @@
         naKonec();                          // nové bloky nad řádek práce a frontu
       },
       prazdny() {
-        return !mount.querySelector(':scope > :not(.cteni-prace):not(.cteni-pozadi):not(.cteni-fronta):not(.cteni-pozor)') &&
+        return !mount.querySelector(':scope > :not(.cteni-prace):not(.cteni-pozadi):not(.cteni-ulohy):not(.cteni-fronta):not(.cteni-pozor)') &&
                !fronta.firstChild;
       },
       stav,
       odeslano,
       prubeh,
+      ulohy: ulohyZe,
+      maUlohy: () => ulohyData.length > 0,
       agentu: () => agenti.size,
       bezi: () => bezici().length,
       zavri() { clearInterval(tikani); clearInterval(tikaniPrace); for (const m of mistni) clearTimeout(m.timer); },
@@ -816,6 +869,24 @@
       }, hned ? 50 : (!io.aktivni || io.aktivni()) ? 2000 : 6000);
     }
 
+    /* Úlohy na pozadí: jednou za pár vteřin, i když se v přepisu nic neděje —
+       příkaz může běžet dlouho potichu. Neaktivní tab se ptá zřídka. */
+    let bgTimer = null;
+    function hlidejUlohy() {
+      clearTimeout(bgTimer);
+      if (!zivy) return;
+      bgTimer = setTimeout(async () => {
+        if (!zivy) return;
+        if (tab.id) {
+          try {
+            proud.ulohy(await io.api('cteni-pozadi?id=' + encodeURIComponent(tab.id)));
+          } catch (_) { /* příště */ }
+        }
+        hlidejUlohy();
+      }, (!io.aktivni || io.aktivni()) ? 4000 : 15000);
+    }
+    hlidejUlohy();
+
     // Roluje se samo, dokud je člověk u dna. Jak si odroluje nahoru číst,
     // nic mu pod rukama neuteče.
     let uDna = true;
@@ -874,6 +945,7 @@
         zivy = false;
         clearTimeout(timer);
         clearTimeout(agTimer);
+        clearTimeout(bgTimer);
         proud.stav(null);
         proud.zavri();
         root.remove();

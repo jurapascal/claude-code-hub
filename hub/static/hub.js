@@ -2773,8 +2773,10 @@ async function restoreAfterRestart() {
   const reason = res.duvod || 'restart';
   const drafts = takeDrafts();
   for (const t of tabs) {
+    // `prompt`: připomínka úloh na pozadí, které restart zastavil (restart.py).
     const tab = openTab({kind: t.kind, path: t.path, title: t.title,
-                         agent: t.agent, model: t.model, resume: t.resume, vault: t.vault || ''});
+                         agent: t.agent, model: t.model, resume: t.resume, vault: t.vault || '',
+                         prompt: t.resume ? (t.prompt || '') : ''});
     // Rozepsaná zpráva z doby před restartem (aktualizace prostoru).
     const at = drafts.findIndex((d) => d.path === (t.path || '') && d.title === (t.title || ''));
     if (at >= 0 && tab.composer && tab.composer.setDraft) {

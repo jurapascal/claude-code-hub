@@ -58,6 +58,30 @@ def _resume_for(hub, session):
     return session.resume or ""
 
 
+def _pokracuj(session):
+    """Zpráva pro Clauda po obnovení tabu, když mu restart zastavil úlohy na
+    pozadí (příkazy, hlídání, agenty). Bez úloh ''. Úlohy jsou děti procesu
+    Claude Code, takže restart hubu je vždycky ukončí — sám by o tom nevěděl
+    a čekal by na hlášky, které už nepřijdou."""
+    try:
+        from . import cteni
+        ulohy = cteni.pozadi(core.transcript_for(session), int(session.started * 1000))
+    except Exception:
+        return ""
+    if not ulohy:
+        return ""
+    radky = []
+    for u in ulohy[:8]:
+        druh = {"Agent": "agent", "Monitor": "hlídání",
+                "ScheduleWakeup": "naplánované probuzení (ScheduleWakeup)"}.get(u.get("name"), "příkaz")
+        co = (u.get("detail") or u.get("title") or "").strip().replace("\n", " ")
+        radky.append(f"- {druh}: {co[:300]}")
+    return ("[hub] Hub se mezitím restartoval (aktualizace) a tyhle úlohy na pozadí se "
+            "tím zastavily — hlášky o jejich doběhnutí už nepřijdou:\n" + "\n".join(radky) +
+            "\n\nZkontroluj, co z toho je pořád potřeba, pusť to znovu a pokračuj tam, "
+            "kde jsi skončil. Uživateli to krátce oznam.")
+
+
 def snapshot(hub, reason="restart", quiet=False):
     """Zapíše otevřené taby. Vrací, kolik jich bylo.
 
@@ -72,9 +96,11 @@ def snapshot(hub, reason="restart", quiet=False):
         # Konverzaci má smysl hledat jen u Clauda — ostatní agenti `--resume`
         # neumí a holý terminál nemá co obnovovat.
         resume = ""
+        prompt = ""
         if session.kind == "project" or session.kind.startswith("slash:"):
             if (agent or core.default_agent()) == "claude":
                 resume = _resume_for(hub, session)
+                prompt = _pokracuj(session)
         tabs.append({
             "kind": session.kind,
             "path": session.path or "",
@@ -82,6 +108,9 @@ def snapshot(hub, reason="restart", quiet=False):
             "agent": agent,
             "model": session.model or "",
             "resume": resume,
+            # Co Claude nechal běžet na pozadí — restart to zastaví, po
+            # obnovení mu to hub připomene, ať to pustí znovu a pokračuje.
+            "prompt": prompt,
             # Firemní tab (trezor firmy) má zůstat firemní i po restartu.
             "vault": getattr(session, "vault", "") or "",
         })

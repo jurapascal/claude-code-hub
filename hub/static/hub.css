@@ -2952,3 +2952,22 @@ body:not(.pokrocile) #projects-count { display: none !important; }
   border: 2.5px solid rgba(255,255,255,.35); border-top-color: #fff;
   animation: hlas-spin .8s linear infinite; }
 @keyframes hlas-spin { to { transform: rotate(360deg); } }
+
+/* Úlohy na pozadí (příkazy, hlídání) — na konci konverzace, co běží a jak dlouho. */
+.cteni-ulohy { align-self: stretch; display: flex; flex-direction: column; gap: 4px;
+  padding: 8px 12px; border-radius: 10px; background: var(--bg-card);
+  border: 1px solid var(--border); font-size: 12.5px; max-width: 760px; }
+.cteni-ulohy[hidden] { display: none; }
+.cteni-ulohy-hlava { display: flex; align-items: center; gap: 8px; color: var(--fg-bright);
+  font-weight: 600; margin-bottom: 2px; }
+.cteni-uloha summary { display: flex; align-items: center; gap: 8px; cursor: pointer;
+  list-style: none; padding: 3px 0; color: var(--fg); }
+.cteni-uloha summary::-webkit-details-marker { display: none; }
+.cteni-uloha-druh { flex: none; font-size: 11px; padding: 1px 7px; border-radius: 999px;
+  color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+.cteni-uloha-co { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.cteni-uloha-cas { flex: none; color: var(--dim); font-variant-numeric: tabular-nums; }
+.cteni-uloha-detail { margin: 4px 0 6px; padding: 8px 10px; border-radius: 6px;
+  background: var(--bg); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere;
+  max-height: 12rem; overflow: auto; }

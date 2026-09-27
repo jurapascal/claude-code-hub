@@ -702,3 +702,135 @@ def agenti(path):
                      "title": str(meta.get("description") or "")})
         out.append(stav)
     return {"agents": out, "now": ted}
+
+
+# ── úlohy na pozadí ─────────────────────────────────────────────────────────
+# Co Claude pustil na pozadí a ještě to neskončilo: příkaz s run_in_background,
+# Monitor, agent na pozadí. Konec ohlásí <task-notification> se stejným
+# tool-use-id, případně TaskStop. Úlohy jsou děti procesu Claude Code — co se
+# spustilo dřív, než tenhle proces naběhl (`od`), už neběží a nepočítá se.
+_BG_ID = re.compile(r"(?:with ID|agentId|task_id)[:=]\s*([A-Za-z0-9_-]+)")
+_BG_ZNAK = ("running in background", "Async agent launched", "Monitor started",
+            "is now running", "monitoring")
+_BG_STAV = {}
+_BG_ZAMEK = threading.Lock()
+
+
+def _bg_text(obsah):
+    if isinstance(obsah, str):
+        return obsah
+    if isinstance(obsah, list):
+        return " ".join(str(b.get("text") or "") for b in obsah if isinstance(b, dict))
+    return ""
+
+
+def _bg_konec(stav, text):
+    for m in _OZNAMENI.finditer(text or ""):
+        telo = m.group(1)
+        tid, task = _znacka(telo, "tool-use-id"), _znacka(telo, "task-id")
+        for key in [k for k, u in stav["bezi"].items() if k == tid or (task and u["task"] == task)]:
+            stav["bezi"].pop(key, None)
+
+
+def _bg_radek(stav, entry):
+    typ = entry.get("type")
+    if typ == "queue-operation":
+        _bg_konec(stav, entry.get("content") or "")
+        return
+    if typ == "attachment":
+        _bg_konec(stav, (entry.get("attachment") or {}).get("prompt") or "")
+        return
+    if entry.get("isSidechain"):
+        return
+    obsah = (entry.get("message") or {}).get("content")
+    if isinstance(obsah, str):
+        _bg_konec(stav, obsah)
+        return
+    if not isinstance(obsah, list):
+        return
+    for b in obsah:
+        if not isinstance(b, dict):
+            continue
+        if b.get("type") == "text":
+            _bg_konec(stav, b.get("text") or "")
+        elif b.get("type") == "tool_use":
+            name, vstup = b.get("name") or "", b.get("input") or {}
+            if name == "TaskStop":
+                cil = str(vstup.get("task_id") or vstup.get("shell_id") or "")
+                for key in [k for k, u in stav["bezi"].items() if cil and u["task"] == cil]:
+                    stav["bezi"].pop(key, None)
+                continue
+            if name == "ScheduleWakeup":
+                # Naplánované probuzení: platí to poslední (další ho nahradí).
+                if vstup.get("stop"):
+                    stav["budik"] = None
+                else:
+                    od = _ms(entry.get("timestamp"))
+                    try:
+                        za = max(60, min(3600, int(float(vstup.get("delaySeconds") or 0))))
+                    except (TypeError, ValueError):
+                        za = 60
+                    stav["budik"] = {"id": b.get("id"), "name": name, "task": "",
+                                     "title": str(vstup.get("reason") or "naplánované pokračování"),
+                                     "detail": _zkrat(str(vstup.get("prompt") or ""), 600),
+                                     "od": od, "do": od + za * 1000}
+                continue
+            if name == "Monitor" or name == "Agent" or \
+                    (isinstance(vstup, dict) and vstup.get("run_in_background")):
+                nadpis, _meta, detail = _popis(name, vstup)
+                stav["cekaji"][b.get("id")] = {
+                    "id": b.get("id"), "name": name, "title": nadpis,
+                    "detail": _zkrat(detail, 600), "od": _ms(entry.get("timestamp")),
+                    "task": ""}
+                del_old = list(stav["cekaji"])[:-50]
+                for k in del_old:
+                    stav["cekaji"].pop(k, None)
+        elif b.get("type") == "tool_result":
+            u = stav["cekaji"].pop(b.get("tool_use_id"), None)
+            text = _bg_text(b.get("content"))
+            if u and not b.get("is_error") and any(z in text for z in _BG_ZNAK):
+                m = _BG_ID.search(text)
+                u["task"] = m.group(1) if m else ""
+                stav["bezi"][u["id"]] = u
+            _bg_konec(stav, text)
+
+
+def pozadi(path, od_ms=0):
+    """Úlohy na pozadí, které podle přepisu ještě běží (nejstarší první)."""
+    if not path or not os.path.isfile(path):
+        return []
+    with _BG_ZAMEK:
+        stav = _BG_STAV.get(path)
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            return []
+        if not stav or size < stav["pos"]:
+            stav = _BG_STAV[path] = {"pos": 0, "cekaji": {}, "bezi": {}, "budik": None}
+        if size > stav["pos"]:
+            try:
+                with open(path, "rb") as fh:
+                    fh.seek(stav["pos"])
+                    data = fh.read(64 * 1024 * 1024)
+            except OSError:
+                return []
+            konec = data.rfind(b"\n") + 1      # rozepsaný řádek až příště
+            for line in data[:konec].splitlines():
+                if b"tool_use" not in line and b"task-notification" not in line:
+                    continue
+                try:
+                    _bg_radek(stav, json.loads(line))
+                except ValueError:
+                    continue
+            stav["pos"] += konec
+        if len(_BG_STAV) > 64:
+            for k in list(_BG_STAV)[:-64]:
+                _BG_STAV.pop(k, None)
+        out = [dict(u) for u in stav["bezi"].values()
+               if not od_ms or u["od"] >= od_ms - 5000]
+        budik = stav.get("budik")
+        # Probuzení se po čase dávno odbylo (zpráva přišla, Claude jede dál).
+        if budik and (not od_ms or budik["od"] >= od_ms - 5000) and \
+                time.time() * 1000 < budik["do"] + 90 * 1000:
+            out.append(dict(budik))
+        return sorted(out, key=lambda u: u["od"])

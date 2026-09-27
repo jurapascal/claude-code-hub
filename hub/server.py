@@ -664,6 +664,17 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 return self._json({"error": str(exc)}, 400)
             return self._json({"ok": True})
+        if name == "cteni-pozadi":
+            # Úlohy, které Claude v tabu pustil na pozadí a ještě běží.
+            try:
+                session = HUB.sessions.get(int((query.get("id") or ["0"])[0]))
+            except ValueError:
+                session = None
+            if not session or session.exited:
+                return self._json({"tasks": [], "now": int(time.time() * 1000)})
+            return self._json({"tasks": cteni.pozadi(core.transcript_for(session),
+                                                     int(session.started * 1000)),
+                               "now": int(time.time() * 1000)})
         if name in ("cteni", "cteni-agenti"):
             # Konverzace jako text (hub/cteni.py). Buď z tabu, který běží,
             # nebo ze starého přepisu podle id konverzace.
