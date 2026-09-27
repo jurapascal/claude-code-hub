@@ -1227,6 +1227,10 @@
     function card(n) {
       const c = el('div', 'svc-card');
       const head = el('div', 'svc-head');
+      // Sdílené napojení z šablony WordPress (nebo pojmenované po službě).
+      const ico = svcIcon(/wordpress/i.test(n.name + ' ' + (n.command || '')) ? 'wordpress'
+                          : String(n.name || '').split(/\s/)[0]);
+      if (ico) head.appendChild(ico);
       head.appendChild(el('strong', null, n.name));
       head.appendChild(el('span', 'svc-note', n.is_owner
         ? (n.members && n.members.length
@@ -1420,6 +1424,18 @@
     return wrap;
   }
 
+  /* Ikonka služby, ať ji člověk pozná na první pohled (hub/static/sluzby/,
+     oficiální ikony z webů služeb — nic se nenačítá zvenku). */
+  const SVC_ICONS = ['freelo', 'canva', 'ecomail', 'google', 'wordpress'];
+  function svcIcon(id) {
+    const key = String(id || '').toLowerCase();
+    if (!SVC_ICONS.includes(key)) return null;
+    const img = el('img', 'svc-ico');
+    img.src = '/sluzby/' + key + '.png';
+    img.alt = '';
+    return img;
+  }
+
   function sluzby() {
     const wrap = el('div', 'svc-list');
     wrap.appendChild(el('div', 'set-dim', 'Načítám služby…'));
@@ -1464,6 +1480,8 @@
       const box = el('div', 'svc-card');
       box.dataset.service = svc.id;
       const head = el('div', 'svc-head');
+      const ico = svcIcon(svc.id);
+      if (ico) head.appendChild(ico);
       head.appendChild(el('strong', null, svc.label));
       head.appendChild(el('span', 'svc-note', svc.note));
       box.appendChild(head);

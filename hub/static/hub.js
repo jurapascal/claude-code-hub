@@ -3175,8 +3175,8 @@ async function checkForUpdate() {
   // Toast až po síti: kdyby se ukazoval i z paměti, otravoval by při každém
   // spuštění, dokud člověk neaktualizuje.
   if (!cached || bare(cached.latest) !== bare(info.latest)) {
-    toast(`Je venku nová verze Hubu ${info.latest} (máš ${info.version}). ` +
-          `Klikni na „Nová verze" nahoře a aktualizuj.`);
+    toast(`Je tu nová verze aplikace ${info.latest}. ` +
+          `Nainstaluješ ji tlačítkem „Nová verze" nahoře.`);
   }
 }
 
