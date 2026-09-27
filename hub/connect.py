@@ -71,6 +71,18 @@ SERVICES = {
         "field": {"name": "account", "label": "Název účtu v Ecomailu",
                   "help": "Z adresy, na které Ecomail otevíráš: název.ecomailapp.cz"},
     },
+    # Clockify se nepřihlašuje přes OAuth, bere API klíč v hlavičce — proto
+    # vlastní druh „apikey": po vložení klíče je hotovo, žádné přihlášení.
+    "clockify": {
+        "label": "Clockify",
+        "note": "Výkazy času, projekty a stopky.",
+        "kind": "apikey",
+        "url": "https://api.clockify.me/mcp-server/mcp",
+        "header": "x-api-key",
+        "field": {"name": "account", "label": "API klíč z Clockify", "secret": True,
+                  "help": "Clockify → foto profilu → Preferences → Advanced → "
+                          "Manage API keys → Generate New"},
+    },
     "google": {
         "label": "Google",
         "note": "Gmail, Disk, Kalendář, Dokumenty, Tabulky, Prezentace, "
@@ -295,6 +307,22 @@ def add_account(service, label="", account=""):
     slug = _slug(label) or "ucet"
     name = f"{service}-{slug}"
     url = spec["url"]
+    if spec["kind"] == "apikey":
+        key = (account or "").strip()
+        if not key:
+            return {"ok": False, "detail": f"Chybí {spec['field']['label']}."}
+        if name in _user_servers():
+            return {"ok": False, "detail": f"Účet „{slug}“ u služby {spec['label']} už je "
+                                           "— zvol jiný popisek."}
+        r = _run([claude, "mcp", "add", "--transport", "http", "-s", "user", name, url,
+                  "--header", f"{spec['header']}: {key}"])
+        if r.returncode != 0:
+            return {"ok": False, "detail": (r.stderr or r.stdout or "nepovedlo se").strip()[:300]}
+        core.log(f"služby: přidán účet {name}")
+        write_claude_md()
+        core.start_job("mcp", core.mcp_list)
+        return {"ok": True, "name": name,
+                "login": {"done": True, "message": f"{spec['label']} napojené."}}
     if "{account}" in url:
         text = (account or "").strip().lower()
         m = re.search(r"([a-z0-9][a-z0-9-]*)\.ecomailapp\.cz", text)
