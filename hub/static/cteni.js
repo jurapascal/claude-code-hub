@@ -83,8 +83,12 @@
     return AG_PALETA[h % AG_PALETA.length];
   }
 
+  // Jednoduchý režim × Pro pokročilé (hub.js → window.HUB_ADVANCED). Čte se
+  // při každém kreslení — přepnout se dá bez reloadu.
+  const pokrocile = () => !!global.HUB_ADVANCED;
+
   function jmenoAgenta(typ) {
-    if (!typ || typ === 'general-purpose') return 'Agent';
+    if (!typ || typ === 'general-purpose') return pokrocile() ? 'Agent' : 'Pomocník';
     return typ.charAt(0).toUpperCase() + typ.slice(1);
   }
 
@@ -153,7 +157,7 @@
       const head = el('button', 'cteni-head');
       head.appendChild(el('span', 'cteni-caret', '▸'));
       head.appendChild(el('span', 'cteni-ico', ZNAK[b.name] || '•'));
-      head.appendChild(el('span', 'cteni-title', b.title || b.name || 'nástroj'));
+      head.appendChild(el('span', 'cteni-title', b.title || b.name || 'krok'));
       head.appendChild(el('span', 'cteni-bezi'));
       const meta = el('span', 'cteni-meta', b.meta || '');
       head.appendChild(meta);
@@ -210,16 +214,22 @@
       if (m.norm) return norm(b.text).includes(m.norm.slice(0, 48));
       return !!((b.images || []).length || (b.inline || []).length);
     }
+    // Terminál je vidět jen pro pokročilé — v jednoduchém režimu se na něj
+    // neodkazuje, radí se počkat.
     const STITEK = {
-      start: 'Čeká, až Claude Code naběhne…',
+      start: 'Čeká, až se Claude připraví…',
       odesila: 'Odesílá se…',
-      nedoslo: 'Claude Code zprávu zatím nepřevzal — mrkni do terminálu',
+      nedoslo: 'Claude zprávu zatím nepřevzal — zkus to za chvíli znovu',
       // Slash příkaz (/usage, /model…) Claude Code často do přepisu nezapíše
       // vůbec, nebo až po zavření svého okna — čekat na potvrzení nemá smysl.
-      prikaz: 'Příkaz poslán Claude Code',
+      prikaz: 'Příkaz poslán Claudovi',
       // Bublina zprávu drží, dokud se spojení nevrátí — pak odejde sama.
       spojeni: 'Čeká na spojení se serverem — odejde sama',
     };
+    const STITEK_PRO = {
+      nedoslo: 'Claude zprávu zatím nepřevzal — mrkni do terminálu',
+    };
+    const stitek = (stav) => (pokrocile() && STITEK_PRO[stav]) || STITEK[stav];
     // Jak dlouho štítek u slash příkazu zůstane, než zmizí sám.
     const PRIKAZ_MS = 8000;
     // Tak dlouho se start čeká bez poznámky; pak nejspíš visí na dotazu.
@@ -229,15 +239,16 @@
       if (stav === 'odesila' && jePrikaz(m)) stav = 'prikaz';
       m.stav = stav;
       m.row.className = 'cteni-me cteni-ceka mistni ' + stav;
-      m.row.querySelector('.cteni-stitek').textContent = STITEK[stav];
+      m.row.querySelector('.cteni-stitek').textContent = stitek(stav);
       clearTimeout(m.timer);
       if (stav === 'odesila') m.timer = setTimeout(() => nastavMistni(m, 'nedoslo'), NEDOSLO_MS);
       if (stav === 'prikaz') m.timer = setTimeout(() => potvrdMistni(m), PRIKAZ_MS);
       if (stav === 'start') {
         m.timer = setTimeout(() => {
           if (m.stav === 'start') {
-            m.row.querySelector('.cteni-stitek').textContent =
-              'Claude Code pořád startuje — nejspíš se na něco ptá, mrkni do terminálu';
+            m.row.querySelector('.cteni-stitek').textContent = pokrocile()
+              ? 'Claude se pořád chystá — nejspíš se na něco ptá, mrkni do terminálu'
+              : 'Claude se pořád chystá — zkus to za chvíli znovu';
           }
         }, START_DLOUHO_MS);
       }
@@ -363,8 +374,9 @@
       nahled.hidden = !k.vysledek || k.otevreno === 'vysledek';
       q('[data-v=vysledek]').hidden = !k.vysledek;
       const cisla = [];
-      if (k.tools) cisla.push(pocet(k.tools, 'nástroj', 'nástroje', 'nástrojů'));
-      if (k.tokens) cisla.push(tokeny(k.tokens));
+      if (k.tools) cisla.push(pocet(k.tools, 'krok', 'kroky', 'kroků'));
+      // Tokeny jsou jen pro pokročilé.
+      if (k.tokens && pokrocile()) cisla.push(tokeny(k.tokens));
       if (k.stav !== 'bezi' && k.ms) cisla.push(cas(k.ms));
       if (k.stav === 'chyba' && k.souhrn && !k.vysledek) cisla.push(k.souhrn);
       q('.ag-cisla').textContent = cisla.join(' · ');
@@ -383,7 +395,9 @@
       g.box.classList.toggle('vic', karty.length > 1);
       if (karty.length < 2) return;
       const bezi = karty.filter((k) => k.stav === 'bezi').length;
-      g.pocet.textContent = pocet(karty.length, 'agent', 'agenti', 'agentů') + ' najednou';
+      g.pocet.textContent = (pokrocile()
+        ? pocet(karty.length, 'agent', 'agenti', 'agentů')
+        : pocet(karty.length, 'pomocník', 'pomocníci', 'pomocníků')) + ' najednou';
       const kus = [];
       if (bezi) kus.push(bezi + ' běží');
       if (karty.length - bezi) kus.push((karty.length - bezi) + ' hotovo');
@@ -491,7 +505,7 @@
         c.row.classList.remove('fronta');
         c.row.classList.add('ztracena');
         const st = c.row.querySelector('.cteni-stitek');
-        if (st) st.textContent = 'Neodešlo — Claude Code frontu při restartu zahodil. Pošli to znovu.';
+        if (st) st.textContent = 'Nedoručeno — pošli to znovu.';
       }
     }
 
@@ -556,7 +570,10 @@
         return;
       }
       if (b.kind === 'peer') {
-        const box = udelejNastroj({name: 'peer', title: 'zpráva od ' + (b.from || 'jiné session'),
+        // Jméno odesílatele je technický název sezení — ukáže se jen pokročilým.
+        const box = udelejNastroj({name: 'peer',
+                                   title: b.from && pokrocile() ? 'zpráva od ' + b.from
+                                     : 'zpráva z jiného rozhovoru',
                                    detail: b.text});
         box.classList.add('peer');
         mount.appendChild(box);
@@ -643,10 +660,13 @@
                      el('span', 'cteni-cas'), el('span', 'cteni-tok'));
       }
       naKonec();                            // vždycky na konci konverzace
-      prace.querySelector('.cteni-slovo').textContent = (st.sloveso || 'Pracuje') + '…';
+      // Sloveso od Claude Code je anglické („Bloviating") — jen pro pokročilé.
+      prace.querySelector('.cteni-slovo').textContent =
+        ((pokrocile() && st.sloveso) || 'Pracuje') + '…';
       if (st.sekund !== null && st.sekund !== undefined) odKdy = Date.now() - st.sekund * 1000;
       else if (!odKdy) odKdy = Date.now();
-      prace.querySelector('.cteni-tok').textContent = st.tokeny ? '↓ ' + st.tokeny + ' tokenů' : '';
+      prace.querySelector('.cteni-tok').textContent =
+        st.tokeny && pokrocile() ? '↓ ' + st.tokeny + ' tokenů' : '';
       const napis = () => {
         if (prace) prace.querySelector('.cteni-cas').textContent = cas(Date.now() - odKdy);
       };
@@ -936,7 +956,8 @@
         try {
           res = await data.dalsi();
         } catch (err) {
-          io.notice('Konverzaci se nepodařilo načíst: ' + err.message);
+          console.warn('cteni:', err);
+          io.notice('Konverzaci se teď nepodařilo načíst, zkus to za chvíli znovu.');
           return;
         }
         if (!zivy) return;

@@ -297,6 +297,19 @@ dál nosí Claude návrhem; soubory nahrává **jen člověk v prohlížeči**.
 - Soubor nahraný do složky s omezeným přístupem se v prostorech ostatních
   (i v tvém) ukáže po restartu prostoru — složka je přivázaná po souborech.
 
+## Tým a sdílené poznámky z hubu
+
+- **Nastavení → Tým** (jen admin, `gateway/tym.py`, `GET/POST /gw/tym`, změny jen ze
+  stránky hubu s `X-Hub-Account`): pozvat (heslo vymyslí brána — tři slova
+  a číslo, ukáže se jednou), nové heslo, reset 2FA, role, zablokovat, správce
+  poznámek, odemknout zámek přihlášení. Admin si nevezme roli ani se nezablokuje
+  sám. Záznam `gateway/tym.jsonl` (bez hesel). Smazání účtu zůstává jen
+  v `claude-hub-admin remove`.
+- **Sdílené poznámky** v panelu: `POST /gw/sdilene` s `akce` zalozit / clenove /
+  odejit / smazat — stejná pravidla jako přes Clauda (`shared.py`).
+- **Jednoduchý režim:** v prostorech je výchozí `dev_mode` vypnutý (hub/core.py),
+  technické věci si člověk zapne v Nastavení → Pro pokročilé.
+
 ## Napojení z appky Claude (MCP)
 
 Každý si v appce Claude (claude.ai na webu, desktop, mobil) přidá vlastní

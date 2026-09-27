@@ -28,6 +28,18 @@
   // to po návratu na počítač tiše přeskočí a okno problikne zpátky.
   const APP_KEY = 'hub.appVersion';
 
+  // Věta od serveru (česky) projde; výpadek spojení nebo syrový výpis
+  // (Failed to fetch, HTTP 502, Traceback…) se nahradí lidskou větou.
+  function friendly(where, e) {
+    console.warn('server.js: ' + where, e);
+    const msg = (e && e.message) || '';
+    if (!msg || e instanceof TypeError || msg.length > 200 ||
+        /^HTTP \d|fetch|NetworkError|Traceback|Error:|<html/i.test(msg)) {
+      return 'Server teď neodpovídá, zkus to za chvíli.';
+    }
+    return msg;
+  }
+
   function el(tag, cls, text) {
     const node = document.createElement(tag);
     if (cls) node.className = cls;
@@ -87,16 +99,16 @@
     const box = document.createElement('div');
     const note = document.createElement('div');
     note.className = 'set-warn';
-    note.textContent = '! Appka Claude Code Hub na tomhle počítači je starší a tohle ještě neumí.';
+    note.textContent = '! Aplikace Claude Hub na tomhle počítači je starší a tohle ještě neumí.';
     const how = document.createElement('div');
     how.className = 'set-note';
     how.textContent = 'Aktualizuj ji: tlačítkem se vrátíš na počítač, tam Nastavení → ' +
-      'Aktualizace → Aktualizovat. Pak appku zavři a otevři znovu.';
+      'Aktualizace → Aktualizovat. Pak aplikaci zavři a otevři znovu.';
     const row = document.createElement('div');
     row.className = 'set-row';
     const b = document.createElement('button');
     b.className = 'btn primary';
-    b.textContent = 'Na počítač aktualizovat appku';
+    b.textContent = 'Na počítač aktualizovat aplikaci';
     b.onclick = () => backTo('local');
     row.appendChild(b);
     box.append(note, how, row);
@@ -158,7 +170,9 @@
     const check = el('button', 'btn ghost', 'Ověřit');
     addrRow.appendChild(addr);
     addrRow.appendChild(check);
-    box.appendChild(el('label', 'srv-label', 'Server'));
+    box.appendChild(el('label', 'srv-label', 'Adresa serveru'));
+    box.appendChild(el('div', 'srv-note',
+      'Adresu ti pošle ten, kdo ti účet založil.'));
     box.appendChild(addrRow);
 
     const verdict = el('div', 'srv-status');
@@ -211,7 +225,7 @@
         const res = await io.api('account', {action: 'probe', server: value});
         if (res.ok) {
           verified = res.server;
-          say(verdict, 'ok', '✓ ' + res.host + ' je server Code Hubu');
+          say(verdict, 'ok', '✓ ' + res.host + ' je správná adresa, můžeš se přihlásit');
           creds.hidden = false;
           (email.value ? pass : email).focus();
         } else {
@@ -219,7 +233,7 @@
           say(verdict, 'err', res.error || 'Server se nepodařilo ověřit.');
         }
       } catch (e) {
-        say(verdict, 'err', 'Nepovedlo se: ' + e.message);
+        say(verdict, 'err', friendly('probe', e));
       }
       check.disabled = false;
     }
@@ -247,7 +261,7 @@
           await opts.onReady(res);
         }
       } catch (e) {
-        say(loginErr, 'err', 'Nepovedlo se: ' + e.message);
+        say(loginErr, 'err', friendly('login', e));
       }
       login.disabled = false;
       login.textContent = 'Přihlásit se';
@@ -312,7 +326,7 @@
             await opts.onReady(r);
           }
         } catch (e) {
-          say(err, 'err', 'Nepovedlo se: ' + e.message);
+          say(err, 'err', friendly('2fa', e));
         }
         go.disabled = false;
       };
@@ -441,7 +455,7 @@
 
     async function connect() {
       busy('Otevírám tvůj prostor…');
-      const res = await go(io).catch((e) => ({error: e.message, kind: 'offline'}));
+      const res = await go(io).catch((e) => ({error: friendly('go', e), kind: 'offline'}));
       if (res.ok) return;
       if (res.kind === 'auth') return login({}, res.error);
       offline(res.error);
@@ -453,7 +467,7 @@
       try {
         st = await io.api('account', {action: 'status', quick: true});
       } catch (e) {
-        return offline(e.message);
+        return offline(friendly('status', e));
       }
       if (!st.server) return login(st);
       if (st.offline) return offline(st.note);
@@ -467,6 +481,6 @@
   }
 
   global.HubServer = {captureLocal, localBack, backTo, go, panel, gate,
-                      isAppWindow, hostOf, appAtLeast, oldAppNote};
+                      isAppWindow, hostOf, appAtLeast, oldAppNote, friendly};
 
 })(window);

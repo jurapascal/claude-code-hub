@@ -5,7 +5,7 @@
 <!-- viewport-fit=cover kvůli výřezu na iPhonu, interactive-widget kvůli
      Androidu: bez něj klávesnice bublinu jen překryje místo aby ji vytlačila. -->
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<title>Claude Code Hub</title>
+<title>Claude Hub</title>
 <!-- Okno hubu je na Windows prohlížeč v režimu --app a ikonu v panelu, v Alt+Tab
      i v záhlaví si bere z favicony stránky, ne ze zástupce, kterým se spustil.
      Bez ní tam svítí prázdný list. Soubory dělá tools/make-icons.py. -->
@@ -69,12 +69,12 @@
 
 <header class="topbar">
   <!-- Jen na úzké obrazovce: postranní panel je tam šuplík, tohle je klika. -->
-  <button id="btn-drawer" class="iconbtn drawer-toggle" title="Projekty a konverzace">
+  <button id="btn-drawer" class="iconbtn drawer-toggle" title="Projekty a rozhovory">
     <svg class="ico"><use href="#i-menu"/></svg></button>
   <div class="topbar-title">
     <!-- Logo a název = domů na úvodní stránku (i s otevřenými taby). -->
     <button id="btn-home" class="topbar-home" title="Úvodní stránka">
-      <svg class="ico brand-ico"><use href="#i-hub"/></svg><strong>Claude Code</strong></button>
+      <svg class="ico brand-ico"><use href="#i-hub"/></svg><strong>Claude</strong></button>
     <button id="btn-place" class="topbar-badge"></button>
     <!-- Jen na telefonu: jméno otevřeného tabu uprostřed lišty (mobile.js),
          lišta s taby se tam nevejde. -->
@@ -93,7 +93,7 @@
       <svg class="ico"><use href="#i-gear"/></svg></button>
     <!-- Jen na telefonu: všechno z lišty pod jednou ikonou. Čtyři ikony vedle
          sebe se na 320 px nevejdou a na to, co která dělá, se nedá sáhnout. -->
-    <button id="btn-new-top" class="iconbtn topbar-new" title="Nový tab">
+    <button id="btn-new-top" class="iconbtn topbar-new" title="Nový rozhovor">
       <svg class="ico"><use href="#i-compose"/></svg></button>
     <button id="btn-menu" class="iconbtn topbar-menu" title="Nabídka">
       <svg class="ico"><use href="#i-more"/></svg></button>
@@ -106,14 +106,14 @@
     <!-- Jen na telefonu: hlavička šuplíku jako v appce Claude — název, křížek,
          nový tab a pod tím otevřené taby (lišta s nimi je schovaná). -->
     <div class="drawer-head">
-      <strong>Claude Code</strong>
+      <strong>Claude</strong>
       <button id="btn-drawer-x" class="iconbtn" title="Zavřít panel">
         <svg class="ico"><use href="#i-close"/></svg></button>
     </div>
     <button id="btn-drawer-home" class="drawer-new drawer-home">
       <svg class="ico"><use href="#i-hub"/></svg> Domů</button>
     <button id="btn-drawer-new" class="drawer-new">
-      <svg class="ico"><use href="#i-compose"/></svg> Nový tab</button>
+      <svg class="ico"><use href="#i-compose"/></svg> Nový rozhovor</button>
     <div id="open-section" class="open-section" hidden>
       <div class="section">OTEVŘENÉ</div>
       <div id="open-tabs" class="open-tabs"></div>
@@ -121,7 +121,7 @@
     <div class="section section-head">
       <span class="side-tabs">
         <button class="side-tab on" data-view="projects">PROJEKTY</button>
-        <button class="side-tab" data-view="chats">KONVERZACE</button>
+        <button class="side-tab" data-view="chats">ROZHOVORY</button>
       </span>
       <span class="section-count" id="projects-count"></span>
       <span class="section-count" id="chats-count" hidden></span>
@@ -140,7 +140,7 @@
     <div id="chats-view" hidden>
       <div class="searchwrap">
         <svg class="ico search-ico"><use href="#i-search"/></svg>
-        <input id="chats-search" type="search" placeholder="Hledat konverzaci…" autocomplete="off">
+        <input id="chats-search" type="search" placeholder="Hledat rozhovor…" autocomplete="off">
       </div>
       <div id="chats" class="chats"></div>
     </div>
@@ -148,23 +148,23 @@
     <div id="memory-section" hidden>
       <!-- Popisky nese renderMemory: na počítači „PC Obsidian", v prostoru na
            serveru „osobní Obsidian" — proti firemnímu. -->
-      <div class="section" id="memory-head">PC OBSIDIAN</div>
+      <div class="section" id="memory-head">MOJE POZNÁMKY</div>
       <button id="btn-brain" class="actionbtn">
-        <svg class="ico"><use href="#i-book"/></svg> <span id="btn-brain-text">Otevřít PC Obsidian</span>
+        <svg class="ico"><use href="#i-book"/></svg> <span id="btn-brain-text">Otevřít moje poznámky</span>
       </button>
       <div id="memory-summary" class="mem-summary"></div>
       <div id="memory" class="cards"></div>
     </div>
 
     <div id="firma-section" hidden>
-      <div class="section">FIREMNÍ OBSIDIAN</div>
+      <div class="section">FIREMNÍ POZNÁMKY</div>
       <button id="btn-firma" class="actionbtn firma">
-        <svg class="ico"><use href="#i-book"/></svg> Otevřít firemní Obsidian
+        <svg class="ico"><use href="#i-book"/></svg> Otevřít firemní poznámky
       </button>
     </div>
 
     <div id="shared-section" hidden>
-      <div class="section">SDÍLENÉ OBSIDIANY</div>
+      <div class="section">SDÍLENÉ POZNÁMKY</div>
       <div id="shared-list" class="chats"></div>
     </div>
 
@@ -174,15 +174,15 @@
 
   <main class="main">
     <div class="tabbar" id="tabbar">
-      <button id="btn-new-agent" class="tabplus" title="Otevřít AI agenta">
-        <svg class="ico"><use href="#i-plus"/></svg><span>Claude Code</span></button>
-      <button id="btn-new-firma" class="tabplus firma" title="Claude Code nad firemním Obsidianem" hidden>
-        <svg class="ico"><use href="#i-plus"/></svg><span>Server firemní</span></button>
+      <button id="btn-new-agent" class="tabplus" title="Nový rozhovor s Claudem">
+        <svg class="ico"><use href="#i-plus"/></svg><span>Nový rozhovor</span></button>
+      <button id="btn-new-firma" class="tabplus firma" title="Rozhovor s Claudem nad firemními poznámkami" hidden>
+        <svg class="ico"><use href="#i-plus"/></svg><span>Firemní</span></button>
       <button id="btn-new-shell" class="tabplus" title="Otevřít terminál">
         <svg class="ico"><use href="#i-plus"/></svg><span>Terminál</span></button>
       <!-- Jen na telefonu: tři „+" vedle sebe zabraly celou lištu a na taby
            nezbylo místo. Tohle je jedno „+" a nabídka, co otevřít. -->
-      <button id="btn-new-menu" class="tabplus tabplus-one" title="Otevřít nový tab">
+      <button id="btn-new-menu" class="tabplus tabplus-one" title="Nový rozhovor">
         <svg class="ico"><use href="#i-plus"/></svg></button>
     </div>
     <div class="panes" id="panes">
@@ -190,7 +190,7 @@
         <div class="welcome-scene" id="welcome-scene"></div>
         <!-- „Hub" tu bývalo napevno. Teď se píše prostředí (renderWelcome):
              na počítači „Claude Code PC", v prostoru „Claude Code server". -->
-        <div class="welcome-big">Claude Code <b id="welcome-place">PC</b></div>
+        <div class="welcome-big">Claude <b id="welcome-place">PC</b></div>
         <div class="welcome-greet" id="welcome-greet"></div>
         <!-- Otevřené chaty (taby) — appka po otevření zůstává tady, na Domů. -->
         <div class="welcome-open" id="welcome-open" hidden></div>

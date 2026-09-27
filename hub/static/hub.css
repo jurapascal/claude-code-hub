@@ -2805,3 +2805,27 @@ html:has(> body.is-app.is-touch), body.is-app.is-touch { height: var(--app-h, 10
 .svc-more { font-size: 12px; padding: 3px 9px; }
 .svc-shared .svc-form > .svc-form { margin-top: 0; align-self: stretch; }
 .svc-shared select.set-input { min-width: 14rem; width: auto; }
+
+/* Sdílené poznámky: řádek s tlačítkem ⋯ a „+ Nové“ (hub.js renderShared). */
+.shared-row { display: flex; align-items: stretch; gap: 2px; }
+.shared-row .shared-item { flex: 1; min-width: 0; }
+.shared-more { border: none; background: none; color: var(--dim); cursor: pointer; padding: 0 8px;
+  border-radius: 6px; font-size: 16px; }
+.shared-more:hover { background: var(--bg-card); color: var(--fg-bright); }
+.shared-new { margin: 6px 8px 0; font-size: 12.5px; }
+
+/* Nastavení → Tým (settings.js tym). */
+.tym-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.tym-card.off { opacity: .6; }
+.tym-btns { flex-wrap: wrap; gap: 6px; }
+.tym-heslo { border: 1px solid var(--accent); border-radius: 10px; padding: 12px 14px; margin: 10px 0;
+  display: flex; flex-direction: column; gap: 8px; }
+.tym-pre { white-space: pre-wrap; font-size: 14px; background: var(--bg-card); padding: 10px 12px;
+  border-radius: 8px; margin: 0; user-select: all; }
+.set-warn { color: var(--warn, #d29922); font-size: 12.5px; }
+
+/* Okna „kam uložit“ a „s kým sdílet“ (vault.js placeDialog, hub.js peopleDialog). */
+.vault-access-modal .mcp-field { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.vault-access-modal .mcp-field > .set-input,
+.vault-access-modal .mcp-field > input,
+.vault-access-modal .mcp-field > select { width: 100%; box-sizing: border-box; }

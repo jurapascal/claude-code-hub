@@ -125,7 +125,7 @@
 
   /* ── kroky ──────────────────────────────────────────────────────────────── */
   function vitej(box) {
-    head('Claude Code Hub', 'Chvilka nastavení a pak už jen práce.');
+    head('Claude Hub', 'Chvilka nastavení a pak už jen práce.');
 
     // Kde se bude pracovat — rozhoduje o celém zbytku, tak je to první otázka.
     if (!chosen.onServer) {
@@ -133,9 +133,9 @@
       const misto = el('div', 'onb-tiles');
       for (const [id, label, note] of [
         ['pc', 'Na tomto počítači',
-         'Hub běží tady a pracuje s projekty a pamětí na tomhle disku.'],
+         'Aplikace běží tady a pracuje s tvými soubory a poznámkami na tomhle počítači.'],
         ['server', 'Na serveru',
-         'Přihlásíš se ke svému prostoru. Projekty, paměť i napojení máš ' +
+         'Přihlásíš se ke svému prostoru. Soubory, poznámky i napojené služby máš ' +
          'tam a dostaneš se k nim odkudkoli.'],
       ]) {
         const t = el('button', 'onb-tile' + (chosen.place === id ? ' on' : ''));
@@ -158,20 +158,19 @@
     // Věta se musí trefit do počtu kroků, které pak přijdou — jinak průvodce
     // slíbí nastavení projektů a paměti a hned skončí.
     const uvod = el('p', 'onb-lead');
-    uvod.textContent = 'Každý projekt se otevře jako vlastní tab se skutečným ' +
-      'terminálem. ' + (chosen.dev
-        ? 'Teď si nastavíme vzhled, kde máš projekty a kde bydlí paměť.'
+    uvod.textContent = 'Každý projekt má vlastní okno s Claudem. ' + (chosen.dev
+        ? 'Teď si nastavíme vzhled, kde máš projekty a kde jsou poznámky.'
         : 'Zbývá vybrat vzhled a můžeme začít.');
     box.appendChild(uvod);
 
     // Volba režimu. Rozhoduje o zbytku průvodce, tak patří sem, ne na konec.
-    box.appendChild(el('div', 'onb-lead', 'Jak hub používáš?'));
+    box.appendChild(el('div', 'onb-lead', 'Jak budeš aplikaci používat?'));
     const rezim = el('div', 'onb-tiles');
     for (const [dev, label, note] of [
-      [false, 'Píšu s agentem',
-       'Terminál, paměť, agenti. Nic o nasazování a GitHubu.'],
-      [true, 'Vyvíjím a nasazuju',
-       'Navíc Deploy, Push na GitHub, složky projektů a logy.'],
+      [false, 'Běžné používání (doporučeno)',
+       'Píšeš si s Claudem, on si pamatuje, na čem jste pracovali. Nic navíc.'],
+      [true, 'Pro programátory',
+       'Navíc terminál, GitHub, nasazování webů a složky projektů.'],
     ]) {
       const t = el('button', 'onb-tile' + (chosen.dev === dev ? ' on' : ''));
       t.appendChild(el('span', 'onb-tile-t', label));
@@ -183,17 +182,31 @@
     box.appendChild(el('div', 'onb-note',
       'Dá se přepnout kdykoli v Nastavení → Vzhled.'));
 
+    /* Kontrola součástí. V běžném režimu se ukazuje jen to, co chybí —
+       seznam samých fajfek člověku nic neřekne. Obsidian je volitelný,
+       takže jeho absence se nezvýrazňuje jako chyba. */
+    const checks = [
+      [!!state.doctor.bash, 'Součást pro spouštění příkazů',
+       'Bez ní se rozhovor s Claudem neotevře.'],
+      [!!state.doctor.claude, 'Claude', 'Bez něj se nedá začít.'],
+      [!!state.doctor.clipboard, 'Kopírování a vkládání',
+       'Kopírovat půjde jen ručně.'],
+      [!!state.obsidian || !chosen.dev, 'Obsidian (volitelné)',
+       'Poznámky půjdou otevřít i bez něj.'],
+    ];
+    const missing = checks.filter(c => !c[0]);
     const list = el('ul', 'onb-check');
-    for (const [ok, text] of [
-      [!!state.doctor.bash, 'bash — bez něj se tab neotevře'],
-      [!!state.doctor.claude, 'Claude Code CLI'],
-      [!!state.doctor.clipboard, 'schránka (kopírování v tabu)'],
-      [!!state.obsidian, 'Obsidian (pro paměť, volitelné)'],
-    ]) {
-      const li = el('li', ok ? 'ok' : 'miss', text);
-      list.appendChild(li);
+    if (!chosen.dev && !missing.length) {
+      list.appendChild(el('li', 'ok', 'Všechno potřebné je připravené.'));
+    }
+    for (const [ok, text, why] of (chosen.dev ? checks : missing)) {
+      list.appendChild(el('li', ok ? 'ok' : 'miss', ok ? text : text + ' chybí. ' + why));
     }
     box.appendChild(list);
+    if (missing.length) {
+      box.appendChild(el('div', 'onb-note',
+        'Když něco chybí, pomůže ten, kdo ti aplikaci instaloval.'));
+    }
   }
 
   /* Přihlášení na server. „Dál" se změní na „Otevřít můj prostor" a pustí,
@@ -217,7 +230,7 @@
         '✓ Přihlášeno jako ' + (u.name || u.email || '') +
         ' na ' + (status.host || HubServer.hostOf(status.server))));
       box.appendChild(el('p', 'onb-lead',
-        'Appka si to pamatuje: příště se otevře rovnou ve tvém prostoru. ' +
+        'Aplikace si to pamatuje: příště se otevře rovnou ve tvém prostoru. ' +
         'Zpátky na počítač se přepneš v Nastavení → Účet.'));
       const other = el('button', 'btn ghost', 'Přihlásit se jiným účtem');
       other.onclick = () => { chosen.connected = false; render(); };
@@ -232,7 +245,7 @@
       if (!chosen.connected) return;
       next.disabled = true;
       next.textContent = 'Otevírám…';
-      const res = await HubServer.go(io).catch((e) => ({error: e.message}));
+      const res = await HubServer.go(io).catch((e) => ({error: HubServer.friendly('onboarding go', e)}));
       if (res.ok) return;
       err.textContent = res.error || 'Prostor se nepodařilo otevřít.';
       err.hidden = false;
@@ -320,16 +333,16 @@
   }
 
   function pamet(box) {
-    head('Paměť', 'Poznámky, které si Claude nese mezi sezeními.');
+    head('Paměť', 'Poznámky, které si Claude nese mezi rozhovory.');
     box.appendChild(el('p', 'onb-lead',
-      'Paměť je obyčejná složka s markdownem, dá se otevřít v Obsidianu. ' +
+      'Paměť je obyčejná složka s poznámkami, dá se otevřít v Obsidianu. ' +
       'Claude si do ní sám ukládá, na čem se pracovalo — klikat se na nic nemusí.'));
 
     // Napojit existující vault je nejčastější případ: kdo Obsidian používá,
     // už poznámky někde má a nechce začínat znovu.
     const vaults = state.vaults || [];
     if (vaults.length) {
-      box.appendChild(el('div', 'set-title', 'Našel jsem tyhle Obsidian vaulty'));
+      box.appendChild(el('div', 'set-title', 'Našel jsem tyhle složky s poznámkami (Obsidian)'));
       const list = el('div', 'onb-list');
       for (const v of vaults) {
         const row = el('label', 'onb-row');
@@ -360,9 +373,9 @@
       const picked = await io.pickFolder();
       if (picked) { chosen.vault = picked; render(); }
     };
-    const clone = el('button', 'actionbtn', 'Stáhnout z gitu…');
+    const clone = el('button', 'actionbtn', 'Stáhnout z GitHubu…');
     clone.onclick = async () => {
-      const repo = prompt('Adresa repa s pamětí (owner/repo nebo URL):', '');
+      const repo = prompt('Adresa úložiště na GitHubu (např. jmeno/pamet nebo celý odkaz):', '');
       if (!repo) return;
       try {
         const r = await io.api('vault', {action: 'clone', repo: repo.trim()});
@@ -371,7 +384,7 @@
         await io.refreshState();
         state = io.state;
         render();
-      } catch (err) { io.toast(err.message); }
+      } catch (err) { io.toast(HubServer.friendly('clone', err)); }
     };
     const make = el('button', 'actionbtn', 'Založit novou');
     make.onclick = () => {
@@ -396,10 +409,10 @@
     // Tenhle krok se ukazuje jen ve vývojářském režimu, takže GitHub tu může
     // být bez další podmínky — kdo si režim vybral, o `gh` stojí.
     opts.push({
-      key: 'git', label: 'Do privátního repa na GitHubu',
+      key: 'git', label: 'Do soukromého úložiště na GitHubu',
       note: state.doctor.git && state.vault_git.is_repo
-        ? 'Vault už v gitu je — jen se zapne automatické posílání.'
-        : 'Založí privátní repo a po každém sezení tam pošle změny.',
+        ? 'Poznámky už na GitHubu jsou — jen se zapne automatické posílání.'
+        : 'Založí soukromé úložiště a po každém rozhovoru tam pošle změny.',
       disabled: !state.doctor.git,
     });
     for (const c of cloud) {
@@ -409,7 +422,7 @@
     opts.push({
       key: 'folder', label: 'Přesunout do vlastní složky…',
       note: cloud.length ? 'Když máš cloud jinde.'
-                         : 'Žádného klienta (OneDrive, Dropbox…) jsem tu nenašel — ' +
+                         : 'Žádnou cloudovou aplikaci (OneDrive, Dropbox…) jsem tu nenašel — ' +
                            'když si ho doinstaluješ, ukaž sem na jeho složku.',
     });
     opts.push({key: 'later', label: 'Zatím ne', note: 'Dá se zapnout kdykoli později.'});
@@ -446,13 +459,13 @@
     head('Hotovo', 'Můžeme začít.');
     const list = el('ul', 'onb-check');
     list.appendChild(el('li', 'ok',
-      'režim: ' + (chosen.dev ? 'vývojářský' : 'základní')));
+      'režim: ' + (chosen.dev ? 'pro programátory' : 'běžné používání')));
     if (chosen.dev) {
       list.appendChild(el('li', 'ok', 'projekty: ' +
         (chosen.dirs.length ? chosen.dirs.join(', ') : '(žádné)')));
       list.appendChild(el('li', chosen.vault ? 'ok' : 'miss',
         'paměť: ' + (chosen.vault || 'vypnutá')));
-      const zal = {git: 'privátní repo na GitHubu', cloud: chosen.cloudPath,
+      const zal = {git: 'soukromé úložiště na GitHubu', cloud: chosen.cloudPath,
                    folder: 'vlastní složka', later: 'zatím ne'}[chosen.backup];
       list.appendChild(el('li', chosen.backup === 'later' ? 'miss' : 'ok',
         'záloha paměti: ' + zal));
@@ -462,7 +475,7 @@
     }
     box.appendChild(list);
     box.appendChild(el('p', 'onb-lead',
-      'Kdykoli později: tlačítko ⚙ v hlavičce.'));
+      'Změnit se to dá kdykoli v Nastavení (⚙ nahoře).'));
   }
 
   /* ── posun ──────────────────────────────────────────────────────────────── */
@@ -488,7 +501,7 @@
       step++;
       render();
     } catch (err) {
-      io.toast(err.message || String(err));
+      io.toast(HubServer.friendly('onboarding', err));
     } finally {
       // Po posunu tlačítko nastavil už render() podle nového kroku — krok
       // `server` ho drží vypnuté, dokud se nepřihlásí.
@@ -515,7 +528,8 @@
       try {
         st = await io.api('job?name=vault');
       } catch (err) {
-        backupStatus('Ztratil jsem spojení: ' + err.message, 'warn');
+        console.warn('onboarding: job', err);
+        backupStatus('Spojení se přerušilo. Zkus to prosím znovu.', 'warn');
         return false;
       }
       if (st.running) {
@@ -529,7 +543,7 @@
       }
       if (r.path) chosen.vault = r.path;
       backupStatus('✓ ' + (r.path ? 'Paměť přesunuta do ' + r.path
-                                  : 'Paměť je v privátním repu.'), 'ok');
+                                  : 'Paměť je v soukromém úložišti na GitHubu.'), 'ok');
       await io.refreshState();
       state = io.state;
       return true;
@@ -553,7 +567,8 @@
     try {
       await io.api('vault', payload);
     } catch (err) {
-      backupStatus('Nepodařilo se spustit: ' + err.message, 'warn');
+      console.warn('onboarding: backup', err);
+      backupStatus('Zálohu se nepodařilo spustit. Zkus to prosím znovu.', 'warn');
       return false;
     }
     return waitForVault();

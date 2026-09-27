@@ -20,6 +20,15 @@
 
   function init(opts) { io = opts; }
 
+  /* Hláška o chybě: technický detail patří do konzole a pokročilým
+     (window.HUB_ADVANCED), ostatním stačí srozumitelná věta. */
+  function chyba(vec, err) {
+    console.warn('hlas:', err);
+    const detail = (err && err.message) || String(err || '');
+    return global.HUB_ADVANCED && detail ? vec + ': ' + detail
+      : vec + ' — zkus to za chvíli znovu.';
+  }
+
   function ready() {
     if (!io) return Promise.resolve(false);
     if (!stavP) {
@@ -250,7 +259,7 @@
           input.setSelectionRange(input.value.length, input.value.length);
         }
       } catch (err) {
-        if (opts.notice) opts.notice('Přepis se nepovedl: ' + ((err && err.message) || err));
+        if (opts.notice) opts.notice(chyba('Přepis řeči se nepovedl', err));
       } finally {
         busy = false;
         btn.classList.remove('busy');
@@ -270,7 +279,7 @@
         if (opts.notice) {
           opts.notice(err && err.name === 'NotAllowedError'
             ? 'Mikrofon není povolený — povol ho prohlížeči pro tuhle stránku.'
-            : 'Mikrofon se nepodařilo zapnout: ' + (err.message || err));
+            : chyba('Mikrofon se nepodařilo zapnout', err));
         }
         return;
       }
@@ -381,7 +390,7 @@
         });
       }
     } catch (err) {
-      if (notice) notice(err.message);
+      if (notice) notice(chyba('Předčítání se nepovedlo', err));
     }
     if (btn) btn.classList.remove('hraje');
     if (hraje === ja) hraje = null;

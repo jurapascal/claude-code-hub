@@ -124,7 +124,10 @@ def load_config():
     # instalace, kterých se na něj zeptá průvodce. Kdo hub nastavený už má a
     # klíč v souboru nemá, ten Deploy, Push, Projekty, Taby, Paměť i Logy
     # celou dobu používal — aktualizace mu je schovat nesmí.
-    if "dev_mode" not in raw and raw.get("onboarded"):
+    # V prostoru na serveru (hub-config píše brána, `gateway_user`) ale platí
+    # jednoduchý režim: členové týmu jsou většinou lidé, kteří s Claudem jen
+    # píšou — terminál a GitHub si zapne, kdo je chce (Pro pokročilé).
+    if "dev_mode" not in raw and raw.get("onboarded") and not raw.get("gateway_user"):
         cfg["dev_mode"] = True
     # 2.1.0 si adresu serveru z uvítání psala do `server_url`. Přihlášení teď
     # bydlí v `gw_*`, tak ať ji člověk nemusí psát znovu.

@@ -28,7 +28,7 @@
         <div class="onb-head">
           <span class="onb-mark"></span>
           <div>
-            <div class="onb-title">Instalace Claude Code Hub</div>
+            <div class="onb-title">Instalace Claude Hub</div>
             <div class="onb-sub">Chvilku to potrvá — všechno se nastaví samo.</div>
           </div>
         </div>
@@ -87,9 +87,9 @@
         go.textContent = 'Instaluju…';
         retry.hidden = true;
       } else if (st.done && st.ok) {
-        say('✓ Hotovo. Claude Code Hub je nainstalovaný.', 'ok');
+        say('✓ Hotovo. Claude Hub je nainstalovaný.', 'ok');
         go.disabled = false;
-        go.textContent = 'Otevřít Claude Code Hub';
+        go.textContent = 'Otevřít Claude Hub';
         retry.hidden = true;
         go.focus();
       } else if (st.done) {
@@ -112,7 +112,8 @@
     async function start() {
       shown = '';
       try { draw(await io.api('setup', {action: 'start'})); } catch (err) {
-        say('Instalaci se nepodařilo spustit: ' + err.message, 'err');
+        console.warn('setup.js: start', err);
+        say('Instalaci se nepodařilo spustit. Zkus to znovu.', 'err');
         retry.hidden = false;
         return;
       }
@@ -124,14 +125,15 @@
       go.textContent = 'Otevírám…';
       try {
         await io.api('setup', {action: 'launch'});
-        say('Otevírám nainstalovanou appku… Tohle okno se může zavřít.', 'ok');
+        say('Otevírám nainstalovanou aplikaci… Tohle okno se může zavřít.', 'ok');
         // Nové okno otevře nová instance; tohle už nemá komu patřit.
         setTimeout(() => { try { window.close(); } catch (_) { /* nic */ } }, 2500);
       } catch (err) {
-        say('Appku se nepodařilo spustit: ' + err.message +
-            ' Otevři ji z nabídky aplikací (Claude Code Hub).', 'err');
+        console.warn('setup.js: launch', err);
+        say('Aplikaci se nepodařilo spustit. Otevři ji z nabídky aplikací ' +
+            '(Claude Code Hub).', 'err');
         go.disabled = false;
-        go.textContent = 'Otevřít Claude Code Hub';
+        go.textContent = 'Otevřít Claude Hub';
       }
     };
     retry.onclick = start;

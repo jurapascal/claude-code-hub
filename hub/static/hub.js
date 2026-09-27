@@ -41,6 +41,17 @@ function findPlaceTab(key) {
 let DARK = true;
 let refSeq = 0;
 
+/* Jednoduchý režim (výchozí) × Pro pokročilé (config.dev_mode). V jednoduchém
+   se schovává všechno, co potřebuje technické znalosti: terminál, modely,
+   / příkazy, tokeny, GitHub, výpisy chyb. Ostatní skripty (composer.js,
+   cteni.js, stats.js…) se ptají na window.HUB_ADVANCED; tělo stránky má
+   třídu `pokrocile`, kterou může použít CSS. */
+function markAdvanced() {
+  const on = !!(STATE && STATE.config && STATE.config.dev_mode);
+  window.HUB_ADVANCED = on;
+  document.body.classList.toggle('pokrocile', on);
+}
+
 /* ── server calls ─────────────────────────────────────────────────────────── */
 async function api(path, body) {
   const url = `/api/${path}${path.includes('?') ? '&' : '?'}t=${encodeURIComponent(TOKEN)}`;
@@ -292,7 +303,7 @@ function renderProjects(filter) {
     if (p.brief) {
       const flag = document.createElement('span');
       flag.className = 'card-flag';
-      flag.title = 'Má briefing v CLAUDE.md';
+      flag.title = 'Má popis projektu';
       flag.textContent = 'i';
       el.appendChild(flag);
     }
@@ -525,7 +536,7 @@ function openVault(path, vault, title) {
     api,
     path: path || '',
     vault: firma || shared ? vault : '',
-    title: firma ? 'Firemní Obsidian' : shared ? 'Sdílený Obsidian — ' + (title || vault.slice(8)) : '',
+    title: firma ? 'Firemní poznámky' : shared ? 'Sdílené poznámky — ' + (title || vault.slice(8)) : 'Moje poznámky',
     fileUrl: (p) => `/api/vault-file?path=${encodeURIComponent(p)}` +
       (firma || shared ? '&vault=' + encodeURIComponent(vault) : '') +
       `&t=${encodeURIComponent(TOKEN)}`,
@@ -562,7 +573,7 @@ let firmaBusy = false;                 // nahrávání z firemního tabu běží
    rovnou — souhlas dal uživatel tím, že tab otevřel. Otevírá se ze dvou míst
    (lišta tabů i uvítání), tak ať obě dělají doopravdy totéž. */
 function openFirmaTab() {
-  return openTab({kind: 'project', path: STATE.home, title: 'Server firemní',
+  return openTab({kind: 'project', path: STATE.home, title: 'Firemní rozhovor',
                   agent: 'claude', vault: 'firma'});
 }
 
@@ -593,23 +604,52 @@ async function renderShared() {
   let data;
   try {
     const r = await fetch('/gw/sdilene', {credentials: 'same-origin'});
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (!r.ok) throw new Error('Server teď neodpovídá, zkus to za chvíli.');
     data = await r.json();
   } catch (err) {
     box.hidden = true;                 // starší brána — sekce přijde s aktualizací
     return;
   }
   box.hidden = false;
+  sharedPeople = data.people || [];
   const list = $('shared-list');
   list.textContent = '';
   const vaults = data.vaults || [];
   if (!vaults.length) {
     const hint = document.createElement('div');
     hint.className = 'empty shared-hint';
-    hint.textContent = 'Zatím žádný. Řekni Claudovi třeba „udělej sdílený Obsidian Marketing pro mě a Petra“.';
+    hint.textContent = 'Zatím žádné. Poznámky jen pro vybrané lidi založíš tlačítkem níž.';
     list.appendChild(hint);
   }
+  if (!$('shared-new')) {
+    const add = document.createElement('button');
+    add.id = 'shared-new';
+    add.className = 'btn ghost shared-new';
+    add.textContent = '+ Nové sdílené poznámky';
+    add.onclick = sharedCreate;
+    box.appendChild(add);
+  }
   for (const v of vaults) {
+    const row = document.createElement('div');
+    row.className = 'shared-row';
+    const more = document.createElement('button');
+    more.className = 'shared-more';
+    more.textContent = '⋯';
+    more.title = 'Členové, odejít, smazat';
+    more.onclick = (ev) => {
+      ev.stopPropagation();
+      const r = more.getBoundingClientRect();
+      const items = [{icon: 'i-book', label: 'Otevřít', run: () => openVault('', 'sdilene:' + v.slug, v.name)}];
+      if (v.is_owner) {
+        items.push({icon: 'i-user', label: 'Kdo je vidí…', run: () => sharedMembers(v)});
+        items.push({icon: 'i-close', label: 'Smazat…', run: () => sharedAction(v, 'smazat',
+          `Smazat sdílené poznámky „${v.name}“? Zmizí všem členům (soubory zůstanou stranou na serveru).`)});
+      } else {
+        items.push({icon: 'i-close', label: 'Odejít…', run: () => sharedAction(v, 'odejit',
+          `Odejít ze sdílených poznámek „${v.name}“? Přestaneš je vidět.`)});
+      }
+      showMenu(r.left, r.bottom, items);
+    };
     const item = document.createElement('button');
     item.className = 'shared-item' + (v.needs_restart ? ' pending' : '');
     item.dataset.slug = v.slug;
@@ -621,19 +661,133 @@ async function renderShared() {
     item.onclick = () => (v.needs_restart
       ? restartSpace(`Sdílený Obsidian „${v.name}“ se do prostoru načte po restartu.`)
       : openVault('', 'sdilene:' + v.slug, v.name));
-    list.appendChild(item);
+    row.append(item, more);
+    list.appendChild(row);
   }
 }
 
+/* Sdílené poznámky naklikáním (brána POST /gw/sdilene, gateway/shared.py).
+   Kdo co smí, ověřuje brána: členy mění a maže jen zakladatel. */
+let sharedPeople = [];
+
+async function sharedPost(body) {
+  const r = await fetch('/gw/sdilene', {
+    method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json', 'X-Hub-Account': '1'},
+    body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || 'Server teď neodpovídá, zkus to za chvíli.');
+  return data;
+}
+
+/* Okno s výběrem lidí (a názvem). Vrací {name, emails} nebo null. */
+function peopleDialog({title, note, withName, chosen, ok}) {
+  return new Promise((resolve) => {
+    const me = ((STATE.config && STATE.config.gateway_user) || {}).email || '';
+    const wrap = document.createElement('div');
+    wrap.className = 'onb set-modal vault-access-modal';
+    wrap.innerHTML = `
+      <div class="onb-box acc-box">
+        <div class="onb-head"><div><div class="onb-title"></div><div class="onb-sub"></div></div>
+          <span class="spacer"></span><button class="set-x pd-close" title="Zavřít">×</button></div>
+        <div class="acc-list">
+          <label class="mcp-field pd-name"><span>Název</span><input class="set-input" placeholder="např. Marketing"></label>
+          <p class="who-hint">Kdo je uvidí (ty je vidíš vždycky):</p>
+          <div class="who-people"></div>
+        </div>
+        <div class="who-foot"><button class="btn ghost pd-close">Zrušit</button><button class="btn pd-ok"></button></div>
+      </div>`;
+    wrap.querySelector('.onb-title').textContent = title;
+    wrap.querySelector('.onb-sub').textContent = note || '';
+    wrap.querySelector('.pd-ok').textContent = ok;
+    wrap.querySelector('.pd-name').hidden = !withName;
+    const picked = new Set(chosen || []);
+    const list = wrap.querySelector('.who-people');
+    for (const p of sharedPeople) {
+      if (p.email === me) continue;
+      const row = document.createElement('label');
+      row.className = 'acc-row who-row';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = picked.has(p.email);
+      cb.onchange = () => (cb.checked ? picked.add(p.email) : picked.delete(p.email));
+      const who = document.createElement('div');
+      who.className = 'acc-who';
+      const strong = document.createElement('strong');
+      strong.textContent = p.name || p.email;
+      const mail = document.createElement('span');
+      mail.className = 'acc-mail';
+      mail.textContent = p.email;
+      who.append(strong, mail);
+      row.append(cb, who);
+      list.appendChild(row);
+    }
+    const done = (value) => { wrap.remove(); resolve(value); };
+    for (const b of wrap.querySelectorAll('.pd-close')) b.onclick = () => done(null);
+    wrap.addEventListener('click', (ev) => { if (ev.target === wrap) done(null); });
+    wrap.querySelector('.pd-ok').onclick = () => {
+      const name = wrap.querySelector('.pd-name input').value.trim();
+      if (withName && !name) return toast('Napiš název.');
+      if (!picked.size) return toast('Vyber aspoň jednoho člověka.');
+      done({name, emails: [...picked]});
+    };
+    document.body.appendChild(wrap);
+    if (withName) wrap.querySelector('.pd-name input').focus();
+  });
+}
+
+async function sharedCreate() {
+  const got = await peopleDialog({title: 'Nové sdílené poznámky', withName: true, ok: 'Založit',
+    note: 'Poznámky a soubory jen pro tebe a vybrané lidi.'});
+  if (!got) return;
+  try {
+    await sharedPost({akce: 'zalozit', nazev: got.name, emaily: got.emails});
+  } catch (err) {
+    return toast(err.message);
+  }
+  await renderShared();
+  restartSpace(`Sdílené poznámky „${got.name}“ jsou založené. Ve tvém prostoru se objeví po restartu.`);
+}
+
+async function sharedMembers(v) {
+  const before = (v.members || []).map((m) => m.email);
+  const got = await peopleDialog({title: 'Kdo vidí „' + v.name + '“', ok: 'Uložit', chosen: before,
+    note: 'Přidaní je uvidí po restartu svého prostoru, odebraným zmizí.'});
+  if (!got) return;
+  const me = ((STATE.config && STATE.config.gateway_user) || {}).email || '';
+  const pridat = got.emails.filter((e) => !before.includes(e));
+  const odebrat = before.filter((e) => e !== me && !got.emails.includes(e));
+  if (!pridat.length && !odebrat.length) return;
+  try {
+    const out = await sharedPost({akce: 'clenove', slug: v.slug, pridat, odebrat});
+    toast(out.message || 'Uloženo.');
+  } catch (err) {
+    toast(err.message);
+  }
+  renderShared();
+}
+
+async function sharedAction(v, akce, question) {
+  if (!confirm(question)) return;
+  try {
+    const out = await sharedPost({akce, slug: v.slug});
+    toast(out.message || 'Hotovo.');
+  } catch (err) {
+    toast(err.message);
+  }
+  renderShared();
+}
+
 async function restartSpace(why) {
-  if (!confirm(why + '\n\nRestartovat prostor teď? Otevřené taby se zavřou, ' +
-               'konverzace zůstanou v seznamu konverzací.')) return;
+  if (!confirm(why + '\n\nRestartovat teď? Zabere to pár vteřin a otevřené ' +
+               'rozhovory se pak vrátí.')) return;
   try {
     const r = await fetch('/gw/restart', {
       method: 'POST', credentials: 'same-origin',
       headers: {'Content-Type': 'application/json', 'X-Hub-Account': '1'}, body: '{}',
     });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (!r.ok) throw new Error('Server teď neodpovídá, zkus to za chvíli.');
   } catch (err) {
     toast('Restart se nepovedl: ' + err.message);
     return;
@@ -996,9 +1150,8 @@ function renderMemory() {
   if (!mem.enabled) return;
   // Na počítači je to prostě Obsidian toho počítače. V prostoru na serveru
   // stojí vedle firemního, a tam dává smysl „osobní".
-  const svuj = onServer() ? 'osobní' : 'PC';
-  $('memory-head').textContent = (onServer() ? 'OSOBNÍ' : 'PC') + ' OBSIDIAN';
-  $('btn-brain-text').textContent = 'Otevřít ' + svuj + ' Obsidian';
+  $('memory-head').textContent = 'MOJE POZNÁMKY';
+  $('btn-brain-text').textContent = 'Otevřít moje poznámky';
   const c = mem.counts;
   $('memory-summary').innerHTML =
     `<span class="learnings">${icon('i-bulb')} ${c.learnings || 0}</span>
@@ -1032,8 +1185,8 @@ function renderMemory() {
 const ACTIONS = [
   {skill: 'deploy', label: 'Deploy', icon: 'i-deploy', cmd: '/deploy\r', dev: true},
   {skill: 'push', label: 'Push na GitHub', icon: 'i-push', cmd: '/push\r', dev: true},
-  {skill: 'status', label: 'Přehled projektů', icon: 'i-status', cmd: '/status\r'},
-  {skill: 'screenshot', label: 'Screenshot…', icon: 'i-image', cmd: '/screenshot '},
+  {skill: 'status', label: 'Přehled projektů', icon: 'i-status', cmd: '/status\r', dev: true},
+  {skill: 'screenshot', label: 'Snímek webu…', icon: 'i-image', cmd: '/screenshot '},
 ];
 
 function devMode() {
@@ -1100,7 +1253,7 @@ function renderFooter() {
   const ver = document.createElement('button');
   ver.className = 'footer-ver';
   ver.textContent = 'v' + STATE.version.version;
-  ver.title = 'Aktualizace — jaká verze je na GitHubu';
+  ver.title = 'Verze aplikace — klikni pro aktualizace';
   ver.onclick = () => openUpdateSettings(false);
   foot.appendChild(ver);
 }
@@ -1135,16 +1288,16 @@ async function switchPlace() {
    Stojí to nahoře v liště, na uvítací obrazovce i v titulku okna — ať je
    z každého místa poznat, kde se to, co napíšu, odehraje. */
 function placeName() {
-  return onServer() ? 'server' : 'PC';
+  return onServer() ? 'na serveru' : 'na počítači';
 }
 
 /* Vlastní název a ikona appky (Nastavení → Vzhled, hub/vzhled.py): v liště,
    v šuplíku a na úvodní stránce. Bez nastavení zůstává „Claude Code". */
 function renderBranding() {
   const app = STATE.app || {};
-  const name = app.name || 'Claude Code';
+  const name = app.name || 'Claude';
   // Titulek = název okna appky (Chrome v režimu appky, záložka prohlížeče).
-  document.title = app.name ? app.name : 'Claude Code ' + placeName();
+  document.title = app.name ? app.name : 'Claude ' + placeName();
   const home = $('btn-home');
   if (home) {
     home.querySelector('strong').textContent = name;
@@ -1182,14 +1335,14 @@ function renderPlace() {
   if (!badge) return;
   const u = STATE.config.gateway_user;
   const app = STATE.app || {};
-  document.title = app.name ? app.name : 'Claude Code ' + placeName();
+  document.title = app.name ? app.name : 'Claude ' + placeName();
   const big = $('welcome-place');
   if (big) big.textContent = placeName();
   renderBranding();
   // Barva celé appky se odvozuje odsud: počítač jantarově, prostor modře.
   document.documentElement.dataset.place = u ? 'server' : 'pc';
-  badge.textContent = u ? 'SERVER' : 'PC';
-  badge.setAttribute('aria-label', 'Claude Code ' + placeName());
+  badge.textContent = u ? 'SERVER' : 'POČÍTAČ';
+  badge.setAttribute('aria-label', 'Claude ' + placeName());
   badge.classList.toggle('on-server', !!u);
   /* Přepnout jde jen z appky: okno v prohlížeči se na počítač vrátit nemá kam.
      Tam je odznak pouhá cedulka — po kliknutí se nestane nic a netváří se, že
@@ -1329,20 +1482,20 @@ function renderWelcome() {
     const a = agentById(STATE.default_agent) || agentList(true)[0];
     if (a) {
       // Stejné pojmenování jako v liště tabů: kde se bude pracovat.
-      actions.push(['i-terminal', 'Otevřít ' + newTabLabel(), 'primary',
+      actions.push(['i-terminal', 'Nový ' + newTabLabel().toLowerCase(), 'primary',
         () => openTab({kind: 'project', path: STATE.home, title: newTabLabel(),
                        agent: a.id})]);
       // Firemní trezor má vlastní tlačítko i tady, ne jen v liště tabů — a
       // fialové, ať je hned vidět, že se v něm píše do firemního Obsidianu.
       if (firma) {
-        actions.push(['i-terminal', 'Otevřít Server firemní', 'primary firma',
+        actions.push(['i-terminal', 'Firemní rozhovor', 'primary firma',
           () => openFirmaTab()]);
       }
     }
   }
   if (cfg.shell !== false && STATE.config.dev_mode) {
     actions.push(['i-terminal', 'Otevřít terminál', 'ghost',
-      () => openTab({kind: 'shell', path: '', title: 'terminál'})]);
+      () => openTab({kind: 'shell', path: '', title: 'Terminál'})]);
   }
   // Nastavení patří o řádek níž: nahoře se otevírá práce, pod ní se nastavuje.
   actions.push(['break']);
@@ -1412,10 +1565,14 @@ async function renderWelcomeStats(force) {
     b.onclick = () => HubStats.open(hubIO());
     row.appendChild(b);
   };
-  add(statNum(t.out), 'napsaných tokenů');
+  // Jednoduchý režim: jen to, čemu rozumí každý. Tokeny a GitHub pro pokročilé.
+  if (window.HUB_ADVANCED) add(statNum(t.out), 'napsaných tokenů');
   add(statNum(data.prompts), 'zpráv');
-  add(String(data.sessions), 'sezení');
-  if (gh.ok) add(String(gh.commits_year), 'commitů za rok');
+  add(String(data.sessions), 'rozhovorů');
+  if (!window.HUB_ADVANCED) {
+    add(String((data.days || []).filter((d) => d.prompts).length), 'dní s prací');
+  }
+  if (window.HUB_ADVANCED && gh.ok) add(String(gh.commits_year), 'commitů za rok');
   box.appendChild(row);
 
   // Posledních 30 dnů — jedna série, měří velikost, proto bez legendy.
@@ -1473,7 +1630,7 @@ function renderWelcomeOpen() {
   box.hidden = !tabs.length;
   if (!tabs.length) return;
   box.appendChild(Object.assign(document.createElement('div'),
-    {className: 'wcol-title', textContent: 'OTEVŘENÉ CHATY'}));
+    {className: 'wcol-title', textContent: 'OTEVŘENÉ ROZHOVORY'}));
   for (const t of tabs) {
     const b = document.createElement('button');
     b.className = 'wcol-item welcome-open-item';
@@ -1518,7 +1675,8 @@ function renderWelcomeCols() {
   };
 
   const a = column('NAPOSLEDY', recent, p => kdy(p.mtime));
-  const b = column('ROZDĚLANÉ', dirty, p => p.dirty + ' změn');
+  // Neuložené změny v gitu — řeč programátorů.
+  const b = window.HUB_ADVANCED ? column('ROZDĚLANÉ', dirty, p => p.dirty + ' změn') : null;
   if (a) wrap.appendChild(a);
   if (b) wrap.appendChild(b);
 }
@@ -1528,8 +1686,9 @@ function renderDoctor() {
   const problems = [];
   if (!d.bash) {
     problems.push(d.platform === 'windows'
-      ? 'Nenašel jsem <b>Git for Windows</b> — bez něj hub neumí spustit bash a taby zůstanou prázdné.<br><code>winget install Git.Git</code>'
-      : 'Nenašel jsem <b>bash</b> — taby se nespustí.');
+      ? 'Chybí součást <b>Git for Windows</b>, bez které Claude nefunguje. ' +
+        'Spusť prosím instalačku aplikace znovu — doinstaluje ji.'
+      : 'Chybí součást, bez které Claude nefunguje. Spusť prosím instalačku aplikace znovu.');
   }
   // Chybí-li úplně všechno, je to problém. Chybí-li jen ten vybraný, taky —
   // ale ostatní se nabídnou, ať se dá pracovat hned.
@@ -1537,14 +1696,15 @@ function renderDoctor() {
   const def = agentById(STATE.default_agent);
   if (!ready.length) {
     const first = agentList()[0];
-    problems.push('Není nainstalovaný <b>žádný AI agent</b> — tab se otevře jako obyčejný shell.' +
-      (first && first.install ? '<br><code>' + first.install + '</code>' : '') +
-      '<br>Nebo v nastavení: ⚙ → AI agenti.');
+    problems.push('<b>Claude tu ještě není nainstalovaný.</b>' +
+      (first && first.install
+        ? ' <button class="btn primary" data-fix="install" data-agent="' + escapeHtml(first.id) +
+          '">Nainstalovat</button>' : ' Spusť prosím instalačku aplikace znovu.'));
   } else if (def && !def.path) {
-    problems.push('Vybraný agent <b>' + def.label + '</b> není v PATH — ' +
-      'tab se otevře jako obyčejný shell.' +
-      (def.install ? '<br><code>' + def.install + '</code>' : '') +
-      '<br>K dispozici je: ' + ready.map((a) => a.label).join(', ') + '.');
+    problems.push('<b>' + escapeHtml(def.label) + '</b> tu není nainstalovaný.' +
+      (def.install ? ' <button class="btn primary" data-fix="install" data-agent="' +
+        escapeHtml(def.id) + '">Nainstalovat</button>' : '') +
+      '<br>Můžeš zatím pracovat s: ' + ready.map((a) => escapeHtml(a.label)).join(', ') + '.');
   }
   // Složky projektů, do kterých hub nesměl — na macOS bez povolení k Ploše.
   const blocked = (d.blocked_dirs || []).map((p) => p.replace(STATE.home, '~'));
@@ -1560,6 +1720,12 @@ function renderDoctor() {
   }
   warn.hidden = !problems.length;
   warn.innerHTML = problems.join('<hr style="border:none;border-top:1px solid var(--border);margin:8px 0">');
+  // Opravit jedním kliknutím místo příkazu k opsání.
+  for (const b of warn.querySelectorAll('[data-fix=install]')) {
+    const a = agentById(b.dataset.agent);
+    b.onclick = () => openTab({kind: 'install:' + b.dataset.agent, path: STATE.home,
+                               title: 'Instalace: ' + (a ? a.label : 'Claude')});
+  }
 }
 
 /* Které „+" tlačítko se ukazuje. Kdo jede jen v agentovi, nechce vedle sebe
@@ -1570,8 +1736,7 @@ function newTabLabel() {
   // na odznaku agenta a v popisku. Na počítači „PC", v prostoru „Server";
   // kde je firemní trezor, je potřeba rozlišit i nad čím Claude pojede.
   const firma = !!(STATE.firma && STATE.firma.vault);
-  if (!onServer()) return 'PC';
-  return firma ? 'Server osobní' : 'Server';
+  return onServer() && firma ? 'Osobní rozhovor' : 'Rozhovor';
 }
 
 function renderNewTabButtons() {
@@ -1589,17 +1754,17 @@ function renderNewTabButtons() {
   const a = agentById(STATE.default_agent) || agentList(true)[0];
   const label = btn.querySelector('span');
   if (a && label) {
-    label.textContent = newTabLabel();
-    const kde = onServer() ? (firma ? ' nad osobním Obsidianem v prostoru'
-                                    : ' v prostoru na serveru')
+    label.textContent = 'Nový ' + newTabLabel().toLowerCase();
+    const kde = onServer() ? (firma ? ' nad tvými osobními poznámkami' : ' na serveru')
                            : ' na tomhle počítači';
-    btn.title = 'Otevřít ' + a.label + kde +
-      (agentList(true).length > 1 ? ' (pravé tlačítko = výběr agenta)' : '');
+    btn.title = 'Nový rozhovor s Claudem' + kde +
+      (window.HUB_ADVANCED && agentList(true).length > 1 ? ' (pravé tlačítko = výběr agenta)' : '');
   }
 }
 
 async function reload() {
   STATE = await api('state');
+  markAdvanced();
   renderProjects($('search').value);
   renderMemory();
   renderFirma();
@@ -1656,8 +1821,10 @@ function newAgentMenu(ev) {
       : openTab({kind: 'install:' + a.id, path: STATE.home,
                  title: 'instalace: ' + a.label})),
   }));
-  items.push({icon: 'i-gear', label: 'Nastavení agentů…',
-              run: () => HubSettings.open({...hubIO(), state: STATE, tab: 'agenti'})});
+  if (window.HUB_ADVANCED) {
+    items.push({icon: 'i-gear', label: 'Nastavení agentů…',
+                run: () => HubSettings.open({...hubIO(), state: STATE, tab: 'agenti'})});
+  }
   const b = ev.currentTarget ? ev.currentTarget.getBoundingClientRect() : null;
   showMenu(b ? b.left : ev.clientX, b ? b.bottom : ev.clientY, items);
 }
@@ -2025,7 +2192,7 @@ function isBusy(tab) {
 async function requestCloseTab(tab) {
   if (tab.exited || !tab.id || !isBusy(tab)) { closeTab(tab); return; }
   const ok = await askConfirm({
-    title: 'Agent ještě pracuje',
+    title: 'Claude ještě pracuje',
     html: `V <b>${escapeHtml(tab.title)}</b> se pořád něco děje.` +
           `<span class="hint">Zavřením to přerušíš. Co je hotové, se do paměti uloží samo.</span>`,
     yes: 'Přerušit a zavřít',
@@ -2266,16 +2433,18 @@ function projectMenu(ev, p) {
         run: () => openExternal('https://github.com/' + p.repo)});
     }
   }
+  if (window.HUB_ADVANCED) {
+    items.push({icon: 'i-terminal', label: 'Terminál tady',
+                run: () => openTab({kind: 'shell', path: p.path, title: p.name})});
+  }
   items.push(
-    {icon: 'i-terminal', label: 'Shell tady',
-     run: () => openTab({kind: 'shell', path: p.path, title: p.name})},
     {icon: 'i-folder', label: 'Otevřít složku', run: () => openExternal(p.path)},
     {icon: 'i-save', label: p.archived ? 'Vrátit z archivu' : 'Archivovat',
      run: async () => {
        await api('project', {action: 'save', path: p.path, archived: !p.archived});
        await reload();
      }},
-    {icon: 'i-close', label: 'Odebrat z Hubu', run: () => removeProject(p)},
+    {icon: 'i-close', label: 'Odebrat ze seznamu', run: () => removeProject(p)},
   );
   showMenu(ev.clientX, ev.clientY, items);
 }
@@ -2358,16 +2527,16 @@ function newTabMenu(btn) {
                                     title: newTabLabel(), agent: a.id})});
   }
   if (STATE.firma && STATE.firma.vault) {
-    items.push({icon: 'i-terminal', label: 'Server firemní', color: 'var(--firma)',
+    items.push({icon: 'i-terminal', label: 'Firemní rozhovor', color: 'var(--firma)',
                 run: () => openFirmaTab()});
   }
   if (cfg.shell !== false && STATE.config.dev_mode) {
     items.push({icon: 'i-terminal', label: 'Terminál',
-                run: () => openTab({kind: 'shell', path: '', title: 'terminál'})});
+                run: () => openTab({kind: 'shell', path: '', title: 'Terminál'})});
   }
   // Víc agentů = ať jde vybrat i jiný než výchozí; na počítači je to pravé
   // tlačítko, kterým se na telefonu klepnout nedá.
-  if (agentList(true).length > 1) {
+  if (window.HUB_ADVANCED && agentList(true).length > 1) {
     items.push({icon: 'i-gear', label: 'Jiným agentem…',
                 run: () => newAgentMenu({clientX: 12, clientY: 60, preventDefault() {}})});
   }
@@ -2391,12 +2560,12 @@ function topbarMenu(btn) {
   // Obsidiany jen tam, kde nějaké jsou — prázdná položka neřekne nic.
   const mem = STATE.memory || {};
   if (mem.enabled) {
-    items.push({icon: 'i-book', label: 'Otevřít ' + (onServer() ? 'osobní' : 'PC') + ' Obsidian',
+    items.push({icon: 'i-book', label: 'Otevřít moje poznámky',
                 color: 'var(--accent)',
                 run: () => (vaultPreview() ? openVault() : openExternal('', 'brain'))});
   }
   if (STATE.firma && STATE.firma.vault) {
-    items.push({icon: 'i-book', label: 'Otevřít firemní Obsidian', color: 'var(--firma)',
+    items.push({icon: 'i-book', label: 'Otevřít firemní poznámky', color: 'var(--firma)',
                 run: () => openVault('', 'firma')});
   }
   items.push(
@@ -2563,7 +2732,7 @@ function staleVersion(version) {
   if (!version || !mine || version === mine) return false;
   const typing = [...document.querySelectorAll('.composer-input')].some(i => i.value.trim());
   if (typing) {
-    toast('Hub je aktualizovaný — obnov stránku (F5), až dopíšeš.');
+    toast('Je tu nová verze aplikace — až dopíšeš, načti stránku znovu (F5).');
     return false;
   }
   location.reload();
@@ -2679,6 +2848,8 @@ async function memorySaved({files, projects}) {
   toast(`Paměť doplněna${where}: ${notes.join(', ')}`);
   try {
     STATE = await api('state');
+    markAdvanced();
+  markAdvanced();
     renderMemory();
     renderWelcome();
   } catch (_) { /* hláška stačí, seznam se obnoví příště */ }
@@ -2727,7 +2898,7 @@ function hubIO() {
     open: openLink,
     pickFolder,
     reload,
-    refreshState: async () => { STATE = await api('state'); renderBranding(); },
+    refreshState: async () => { STATE = await api('state'); markAdvanced(); renderBranding(); },
     openWizard: () => HubOnboarding.open({...hubIO(), state: STATE}),
     /* Přihlášení jiným účtem. `/login` žije uvnitř Claude Code, ne v shellu,
        tak se otevře tab, který ho dostane rovnou jako první příkaz — stejnou
@@ -2788,7 +2959,7 @@ async function main() {
     if (document.visibilityState === 'visible') renderGreeting();
   });
   initChats();
-  $('btn-new-shell').onclick = () => openTab({kind: 'shell', path: '', title: 'terminál'});
+  $('btn-new-shell').onclick = () => openTab({kind: 'shell', path: '', title: 'Terminál'});
   // Levý klik = výchozí agent, pravý klik nebo delší podržení = výběr.
   // Nabídka se sama otevře i tehdy, když výchozí agent není nainstalovaný.
   $('btn-new-agent').onclick = (ev) => {
@@ -3157,7 +3328,7 @@ async function applyServerUpdate(card, now) {
       method: 'POST', credentials: 'same-origin',
       headers: {'Content-Type': 'application/json', 'X-Hub-Account': '1'}, body: '{}',
     });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (!r.ok) throw new Error('Server teď neodpovídá, zkus to za chvíli.');
   } catch (err) {
     card.classList.remove('busy');
     q('.srvupd-text').textContent = 'Aktualizace se nepovedla: ' + err.message;
@@ -3172,4 +3343,7 @@ async function applyServerUpdate(card, now) {
 // Nastavení → Aktualizace (settings.js) nabízí totéž tlačítkem.
 window.hubServerUpdate = () => { closeServerUpdate(); srvNewest ? showServerUpdate(true) : checkServerUpdate(); };
 
-main().catch(err => toast('Hub se nenačetl: ' + err.message));
+main().catch(err => {
+  console.error(err);
+  toast('Aplikace se nenačetla. Zkus ji zavřít a otevřít znovu.');
+});

@@ -25,6 +25,20 @@
     return node;
   }
 
+  // Technický detail chyby (HTTP 502, Failed to fetch…) patří do konzole,
+  // člověk dostane lidskou větu.
+  // Věta od serveru (česky) projde; výpadek spojení nebo syrový výpis
+  // (Failed to fetch, HTTP 502, Traceback…) se nahradí lidskou větou.
+  function friendly(where, e) {
+    console.warn('predplatne.js: ' + where, e);
+    const msg = (e && e.message) || '';
+    if (!msg || e instanceof TypeError || msg.length > 200 ||
+        /^HTTP \d|fetch|NetworkError|Traceback|Error:|<html/i.test(msg)) {
+      return 'Server teď neodpovídá, zkus to za chvíli.';
+    }
+    return msg;
+  }
+
   function date(ts) {
     const d = new Date(ts * 1000);
     return d.getDate() + '. ' + (d.getMonth() + 1) + '. ' + d.getFullYear();
@@ -32,7 +46,7 @@
 
   const MODES = {
     predplatne: 'Claude v prostoru jede na tvém předplatném Claude.',
-    api: 'Claude v prostoru jede na firemním klíči API.',
+    api: 'Claude v prostoru jede na firemním účtu.',
     ucet: 'Claude je v prostoru přihlášený tvým účtem.',
     zadne: 'Claude v prostoru ještě není přihlášený.',
   };
@@ -85,7 +99,7 @@
       lead.append('Aby Claude ve tvém prostoru na serveru fungoval, propojí se s tvým ' +
         'předplatným Claude (Pro, Max, Team). V prohlížeči se otevřela stránka Claude — ' +
         'přihlas se, když ještě nejsi, a klikni na ');
-      lead.appendChild(el('b', '', 'Authorize'));
+      lead.appendChild(el('b', '', 'Authorize (Povolit)'));
       lead.append('. Nic dalšího není potřeba.');
       const line = el('div', 'pd-line');
       const help = el('details', 'pd-help');
@@ -95,7 +109,7 @@
       openBtn.disabled = true;
       openBtn.onclick = () => shownUrl && io.open(shownUrl);
       helpBody.appendChild(el('div', 'set-note',
-        'Otevři přihlášení ručně. Po kliknutí na Authorize ukáže stránka kód — vlož ho sem.'));
+        'Otevři přihlášení ručně. Po kliknutí na Authorize (Povolit) ukáže stránka kód — vlož ho sem.'));
       const row = el('div', 'set-row');
       row.appendChild(openBtn);
       const code = el('input', 'srv-input pd-code');
@@ -106,7 +120,7 @@
       row.appendChild(send);
       helpBody.appendChild(row);
       help.appendChild(helpBody);
-      const note = el('p', 'onb-note', 'Token platí rok a patří jen tvému účtu na serveru. ' +
+      const note = el('p', 'onb-note', 'Propojení platí rok a patří jen tvému účtu na serveru. ' +
         'Na počítači se neukládá. Předplatné se mezi lidmi nesdílí — každý připojuje svoje.');
       body.append(lead, line, help, note);
 
@@ -160,7 +174,7 @@
           const st = await io.api('predplatne', {action: 'start'});
           if (draw({connect: st}) !== false) poll();
         } catch (e) {
-          say('err', '! ' + e.message);
+          say('err', '! ' + friendly('start', e));
           again.hidden = false;
         }
       }
@@ -201,7 +215,7 @@
     async function load() {
       let st;
       try { st = await io.api('predplatne'); } catch (e) {
-        body.textContent = 'Nezjistil jsem to: ' + e.message;
+        body.textContent = friendly('load', e);
         return;
       }
       draw(st);
@@ -223,8 +237,8 @@
           (srv.expiring ? 'Brzy vyprší — připoj ho znovu. ' : '') + 'Platí do ' + date(srv.expires) + '.'));
       } else {
         body.appendChild(el('div', 'set-note',
-          'Bez klíče API jede Claude v prostoru na tvém předplatném Claude (Pro, Max, Team). ' +
-          'Appka ho propojí sama — v prohlížeči jen klikneš na Authorize.'));
+          'Claude v prostoru jede na tvém předplatném Claude (Pro, Max, Team). ' +
+          'Aplikace ho propojí sama — v prohlížeči jen klikneš na Authorize (Povolit).'));
       }
       const row = el('div', 'set-row');
       if (st.claude) {
@@ -237,7 +251,8 @@
         row.appendChild(b);
       } else {
         row.appendChild(el('span', 'set-dim',
-          'Na tomhle počítači chybí Claude Code — připojíš ho v prostoru příkazem /login.'));
+          'Na tomhle počítači chybí Claude. Přihlásíš ho přímo v prostoru: otevři tam ' +
+          'rozhovor s Claudem a zvol „Přihlásit Claude“.'));
       }
       if (srv.mode === 'predplatne') {
         const off = el('button', 'btn ghost', 'Odpojit');
@@ -247,7 +262,7 @@
             const r = await io.api('predplatne', {action: 'disconnect'});
             if (r.error) throw new Error(r.error);
             io.toast('Předplatné odpojené.');
-          } catch (e) { io.toast('Nepovedlo se: ' + e.message); }
+          } catch (e) { io.toast('Odpojit se nepovedlo: ' + friendly('disconnect', e)); }
           load();
         };
         row.appendChild(off);
@@ -266,8 +281,11 @@
       headers: {'Content-Type': 'application/json', 'X-Hub-Account': '1'},
       body: JSON.stringify(payload),
     });
-    const data = await r.json().catch(() => ({error: 'HTTP ' + r.status}));
-    if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      console.warn('predplatne.js: /gw/claude HTTP ' + r.status, data);
+      throw new Error(data.error || 'Server teď neodpovídá, zkus to za chvíli.');
+    }
     return data;
   }
 
@@ -293,14 +311,14 @@
         (st.mode === 'zadne' ? '! ' : '✓ ') + MODES[st.mode]));
       if (st.mode === 'predplatne' && st.expires) {
         body.appendChild(el('div', 'set-note',
-          (st.expiring ? 'Brzy vyprší — připoj ho znovu z appky na počítači. ' : '') +
+          (st.expiring ? 'Brzy vyprší — připoj ho znovu z aplikace na počítači. ' : '') +
           'Platí do ' + date(st.expires) + '.'));
       }
       if (oldApp && st.mode !== 'ucet') body.appendChild(global.HubServer.oldAppNote());
       if (st.mode === 'zadne' && !fromApp && !oldApp) {
         body.appendChild(el('div', 'set-note',
-          'Otevři prostor v appce Claude Code Hub na počítači — propojí ho s tvým předplatným ' +
-          'sama. Nebo v tabu Claude Code zvol přihlášení účtem Claude.'));
+          'Otevři prostor v aplikaci Claude Hub na počítači — propojí ho s tvým předplatným ' +
+          'sama. Nebo v rozhovoru s Claudem zvol přihlášení účtem Claude.'));
       }
       const row = el('div', 'set-row');
       if (st.needs_restart) {
@@ -311,8 +329,8 @@
       if (fromApp && st.mode !== 'ucet') {
         const b = el('button', st.mode === 'zadne' ? 'btn primary' : 'btn ghost',
           st.mode === 'predplatne' ? 'Připojit znovu' : 'Použít moje předplatné');
-        b.title = 'Okno se na chvíli vrátí do appky na počítači, v prohlížeči klikneš na ' +
-          'Authorize a vrátíš se sem.';
+        b.title = 'Okno se na chvíli vrátí do aplikace na počítači, v prohlížeči klikneš na ' +
+          'Authorize (Povolit) a vrátíš se sem.';
         b.onclick = () => global.HubServer.backTo('predplatne');
         row.appendChild(b);
       }
@@ -321,7 +339,7 @@
         off.onclick = async () => {
           off.disabled = true;
           try { draw(await gwClaude({remove: true})); io.toast('Předplatné odpojené.'); }
-          catch (e) { io.toast('Nepovedlo se: ' + e.message); off.disabled = false; }
+          catch (e) { io.toast('Odpojit se nepovedlo: ' + friendly('gw disconnect', e)); off.disabled = false; }
         };
         row.appendChild(off);
       }

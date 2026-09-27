@@ -30,7 +30,7 @@
     ['cteni', 'Jen čtení',
      'Prochází složky, čte a hledá soubory a kopíruje je na server. Nic nezmění ani nespustí.'],
     ['vse', 'Plný přístup',
-     'Navíc zapisuje a upravuje soubory a spouští příkazy — jako Claude Code spuštěný tady.'],
+     'Navíc zapisuje a upravuje soubory a spouští programy — jako Claude spuštěný tady.'],
   ];
 
   const OPS = {info: 'zjistil údaje', ls: 'prošel složku', read: 'četl', find: 'hledal v',
@@ -51,6 +51,19 @@
     use.setAttribute('href', '#' + name);
     svg.appendChild(use);
     return svg;
+  }
+
+  // Technický detail chyby jde do konzole, člověk dostane lidskou větu.
+  // Věta od serveru (česky) projde; výpadek spojení nebo syrový výpis
+  // (Failed to fetch, HTTP 502, Traceback…) se nahradí lidskou větou.
+  function friendly(where, e) {
+    console.warn('pocitac.js: ' + where, e);
+    const msg = (e && e.message) || '';
+    if (!msg || e instanceof TypeError || msg.length > 200 ||
+        /^HTTP \d|fetch|NetworkError|Traceback|Error:|<html/i.test(msg)) {
+      return 'Server teď neodpovídá, zkus to za chvíli.';
+    }
+    return msg;
   }
 
   function ago(seconds) {
@@ -94,8 +107,8 @@
   }
 
   const TRUST_NOTE =
-    'Platí jen pro tvůj prostor a jen dokud je tady appka otevřená. Každý přístup se ' +
-    'zapíše do logu a posledních pár uvidíš v Nastavení → Účet. Na počítač tak ' +
+    'Platí jen pro tvůj prostor a jen dokud je tady aplikace otevřená. Každý přístup se ' +
+    'zapíše do přehledu a posledních pár uvidíš v Nastavení → Účet. Na počítač tak ' +
     'dosáhne i ten, kdo spravuje server — zapínej jen u serveru, kterému věříš.';
 
   /* ── na počítači: Nastavení → Účet ───────────────────────────────────────── */
@@ -133,7 +146,7 @@
                        : 'Claude ze serveru na tenhle počítač už nesahá.');
       } catch (e) {
         choice.set(cfg.pocitac_access || '');
-        io.toast('Nepovedlo se: ' + e.message);
+        io.toast('Nepovedlo se: ' + friendly('pick', e));
       }
       busy = false;
       schedule(800);
@@ -156,7 +169,7 @@
           line.appendChild(el('span', 'set-dim', 'Připojuji se k ' + server + '…'));
           if (st.note) line.appendChild(el('div', 'set-dim', st.note));
         } else {
-          line.appendChild(el('span', 'set-warn', '! ' + (st.note || 'Most neběží.')));
+          line.appendChild(el('span', 'set-warn', '! ' + (st.note || 'Počítač není připojený.')));
         }
       }
       drawTasks(st.ukoly || []);
@@ -266,7 +279,7 @@
           root.remove();
           resolve(st.access);
         } catch (e) {
-          err.textContent = 'Uložit se nepovedlo: ' + e.message;
+          err.textContent = 'Uložit se nepovedlo: ' + friendly('ask', e);
           err.hidden = false;
           ok.disabled = false;
         }
@@ -305,7 +318,7 @@
       body.appendChild(el('div', 'pc-ukol-meta', 'Přílohy: ' + u.files.join(', ')));
     }
     body.appendChild(el('p', 'onb-note',
-      'Spustí se v novém tabu s Claude Code tady na počítači. Claude si zadání přečte ' +
+      'Spustí se v novém rozhovoru s Claudem tady na počítači. Claude si zadání přečte ' +
       'a než začne, shrne, co udělá.'));
     const err = el('div', 'srv-status err');
     err.hidden = true;
@@ -331,7 +344,7 @@
         done(r);
         pending(io);                         // další čekající, když nějaký je
       } catch (e) {
-        err.textContent = 'Nepovedlo se: ' + e.message;
+        err.textContent = 'Nepovedlo se: ' + friendly('ukol', e);
         err.hidden = false;
         run.disabled = drop.disabled = false;
       }
@@ -364,7 +377,7 @@
   /* Hláška od hubu (websocket): úkol ze serveru dorazil nebo se spustil. */
   async function ukol(io, msg) {
     if (msg.state === 'spusteno') {
-      io.toast('Úkol ze serveru „' + msg.title + '“ běží v novém tabu.');
+      io.toast('Úkol ze serveru „' + msg.title + '“ běží v novém rozhovoru.');
       if (msg.auto && io.focusTab) io.focusTab(msg.tab, {idle: true});
       return;
     }
@@ -376,7 +389,10 @@
   /* ── v prostoru na serveru ───────────────────────────────────────────────── */
   async function gwState() {
     const r = await fetch('/gw/pocitac', {credentials: 'same-origin'});
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (!r.ok) {
+      console.warn('pocitac.js: /gw/pocitac HTTP ' + r.status);
+      throw new Error('Server teď neodpovídá, zkus to za chvíli.');
+    }
     return r.json();
   }
 
@@ -428,10 +444,10 @@
     const body = el('div', 'onb-body');
     body.appendChild(el('div', 'pc-ukol-name', u.title));
     body.appendChild(el('p', 'onb-lead', started
-      ? 'Počítač ' + (u.by || '') + ' si úkol převzal a Claude na něm pracuje v novém tabu. ' +
+      ? 'Počítač ' + (u.by || '') + ' si úkol převzal a Claude na něm pracuje v novém rozhovoru. ' +
         'Když bude potřebovat souhlas, zeptá se tam.'
       : 'Počítač ' + (u.by || '') + ' si úkol převzal. Má zapnutý přístup jen ke čtení, ' +
-        'takže se nespustí sám — potvrď ho v appce na počítači.'));
+        'takže se nespustí sám — potvrď ho v aplikaci na počítači.'));
     box.appendChild(body);
     const foot = el('div', 'onb-foot');
     const close = el('button', 'btn ghost', 'Zavřít');
@@ -440,7 +456,7 @@
     const hs = global.HubServer;
     if (hs && hs.localBack() && hs.appAtLeast('2.15.0')) {
       const go = el('button', 'btn primary', started ? 'Přejít na počítač' : 'Potvrdit na počítači');
-      go.title = 'Okno přejde do appky na počítači. Do prostoru se vrátíš v Nastavení → Účet.';
+      go.title = 'Okno přejde do aplikace na počítači. Do prostoru se vrátíš v Nastavení → Účet.';
       go.onclick = () => hs.backTo('ukoly');
       foot.appendChild(go);
     }
@@ -466,7 +482,7 @@
       body.textContent = '';
       if (list.length) {
         body.appendChild(el('div', 'set-note',
-          'Claude tady v prostoru sahá i na tyhle počítače (nástroje mcp__pocitac__*) — ' +
+          'Claude tady v prostoru sahá i na tyhle počítače — ' +
           'řekni mu třeba „podívej se na počítači do Stažených".'));
         for (const c of list) {
           const row = el('div', 'pc-comp');
@@ -478,9 +494,9 @@
         }
       } else {
         body.appendChild(el('div', 'set-note',
-          'Claude v prostoru teď na žádný tvůj počítač nedosáhne. Zapíná se v appce ' +
-          'Claude Code Hub na počítači (Nastavení → Účet → Claude ze serveru na tomhle ' +
-          'počítači) a funguje, dokud je appka otevřená. Co má počkat, než se počítač ' +
+          'Claude v prostoru teď na žádný tvůj počítač nedosáhne. Zapíná se v aplikaci ' +
+          'Claude Hub na počítači (Nastavení → Účet → Claude ze serveru na tomhle ' +
+          'počítači) a funguje, dokud je aplikace otevřená. Co má počkat, než se počítač ' +
           'připojí, řekni Claudovi — nechá mu úkol a Claude na počítači ho pak dodělá.'));
       }
       const tasks = data.ukoly || [];
@@ -501,7 +517,7 @@
         const row = el('div', 'set-row');
         const b = el('button', 'btn ghost',
           list.length ? 'Změnit na tomhle počítači' : 'Zapnout na tomhle počítači');
-        b.title = 'Okno se na chvíli vrátí do appky na počítači, tam zvolíš přístup ' +
+        b.title = 'Okno se na chvíli vrátí do aplikace na počítači, tam zvolíš přístup ' +
           'a pak se vrátíš sem.';
         b.onclick = () => global.HubServer.backTo('pocitac');
         row.appendChild(b);
@@ -509,7 +525,7 @@
       }
     }, () => {
       body.textContent = '';
-      body.appendChild(el('div', 'set-note', 'Server most na počítač zatím neumí.'));
+      body.appendChild(el('div', 'set-note', 'Server propojení s počítačem zatím neumí.'));
     });
     return box;
   }

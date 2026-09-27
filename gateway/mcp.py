@@ -135,7 +135,7 @@ def protected_resource(h):
     base = base_url(h)
     h._json({"resource": base + "/mcp", "authorization_servers": [base],
              "scopes_supported": ["prostor"], "bearer_methods_supported": ["header"],
-             "resource_name": "Claude Code Hub — tvůj prostor"})
+             "resource_name": "Claude Hub — tvůj prostor"})
 
 
 def auth_server(h):
@@ -203,7 +203,7 @@ def _page(title, body):
 
 
 def _error_page(h, text, code=400):
-    return h._send(code, _page("Napojení — Code Hub", f"""
+    return h._send(code, _page("Napojení — Claude Hub", f"""
 <div class=card><h1>Napojení se nepovedlo</h1>
 <p class=sub>{html.escape(text)}</p></div>"""), "text/html; charset=utf-8", _no_frame())
 
@@ -272,22 +272,21 @@ def _form_page(h, rid, req, error=""):
     else:
         user = h.accounts.by_id(req["uid"]) or {}
         level = h.accounts.company_level(user)
-        firma = {"none": "", "read": "<li>číst firemní Obsidian</li>",
-                 "write": "<li>číst firemní Obsidian a zapisovat do něj</li>"}[level]
+        firma = {"none": "", "read": "<li>číst firemní poznámky</li>",
+                 "write": "<li>číst firemní poznámky a zapisovat do nich</li>"}[level]
         body = f"""
 <form class=card method=post action="/oauth/authorize">
 <h1>Povolit {who}?</h1>
 <p class=sub>Přihlášen jako <b>{html.escape(user.get("email", ""))}</b>.
 Napojení povede na <b>{where}</b>.</p>
-<p>Claude v appce pak bude moct <b>jen ve tvém prostoru</b>:</p>
+<p>Claude v aplikaci pak bude moct <b>jen ve tvém prostoru</b>:</p>
 <ul class=steps>
-<li>vidět tvoje projekty a konverzace</li>
-<li>číst a zapisovat tvůj Obsidian a sdílené Obsidiany, kde jsi členem</li>
+<li>vidět tvoje projekty a rozhovory</li>
+<li>číst a zapisovat tvoje poznámky a sdílené poznámky, kde jsi členem</li>
 {firma}
-<li>číst a zapisovat soubory v tvém prostoru a <b>spouštět v něm příkazy</b></li>
+<li>číst a zapisovat soubory v tvém prostoru a <b>spouštět v něm programy</b></li>
 </ul>
-<p class=hint>Napojení zrušíš změnou hesla, nebo ti ho zruší admin
-(<code>claude-hub-admin mcp</code>).</p>
+<p class=hint>Napojení zrušíš změnou hesla, nebo ti ho zruší správce serveru.</p>
 <input type=hidden name=req value="{rid}">
 <input type=hidden name=krok value=souhlas>
 <button type=submit name=rozhodnuti value=povolit>Povolit</button>
@@ -295,7 +294,7 @@ Napojení povede na <b>{where}</b>.</p>
  style="background:none;border:1px solid #3a3524;color:#c8c0a8">Zamítnout</button>
 {err}
 </form>"""
-    return h._send(200, _page("Napojení — Code Hub", body), "text/html; charset=utf-8",
+    return h._send(200, _page("Napojení — Claude Hub", body), "text/html; charset=utf-8",
                    _no_frame())
 
 
@@ -314,12 +313,12 @@ def authorize(h, method):
             urllib.parse.urlparse(h.path).query).items()}
         client = h.accounts.oauth_client(q.get("client_id", ""))
         if not client:
-            return _error_page(h, "Neznámá aplikace — přidej konektor v appce znovu.")
+            return _error_page(h, "Neznámá aplikace — přidej napojení v aplikaci Claude znovu.")
         redirect = q.get("redirect_uri") or (client["redirect_uris"][0]
                                              if len(client["redirect_uris"]) == 1 else "")
         # Dokud adresa pro návrat není ověřená, nikam se nepřesměrovává.
         if redirect not in client["redirect_uris"] or not redirect_ok(redirect):
-            return _error_page(h, "Adresa pro návrat nesedí s registrací aplikace.")
+            return _error_page(h, "Něco nesedí s aplikací, která se chce napojit. Přidej napojení v aplikaci Claude znovu.")
         req = {"client_id": client["client_id"], "client_name": client["name"],
                "redirect_uri": redirect, "state": q.get("state", "")[:500]}
         if q.get("response_type") != "code":
@@ -336,18 +335,18 @@ def authorize(h, method):
         return _form_page(h, rid, _req_get(rid))
 
     if method != "POST":
-        return _error_page(h, "Neplatný požadavek.", 405)
+        return _error_page(h, "Tahle stránka se takhle otevřít nedá. Spusť napojení v aplikaci Claude znovu.", 405)
     try:
         form = _form(h)
     except ValueError:
         h.close_connection = True
-        return _error_page(h, "Neplatný požadavek.", 413)
+        return _error_page(h, "Tahle stránka se takhle otevřít nedá. Spusť napojení v aplikaci Claude znovu.", 413)
     if not h._same_origin():
-        return _error_page(h, "Formulář musí přijít z téhle stránky.", 403)
+        return _error_page(h, "Formulář se musí odeslat z téhle stránky. Spusť napojení v aplikaci Claude znovu.", 403)
     rid = form.get("req", "")
     req = _req_get(rid)
     if not req:
-        return _error_page(h, "Přihlášení vypršelo — spusť napojení v appce znovu.")
+        return _error_page(h, "Přihlášení vypršelo — spusť napojení v aplikaci Claude znovu.")
     step = form.get("krok")
     if step != req["stage"]:
         return _form_page(h, rid, req)
@@ -369,7 +368,7 @@ def authorize(h, method):
             req["stage"] = "kod"
         elif config.REQUIRE_2FA:
             _req_drop(rid)
-            return _error_page(h, "Nejdřív se přihlas do hubu v prohlížeči a nastav si "
+            return _error_page(h, "Nejdřív se přihlas do Claude Hubu v prohlížeči a nastav si "
                                   "ověření kódem z aplikace. Pak napojení zopakuj.")
         else:
             h.accounts.fail_clear(keys[0][0])
@@ -392,7 +391,7 @@ def authorize(h, method):
             req["tries"] += 1
             if req["tries"] >= config.LOGIN_TRIES:
                 _req_drop(rid)
-                return _error_page(h, "Kód nesedí. Spusť napojení v appce znovu. " + (note or ""))
+                return _error_page(h, "Kód nesedí. Spusť napojení v aplikaci Claude znovu. " + (note or ""))
             return _form_page(h, rid, req, "Kód nesedí. " + (note or ""))
         h.accounts.fail_clear(keys[0][0])
         req["stage"] = "souhlas"
@@ -699,7 +698,7 @@ def _handle(h, user, msg):
         return _rpc_result(mid, {
             "protocolVersion": want if want in PROTOCOLS else PROTOCOLS[0],
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "claude-code-hub", "title": "Claude Code Hub",
+            "serverInfo": {"name": "claude-code-hub", "title": "Claude Hub",
                            "version": __version__},
             "instructions": INSTRUCTIONS})
     if method == "ping":

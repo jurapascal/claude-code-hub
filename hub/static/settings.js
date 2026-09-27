@@ -26,13 +26,16 @@
     // neřeší složky s projekty, zálohu paměti ani tlačítka nových tabů.
     ['projekty',   'Projekty',  'i-folder',   () => projekty(), 'dev'],
     ['taby',       'Taby',      'i-terminal', () => taby(), 'dev'],
-    ['agenti',     'AI agenti', 'i-hub',      () => agenti()],
+    ['agenti',     'AI agenti', 'i-hub',      () => agenti(), 'dev'],
     ['pamet',      'Paměť',     'i-book',     () => pamet()],
     ['ucet',       'Účet',      'i-user',     () => ucet()],
+    // Tým: jen admin v prostoru na serveru (gateway/tym.py).
+    ['tym',        'Tým',       'i-user',     () => tym(), 'admin'],
     ['hlas',       'Hlas',      'i-mic',      () => hlas()],
-    ['napojeni',   'Napojení',  'i-hub',      () => napojeni()],   // MCP — Claude Code
+    ['napojeni',   'Propojené služby', 'i-hub', () => napojeni()],   // MCP — Claude Code
     ['aktualizace','Aktualizace', 'i-up',     () => aktualizace()],
     ['logy',       'Logy',      'i-status',   () => logy(), 'dev'],
+    ['pokrocile',  'Pro pokročilé', 'i-status', () => pokrocile()],
   ];
 
   function el(tag, cls, text) {
@@ -101,9 +104,14 @@
    * Filtruje se až při kreslení, ne jednou při načtení: režim se přepíná
    * v nastavení samotném a panel se musí překreslit hned, ne po restartu. */
   function visibleSections() {
-    const dev = !!(state && state.config && state.config.dev_mode);
-    return SECTIONS.filter(([, , , , flag]) => flag !== 'dev' || dev);
+    const dev = advanced();
+    const u = (state && state.config && state.config.gateway_user) || null;
+    const admin = !!(u && u.role === 'admin');
+    return SECTIONS.filter(([, , , , flag]) => (flag !== 'dev' || dev) && (flag !== 'admin' || admin));
   }
+
+  // Pro pokročilé (config.dev_mode) — jinak jednoduchý režim bez techniky.
+  const advanced = () => !!(state && state.config && state.config.dev_mode);
 
   function render() {
     const nav = root.querySelector('.set-nav');
@@ -156,21 +164,208 @@
     box.appendChild(wrap);
 
     box.appendChild(appka());
+    return box;
+  }
 
-    box.appendChild(el('div', 'set-title', 'Vývojářský režim'));
-    box.appendChild(el('div', 'set-note',
-      'Nasazování a GitHub. Dokud je vypnutý, hub o nic z toho nezavadí — ' +
-      'žádné tlačítko Deploy ani Push, a nic se nenabízí doinstalovat.'));
+  /* Jednoduchý režim je výchozí: aplikace se chová jako chat s Claudem a nic
+     technického neukazuje. Tady si ho zapne, kdo chce terminál, GitHub,
+     výběr modelu a další nástroje pro programátory. */
+  function pokrocile() {
+    const box = section('Pro pokročilé',
+      'Aplikace je nastavená jednoduše — na psaní s Claudem, poznámky a soubory. ' +
+      'Kdo programuje nebo spravuje weby, tu zapne i nástroje pro programátory.');
     const row = el('label', 'onb-row');
     const cb = el('input');
     cb.type = 'checkbox';
-    cb.checked = !!state.config.dev_mode;
+    cb.checked = advanced();
     cb.onchange = () => save({dev_mode: cb.checked});
     row.appendChild(cb);
-    row.appendChild(el('span', null,
-      'Zapnout tlačítka Deploy a Push na GitHub a sekce Projekty, ' +
-      'Taby a Logy'));
+    row.appendChild(el('span', null, 'Zapnout nástroje pro programátory'));
     box.appendChild(row);
+    box.appendChild(el('div', 'set-note',
+      'Přibude: terminál, výběr modelu a příkazy v poli na psaní, nahrávání webů ' +
+      'a GitHub, spotřeba tokenů, výběr jiných AI pomocníků, technické ' +
+      'podrobnosti napojení a záznam chyb. Vypnutím se zase schová — nic se nesmaže.'));
+    return box;
+  }
+
+  /* ── Tým (jen admin na serveru) ──────────────────────────────────────────
+     Totéž co claude-hub-admin, jen naklikáním (brána /gw/tym, gateway/tym.py).
+     Hesla vymyslí server a ukážou se jednou — admin je předá. */
+  function tym() {
+    const box = section('Tým',
+      'Lidé, kteří mají účet na serveru. Tady je pozveš, pomůžeš jim s heslem ' +
+      'nebo s telefonem a nastavíš, co smí.');
+    const top = el('div', 'set-row');
+    const invite = el('button', 'btn primary', '+ Pozvat člověka');
+    top.appendChild(invite);
+    box.appendChild(top);
+    const info = el('div');
+    box.appendChild(info);
+    const list = el('div', 'tym-list');
+    box.appendChild(list);
+
+    const gw = async (payload) => {
+      const r = await fetch('/gw/tym', payload === undefined ? {credentials: 'same-origin'} : {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json', 'X-Hub-Account': '1'},
+        body: JSON.stringify(payload),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || 'Server teď neodpovídá, zkus to za chvíli.');
+      return data;
+    };
+
+    // Heslo pro předání: velké, s tlačítkem Zkopírovat a celou zprávou.
+    function showPassword(email, heslo, nove) {
+      info.textContent = '';
+      const card = el('div', 'tym-heslo');
+      card.appendChild(el('strong', null, nove ? 'Účet je založený' : 'Nové heslo je nastavené'));
+      const text = 'Adresa: ' + location.origin + '\nE-mail: ' + email + '\nHeslo: ' + heslo +
+        '\n\nPo přihlášení si nastavíš ověření v telefonu (aplikace jako Google Authenticator).';
+      const pre = el('pre', 'tym-pre', text);
+      card.appendChild(pre);
+      card.appendChild(el('div', 'set-note',
+        'Pošli to tomu člověku (třeba zprávou). Heslo se už znovu neukáže — ' +
+        'když se ztratí, vytvoř nové. Heslo si pak může změnit v Nastavení → Účet.'));
+      const row = el('div', 'set-row');
+      const copy = el('button', 'btn primary', 'Zkopírovat');
+      copy.onclick = async () => {
+        try { await navigator.clipboard.writeText(text); copy.textContent = 'Zkopírováno ✓'; }
+        catch (_) { io.toast('Zkopírovat se nepodařilo — označ text a zkopíruj ho ručně.'); }
+      };
+      const hide = el('button', 'btn ghost', 'Hotovo');
+      hide.onclick = () => { info.textContent = ''; };
+      row.append(copy, hide);
+      card.appendChild(row);
+      info.appendChild(card);
+    }
+
+    async function doIt(payload, done) {
+      try {
+        const out = await gw(payload);
+        if (done) done(out);
+        await load();
+      } catch (err) {
+        io.toast(err.message);
+      }
+    }
+
+    invite.onclick = () => {
+      info.textContent = '';
+      const card = el('div', 'tym-heslo');
+      card.appendChild(el('strong', null, 'Pozvat člověka'));
+      const mk = (label, type, ph) => {
+        const row = el('label', 'mcp-field');
+        row.appendChild(el('span', null, label));
+        const i = el('input', 'set-input');
+        i.type = type;
+        i.placeholder = ph || '';
+        row.appendChild(i);
+        card.appendChild(row);
+        return i;
+      };
+      const jmeno = mk('Jméno', 'text', 'Jana Nováková');
+      const email = mk('E-mail', 'email', 'jana@email.cz');
+      const adm = el('label', 'onb-row');
+      const cb = el('input');
+      cb.type = 'checkbox';
+      adm.append(cb, el('span', null, 'Správce (smí spravovat tým a firemní poznámky)'));
+      card.appendChild(adm);
+      const row = el('div', 'set-row');
+      const go = el('button', 'btn primary', 'Založit účet');
+      const cancel = el('button', 'btn ghost', 'Zrušit');
+      cancel.onclick = () => { info.textContent = ''; };
+      go.onclick = () => {
+        if (!email.value.includes('@')) return io.toast('Vyplň e-mail.');
+        go.disabled = true;
+        doIt({akce: 'pozvat', email: email.value.trim(), jmeno: jmeno.value.trim(),
+              role: cb.checked ? 'admin' : 'user'},
+             (out) => showPassword(out.email, out.heslo, true))
+          .finally(() => { go.disabled = false; });
+      };
+      row.append(go, cancel);
+      card.appendChild(row);
+      info.appendChild(card);
+      jmeno.focus();
+    };
+
+    const FIRMA = {none: 'nevidí firemní poznámky', read: 'firemní poznámky jen čte',
+                   write: 'firemní poznámky čte i upravuje'};
+
+    function person(p, me) {
+      const card = el('div', 'svc-card tym-card' + (p.blokovany ? ' off' : ''));
+      const head = el('div', 'svc-head');
+      head.appendChild(el('strong', null, p.name || p.email));
+      if (p.name) head.appendChild(el('span', 'set-dim', p.email));
+      card.appendChild(head);
+      const tags = [p.role === 'admin' ? 'správce' : 'člen', FIRMA[p.firma] || ''];
+      if (p.spravce) tags.push('určuje, kdo vidí firemní poznámky');
+      if (!p.overeni) tags.push('ještě si nenastavil telefon');
+      if (p.pracuje) tags.push('teď pracuje');
+      if (p.blokovany) tags.push('ZABLOKOVANÝ');
+      card.appendChild(el('div', 'set-note', tags.filter(Boolean).join(' · ')));
+      if (p.zamceny) {
+        const warn = el('div', 'set-row');
+        warn.appendChild(el('span', 'set-warn', 'Moc špatných pokusů o přihlášení — přihlášení je na chvíli zamčené.'));
+        const un = el('button', 'btn ghost', 'Odemknout');
+        un.onclick = () => doIt({akce: 'odemknout', id: p.id}, () => io.toast('Odemčeno.'));
+        warn.appendChild(un);
+        card.appendChild(warn);
+      }
+      const row = el('div', 'set-row tym-btns');
+      const btn = (label, title, fn) => {
+        const b = el('button', 'btn ghost', label);
+        b.title = title;
+        b.onclick = fn;
+        row.appendChild(b);
+      };
+      btn('Nové heslo', 'Vymyslí nové heslo a ukáže ho, ať ho předáš. Staré přestane platit.', () => {
+        if (!confirm(`Vytvořit ${p.name || p.email} nové heslo? Odhlásí se na všech zařízeních.`)) return;
+        doIt({akce: 'heslo', id: p.id}, (out) => showPassword(out.email, out.heslo, false));
+      });
+      if (p.overeni) {
+        btn('Ztratil telefon', 'Zruší ověření v telefonu — při dalším přihlášení si ho nastaví znovu.', () => {
+          if (!confirm(`Zrušit ${p.name || p.email} ověření v telefonu? Při dalším přihlášení si ho nastaví znovu.`)) return;
+          doIt({akce: 'overeni', id: p.id}, () => io.toast('Hotovo — při přihlášení si nastaví telefon znovu.'));
+        });
+      }
+      if (p.id !== me) {
+        btn(p.role === 'admin' ? 'Udělat členem' : 'Udělat správcem',
+            'Správce smí spravovat tým a přístupy k firemním poznámkám.', () =>
+          doIt({akce: 'role', id: p.id, role: p.role === 'admin' ? 'user' : 'admin'}));
+      }
+      btn(p.spravce ? 'Nesmí určovat, kdo co vidí' : 'Smí určovat, kdo co vidí',
+          'Kdo to smí, u firemní poznámky a složky vybírá, kdo ji uvidí — a vidí všechny firemní poznámky.', () =>
+        doIt({akce: 'spravce', id: p.id, zapnout: !p.spravce}));
+      if (p.id !== me) {
+        btn(p.blokovany ? 'Odblokovat' : 'Zablokovat',
+            p.blokovany ? 'Znovu se bude moct přihlásit.' : 'Nebude se moct přihlásit (data zůstanou).', () => {
+          if (!p.blokovany && !confirm(`Zablokovat ${p.name || p.email}? Nebude se moct přihlásit, jeho data zůstanou.`)) return;
+          doIt({akce: 'blokovat', id: p.id, zapnout: !p.blokovany});
+        });
+      }
+      card.appendChild(row);
+      return card;
+    }
+
+    async function load() {
+      let data;
+      try {
+        data = await gw();
+      } catch (err) {
+        list.textContent = '';
+        list.appendChild(el('div', 'set-note', err.message));
+        return;
+      }
+      list.textContent = '';
+      for (const p of data.lide || []) list.appendChild(person(p, data.ja));
+      list.appendChild(el('div', 'set-note',
+        'Kdo vidí firemní poznámky, nastavíš ve firemních poznámkách tlačítkem Přístupy. ' +
+        'Smazat účet úplně jde jen na serveru (je to nevratné).'));
+    }
+    list.appendChild(el('div', 'set-note', 'Načítám…'));
+    load();
     return box;
   }
 
@@ -430,7 +625,7 @@
 
     const vaults = (state.vaults || []).filter(v => v.path !== state.config.brain_dir);
     if (vaults.length) {
-      box.appendChild(el('div', 'set-note', 'Napojit jiný Obsidian vault:'));
+      box.appendChild(el('div', 'set-note', 'Použít jinou složku s poznámkami:'));
       const list = el('div', 'onb-list');
       for (const v of vaults) {
         const row = el('div', 'onb-row');
@@ -502,7 +697,7 @@
     col.appendChild(el('small', null,
       'Po skončení práce (zavřený tab, konec session nebo 20 minut ticha) si ' +
       'Claude na pozadí doplní poznámku k projektu a to, co stojí za zapamatování. ' +
-      'Nemusíš klikat na Uložit ani psát /save. Jedno uložení bere zhruba tolik ' +
+      'Nemusíš nic ukládat. Jedno uložení bere zhruba tolik ' +
       'jako jedna delší odpověď.'));
     row.appendChild(col);
     wrap.appendChild(row);
@@ -586,7 +781,7 @@
       col.appendChild(head);
       col.appendChild(el('small', null, a.path
         ? (a.note || a.path)
-        : (a.install ? 'není nainstalovaný — ' + a.install : 'není nainstalovaný')));
+        : 'není nainstalovaný'));
       r.append(dot, col, el('span', 'spacer'));
 
       if (!a.path && a.install) {
@@ -758,8 +953,8 @@
           headers: {'Content-Type': 'application/json', 'X-Hub-Account': '1'},
           body: JSON.stringify(payload),
         });
-        const data = await r.json().catch(() => ({error: 'HTTP ' + r.status}));
-        if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || 'Server teď neodpovídá, zkus to za chvíli.');
         return data;
       };
 
@@ -992,8 +1187,8 @@
         headers: {'Content-Type': 'application/json', 'X-Hub-Account': '1'},
         body: JSON.stringify(payload),
       });
-      const data = await r.json().catch(() => ({error: 'HTTP ' + r.status}));
-      if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || 'Server teď neodpovídá, zkus to za chvíli.');
       return data;
     };
     // Claude Code v prostoru si most zaregistruje (nebo odebere) hned.
@@ -1132,6 +1327,7 @@
       c.appendChild(form);
       const pick = el('select', 'set-input');
       for (const [id, t] of Object.entries(SHARED_TEMPLATES)) {
+        if (!advanced() && id !== 'wordpress') continue;   // vlastní adresa/příkaz = technika
         const o = el('option', null, t.label);
         o.value = id;
         pick.appendChild(o);
@@ -1520,10 +1716,9 @@
   }
 
   function napojeni() {
-    const box = section('Napojení (MCP) — Claude Code',
-      'Služby, do kterých Claude Code vidí — konektory z účtu claude.ai i ' +
-      'servery zaregistrované na tomhle stroji. Kontrola se každého zeptá, ' +
-      'takže je vidět i to, co je sice zapsané, ale nefunguje.');
+    const box = section('Propojené služby',
+      'Služby, se kterými Claude umí pracovat — e-mail, kalendář, úkoly… ' +
+      'Přidáš je tlačítkem u služby a přihlásíš se jako obvykle.');
 
     const acct = el('div', 'mcp-acct');
     const summary = el('div', 'set-row');
@@ -1534,12 +1729,12 @@
     btns.appendChild(check);
     box.appendChild(sluzby());
     if (state.config && state.config.gateway_user) box.appendChild(sdilenaNapojeni());
-    box.appendChild(el('div', 'set-title svc-tech', 'Všechna napojení'));
-    box.appendChild(acct);
-    box.appendChild(summary);
-    box.appendChild(list);
-    box.appendChild(store);
-    box.appendChild(btns);
+    // Technický přehled (všechny MCP servery, katalog) jen pro pokročilé.
+    const tech = el('div');
+    tech.hidden = !advanced();
+    tech.appendChild(el('div', 'set-title svc-tech', 'Všechna napojení'));
+    tech.append(acct, summary, list, store, btns);
+    box.appendChild(tech);
 
     function busy(text) {
       summary.textContent = '';
@@ -1568,7 +1763,7 @@
       acct.appendChild(col);
       acct.appendChild(el('span', 'spacer'));
       const swap = el('button', 'btn ghost', a && a.email ? 'Přepnout účet' : 'Přihlásit');
-      swap.title = 'Otevře Claude Code s /login. Jiný účet = jiné konektory ' +
+      swap.title = 'Přihlásí Claude k jinému účtu. Jiný účet = jiné konektory ' +
                    '(třeba druhá gmailová schránka).';
       swap.onclick = () => { close(); io.login(); };
       acct.appendChild(swap);
@@ -1749,6 +1944,7 @@
       };
       where.appendChild(folder);
       scope.onchange = () => { folder.hidden = scope.value !== 'project'; };
+      where.hidden = !advanced();        // jednoduchý režim: platí všude
       form.appendChild(where);
 
       const go = el('button', 'btn primary', 'Napojit');
@@ -1769,7 +1965,7 @@
         const values = {};
         for (const [name, input] of inputs) {
           const v = input.value.trim();
-          if (!v) { io.toast('Vyplň ' + name + '.'); input.focus(); return; }
+          if (!v) { io.toast('Vyplň všechna pole.'); input.focus(); return; }
           values[name] = v;
         }
         if (scope.value === 'project' && !path) {
@@ -1834,10 +2030,10 @@
   function aktualizaceServer() {
     const box = section('Aktualizace aplikace',
       'Novou verzi si server připraví sám, na pozadí — tvému prostoru se nic ' +
-      'nevymění pod rukama. Když je hotová, hub nabídne Aktualizovat: prostor ' +
-      'se přepne a taby se vrátí i s konverzacemi.');
+      'nevymění pod rukama. Když je hotová, aplikace nabídne Aktualizovat: ' +
+      'přepne se a otevřené rozhovory se vrátí.');
     const row = el('div', 'set-row');
-    row.appendChild(el('span', 'set-ver', 'Tvůj prostor jede na: ' + state.version.version));
+    row.appendChild(el('span', 'set-ver', 'Tvoje verze: ' + state.version.version));
     box.appendChild(row);
     // Připravenou novější verzi jde zapnout i odsud (hub.js, hubServerUpdate).
     fetch('/gw/verze', {credentials: 'same-origin'})
@@ -1872,7 +2068,7 @@
   function hlas() {
     const box = section('Hlas',
       'Diktování (mikrofon v poli na psaní) a předčítání Claudových odpovědí — ' +
-      'česky. Přepis dělá Whisper a hlas Piper přímo na ' +
+      'česky. Přepis i hlas běží přímo na ' +
       (state.config && state.config.gateway_user ? 'serveru' : 'tomhle počítači') +
       '; nic neodchází ven.');
     const status = el('div', 'set-status', 'Zjišťuju…');
@@ -1940,8 +2136,8 @@
         status.textContent = 'Instalace se nepovedla: ' + (job.result.detail || '');
       } else if (!s.can_install) {
         status.className = 'set-status warn';
-        status.textContent = 'Na serveru hlas ještě není — nainstaluje se s další ' +
-          'aktualizací serveru (claude-hub-update).';
+        status.textContent = 'Na serveru hlas ještě není — přibude s další ' +
+          'aktualizací serveru.';
         return;
       } else {
         status.className = 'set-status';
@@ -1963,8 +2159,8 @@
   function aktualizace() {
     if (state.config && state.config.gateway_user) return aktualizaceServer();
     const box = section('Aktualizace aplikace',
-      'Stáhne novou verzi hubu a přeinstaluje ji. (Tlačítko ⟳ v hlavičce jen ' +
-      'znovu načte projekty — s tímhle nemá nic společného.)');
+      'Stáhne novou verzi aplikace a nainstaluje ji. Otevřené rozhovory se po ' +
+      'restartu vrátí.');
     const info = el('span', 'set-ver', 'Nainstalováno: ' + state.version.version);
     const infoRow = el('div', 'set-row');
     infoRow.appendChild(info);
@@ -1989,11 +2185,11 @@
           status.textContent = v.why || 'Nepodařilo se zjistit.';
         } else if (v.update_available) {
           status.className = 'set-status warn';
-          status.textContent = `Na GitHubu je nová verze ${v.latest} (máš ${v.version}).`;
+          status.textContent = `Je k dispozici nová verze ${v.latest} (máš ${v.version}).`;
           doIt.hidden = false;
         } else {
           status.className = 'set-status ok';
-          status.textContent = `Na GitHubu je ${v.latest} — máš nejnovější verzi.`;
+          status.textContent = `Máš nejnovější verzi (${v.version}).`;
         }
       } catch (err) {
         status.className = 'set-status warn';
@@ -2036,7 +2232,7 @@
             const res = await io.api('restart');
             status.textContent = res && res.tabs
               ? `✓ Verze ${r.now}. Restartuju a vracím ${res.tabs} ` +
-                (res.tabs === 1 ? 'tab…' : res.tabs < 5 ? 'taby…' : 'tabů…')
+                (res.tabs === 1 ? 'rozhovor…' : res.tabs < 5 ? 'rozhovory…' : 'rozhovorů…')
               : `✓ Verze ${r.now}. Restartuju…`;
           } catch (err) {
             status.className = 'set-status warn';
@@ -2093,7 +2289,8 @@
     }).catch(() => {});
 
     // Co v které verzi přibylo — vydání na GitHubu.
-    const gh = el('button', 'actionbtn', 'Vydání na GitHubu');
+    const gh = el('button', 'actionbtn', 'Co je nového');
+    gh.hidden = !advanced();
     gh.onclick = () => io.open('https://github.com/' +
       ((state.version && state.version.repo) || 'jurapascal/claude-code-hub') + '/releases');
 

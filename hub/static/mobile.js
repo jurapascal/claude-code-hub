@@ -136,7 +136,7 @@
       };
       const x = document.createElement('button');
       x.className = 'open-x';
-      x.title = 'Zavřít tab';
+      x.title = 'Zavřít rozhovor';
       x.innerHTML = '<svg class="ico"><use href="#i-close"/></svg>';
       x.onclick = () => { const c = t.querySelector('.tab-close'); if (c) c.click(); };
       // Podržení (níž) pošle contextmenu — u tabu v šuplíku taky přejmenuje.

@@ -112,6 +112,16 @@ dělá jednu aplikaci:
   (sdílené Obsidiany, vidí je jen jejich členové) a firemní složky. Správci
   poznámek u firemní složky vyberou, kdo ji vidí (tlačítko **Vidí…** u složky);
   platí to i na všechno, co do ní později přibude.
+- **Jednoduchý režim** — aplikace se chová jako chat s Claudem: žádný terminál,
+  modely, příkazy ani tokeny, srozumitelné texty a všechno na kliknutí.
+  Nástroje pro programátory zapneš v Nastavení → **Pro pokročilé**. Na serveru
+  je jednoduchý režim výchozí pro všechny.
+- **Tým naklikáním** — admin v Nastavení → **Tým** pozve člověka (heslo vymyslí
+  server), vytvoří nové heslo, zruší ověření při ztraceném telefonu, nastaví
+  správce, určí, kdo smí nastavovat viditelnost firemních poznámek, zablokuje
+  účet nebo odemkne zamčené přihlášení.
+- **Sdílené poznámky naklikáním** — tlačítko **+ Nové sdílené poznámky**, u každých
+  pak ⋯ → kdo je vidí / odejít / smazat.
 - **Pokračuje, kde jsi skončil** — zavřeš appku (na počítači) nebo se prostor na
   serveru uspí, a po dalším otevření jsou zpátky všechny taby, Claude v nich
   navazuje na svou konverzaci (`--resume`), vybraný je tab, na kterém jsi byl,

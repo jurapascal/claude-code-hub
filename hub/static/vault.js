@@ -334,8 +334,8 @@
           : (special.members || []).join(', ');
         const tag = node('span', 'vault-badge', special.kind === 'osobni' ? '🔒 jen ty' : '👥 ' + (special.members || []).length);
         tag.title = special.kind === 'osobni'
-          ? 'Tvůj osobní Obsidian — vidíš ho jen ty, ukládá se rovnou.'
-          : 'Sdílený Obsidian „' + (special.name || d.name) + '“ — vidí: ' + who + '. Členy mění ten, kdo ho založil (Sdílené Obsidiany).';
+          ? 'Tvoje osobní poznámky — vidíš je jen ty, ukládají se hned.'
+          : 'Sdílené poznámky „' + (special.name || d.name) + '“ — vidí: ' + who + '. Kdo je vidí, mění ten, kdo je založil (tlačítko ⋯ u Sdílených poznámek).';
         sum.appendChild(tag);
       } else if (restricted(d.path)) {
         const tag = node('span', 'vault-badge', '🔒');
@@ -594,7 +594,7 @@
       onOpenNote: (target) => {
         const path = resolveNote(target);
         if (path) { setMode('read'); load(path); }
-        else io.toast('Poznámka „' + target + '" v trezoru není.');
+        else io.toast('Poznámka „' + target + '" tu (zatím) není.');
       },
     });
     // Editor vzniká ve chvíli, kdy je jeho místo teprve odkryté — bez přeměření
@@ -652,10 +652,89 @@
     }
   }
 
+  /* Okno „kam": výběr složky ze seznamu (a jméno) místo psaní cesty.
+     Vrací {folder, name} nebo null. */
+  function allFolders() {
+    const set = new Set();
+    for (const p of [...notes.map((n) => n.path), ...files.map((f) => f.path)]) {
+      const parts = p.split('/').slice(0, -1);
+      for (let i = 1; i <= parts.length; i++) set.add(parts.slice(0, i).join('/'));
+    }
+    for (const l of links) set.add(l.path);
+    // Do cizích složek ani do kořene Lidé/Sdílené se zapisovat nedá.
+    return [...set].filter((d) => d !== 'Lidé' && d !== 'Sdílené')
+      .sort((a, b) => a.localeCompare(b, 'cs'));
+  }
+
+  function placeDialog({title, withName, name = '', folder = '', ok}) {
+    return new Promise((resolve) => {
+      const wrap = node('div', 'onb set-modal vault-access-modal' + (io && io.vault === 'firma' ? ' firma' : ''));
+      wrap.innerHTML = `
+        <div class="onb-box acc-box">
+          <div class="onb-head"><div><div class="onb-title"></div></div>
+            <span class="spacer"></span><button class="set-x pl-close" title="Zavřít">×</button></div>
+          <div class="acc-list">
+            <label class="mcp-field pl-name"><span>Jméno</span><input class="set-input"></label>
+            <label class="mcp-field"><span>Složka</span><select class="set-input pl-folder"></select></label>
+            <label class="mcp-field pl-new" hidden><span>Jméno nové složky</span><input class="set-input"></label>
+          </div>
+          <div class="who-foot"><button class="btn ghost pl-close">Zrušit</button><button class="btn pl-ok"></button></div>
+        </div>`;
+      wrap.querySelector('.onb-title').textContent = title;
+      wrap.querySelector('.pl-ok').textContent = ok;
+      const nameIn = wrap.querySelector('.pl-name input');
+      wrap.querySelector('.pl-name').hidden = !withName;
+      nameIn.value = name;
+      const sel = wrap.querySelector('.pl-folder');
+      const opt = (value, label) => {
+        const o = node('option', '', label);
+        o.value = value;
+        sel.appendChild(o);
+      };
+      opt('', 'Hlavní složka');
+      for (const d of allFolders()) {
+        const depth = d.split('/').length - 1;
+        opt(d, '\u00a0\u00a0'.repeat(depth) + d.split('/').pop());
+      }
+      opt('\u0000new', '+ Nová složka…');
+      sel.value = allFolders().includes(folder) ? folder : '';
+      const newRow = wrap.querySelector('.pl-new');
+      sel.onchange = () => {
+        newRow.hidden = sel.value !== '\u0000new';
+        if (!newRow.hidden) newRow.querySelector('input').focus();
+      };
+      const done = (v) => { wrap.remove(); resolve(v); };
+      for (const b of wrap.querySelectorAll('.pl-close')) b.onclick = () => done(null);
+      wrap.addEventListener('click', (ev) => { if (ev.target === wrap) done(null); });
+      const submit = () => {
+        let dir = sel.value;
+        if (dir === '\u0000new') {
+          const fresh = newRow.querySelector('input').value.trim().replace(/[\\/]+/g, '-');
+          if (!fresh) return io.toast('Napiš jméno nové složky.');
+          // Nová složka vzniká v hlavní úrovni — tam ji člověk hledá.
+          // Ve firemních poznámkách v Lidé/<já>, když zrovna pracuje tam.
+          const own = links.find((l) => l.kind === 'osobni' && (folder + '/').startsWith(l.path + '/'));
+          dir = (own ? own.path + '/' : '') + fresh;
+        }
+        const n = nameIn.value.trim().replace(/[\\/]+/g, '-');
+        if (withName && !n) return io.toast('Napiš jméno.');
+        done({folder: dir, name: n});
+      };
+      wrap.querySelector('.pl-ok').onclick = submit;
+      wrap.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') submit();
+        if (ev.key === 'Escape') { ev.stopPropagation(); done(null); }
+      });
+      document.body.appendChild(wrap);
+      (withName ? nameIn : sel).focus();
+    });
+  }
+
   async function newNote() {
-    const name = (prompt('Jméno nové poznámky (může být i se složkou):', '') || '').trim();
-    if (!name) return;
-    const path = name.replace(/\.md$/i, '') + '.md';
+    const got = await placeDialog({title: 'Nová poznámka', withName: true, ok: 'Vytvořit',
+                                   folder: defaultFolder()});
+    if (!got) return;
+    const path = (got.folder ? got.folder + '/' : '') + got.name.replace(/\.md$/i, '') + '.md';
     if (notes.some((n) => n.path.toLowerCase() === path.toLowerCase())) {
       io.toast('Taková poznámka už tu je.');
       return load(path);
@@ -677,9 +756,12 @@
   async function renameNote() {
     if (!current || proposes() || !canEdit()) return;
     const was = current;
-    const name = (prompt('Nové jméno poznámky (může být i se složkou):',
-                         was.replace(/\.md$/i, '')) || '').trim();
-    if (!name || name === was.replace(/\.md$/i, '')) return;
+    const dir = was.includes('/') ? was.split('/').slice(0, -1).join('/') : '';
+    const got = await placeDialog({title: 'Přejmenovat nebo přesunout', withName: true,
+                                   name: baseName(was), folder: dir, ok: 'Uložit'});
+    if (!got) return;
+    const name = (got.folder ? got.folder + '/' : '') + got.name.replace(/\.md$/i, '');
+    if (name === was.replace(/\.md$/i, '')) return;
     if (dirty) await saveNow();
     let res;
     try {
@@ -704,7 +786,7 @@
   async function deleteNote() {
     if (!current || proposes() || !canEdit()) return;
     const was = current;
-    if (!confirm(`Smazat poznámku „${baseName(was)}“? Přesune se do koše trezoru (.trash).`)) return;
+    if (!confirm(`Smazat poznámku „${baseName(was)}“? Přesune se do koše — dá se vrátit.`)) return;
     clearTimeout(saveTimer);
     dirty = false;
     let res;
@@ -721,7 +803,7 @@
     back = back.filter((p) => p !== was);
     current = '';
     renderList();
-    io.toast('Poznámka je v koši trezoru (.trash).');
+    io.toast('Poznámka je v koši.');
     const next = back.pop() || (notes[0] && notes[0].path);
     if (next) return load(next, {remember: false});
     setMode('read');
@@ -779,7 +861,7 @@
     }
     const data = await res.json().catch(() => ({}));
     if (res.status === 409 || data.exists) return {exists: true};
-    if (!res.ok || !data.ok) throw new Error(data.error || 'Server odpověděl ' + res.status);
+    if (!res.ok || !data.ok) throw new Error(data.error || 'Nahrání se nepovedlo, zkus to znovu.');
     return data;
   }
 
@@ -795,7 +877,7 @@
       try {
         let out = await sendFile(file, rel, false);
         if (out.exists) {
-          if (!confirm(`„${rel}“ už v trezoru je. Přepsat?`)) continue;
+          if (!confirm(`„${rel}“ už tu je. Přepsat?`)) continue;
           out = await sendFile(file, rel, true);
         }
         done++;
@@ -913,7 +995,7 @@
     const local = node('label', 'graph-row');
     local.appendChild(node('span', '', 'Okolí otevřené'));
     const depth = document.createElement('select');
-    for (const [v, t] of [[0, 'celý trezor'], [1, '1 krok'], [2, '2 kroky'], [3, '3 kroky']]) {
+    for (const [v, t] of [[0, 'všechno'], [1, '1 krok'], [2, '2 kroky'], [3, '3 kroky']]) {
       const o = document.createElement('option');
       o.value = String(v); o.textContent = t;
       depth.appendChild(o);
@@ -1043,7 +1125,7 @@
       body: body ? JSON.stringify(body) : undefined,
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'Brána odpověděla ' + res.status);
+    if (!res.ok) throw new Error(data.error || 'Server teď neodpovídá, zkus to za chvíli.');
     return data;
   }
 
@@ -1053,9 +1135,9 @@
       <div class="onb-box acc-box">
         <div class="onb-head">
           <div>
-            <div class="onb-title">Přístupy k firemnímu Obsidianu</div>
-            <div class="onb-sub">Admini mají přístup vždycky. Změna platí hned;
-              kdo přístup nově dostal, uvidí trezor po restartu svého prostoru.</div>
+            <div class="onb-title">Kdo vidí firemní poznámky</div>
+            <div class="onb-sub">Správci je vidí vždycky. Změna platí hned;
+              kdo přístup nově dostal, uvidí poznámky po restartu svého prostoru.</div>
           </div>
           <span class="spacer"></span>
           <button class="set-x acc-close" title="Zavřít (Esc)">×</button>
@@ -1084,7 +1166,7 @@
       who.append(node('strong', '', p.name || p.email), node('span', 'acc-mail', p.email));
       row.appendChild(who);
       if (p.role === 'admin') {
-        row.appendChild(node('span', 'acc-admin', 'admin · čte i zapisuje'));
+        row.appendChild(node('span', 'acc-admin', 'správce · čte i upravuje'));
       } else {
         const sel = node('div', 'acc-seg');
         for (const [lvl, label] of LEVELS) {
@@ -1131,7 +1213,7 @@
       body: body ? JSON.stringify(body) : undefined,
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'Brána odpověděla ' + res.status);
+    if (!res.ok) throw new Error(data.error || 'Server teď neodpovídá, zkus to za chvíli.');
     return data;
   }
 
@@ -1215,7 +1297,7 @@
       wrap.querySelector('.who-hint').textContent = only
         ? what + ' uvidí jen zaškrtnutí a správci poznámek. Ostatní ' + (folder ? 'ji i se vším, co v ní je (i s tím, co přibude),' : 'ji') +
           ' ve svém prostoru nebudou mít vůbec — ani Claude.'
-        : what + ' vidí každý, kdo vidí firemní Obsidian' + (folder ? ' (omezené poznámky v ní dál jen vybraní).' : '.');
+        : what + ' vidí každý, kdo vidí firemní poznámky' + (folder ? ' (omezené poznámky v ní dál jen vybraní).' : '.');
       list.hidden = !only;
     };
     for (const b of wrap.querySelectorAll('.who-mode .acc-opt')) {
@@ -1234,7 +1316,7 @@
         row.appendChild(node('span', 'acc-admin', 'správce · vidí vždy'));
       } else if (p.firma === 'none') {
         box_.disabled = true;
-        row.appendChild(node('span', 'acc-admin', 'nevidí firemní Obsidian'));
+        row.appendChild(node('span', 'acc-admin', 'nevidí firemní poznámky'));
       } else {
         box_.checked = chosen.has(p.email);
         box_.onchange = () => (box_.checked ? chosen.add(p.email) : chosen.delete(p.email));
@@ -1351,9 +1433,10 @@
       const picked = [...ev.target.files];
       ev.target.value = '';
       if (!picked.length) return;
-      const folder = prompt('Do které složky? (prázdné = hlavní složka trezoru)', defaultFolder());
-      if (folder === null) return;
-      uploadFiles(picked, folder);
+      placeDialog({title: picked.length === 1 ? 'Nahrát „' + picked[0].name + '“'
+                                              : 'Nahrát ' + picked.length + ' soubory',
+                   ok: 'Nahrát', folder: defaultFolder()})
+        .then((got) => { if (got) uploadFiles(picked, got.folder); });
     };
     // Přetažení souborů na seznam: do složky, na kterou se pustily.
     const nav = q('.vault-nav');
@@ -1396,7 +1479,7 @@
       if (a.classList.contains('vault-ext')) return io.openLink(a.dataset.href);
       if (a.dataset.note) return load(a.dataset.note, {heading: a.dataset.heading});
       if (a.dataset.heading) return scrollToHeading(a.dataset.heading);
-      io.toast('Poznámka „' + a.textContent + '" v trezoru není.');
+      io.toast('Poznámka „' + a.textContent + '" tu (zatím) není.');
     });
     if (io.obsidian) {
       const app = q('.vault-app');
@@ -1410,8 +1493,8 @@
     } catch (err) {
       if (!box) return;
       q('.onb-sub').textContent = '';
-      failure('Náhled trezoru se nepodařilo načíst (' + err.message + '). ' +
-              'Po aktualizaci ho hub umí až po restartu — na serveru nejpozději ráno.');
+      console.error(err);
+      failure('Poznámky se teď nepodařilo načíst. Zkus to prosím za chvíli znovu.');
       return;
     }
     if (!box) return;
@@ -1426,12 +1509,13 @@
       const path = imageOf(name);
       return path ? io.fileUrl(path) : '';
     };
-    q('.onb-title').textContent = io.title || ('Osobní Obsidian — ' + (tree.name || 'trezor'));
-    q('.onb-sub').textContent = tree.exists === false ? 'trezor nenalezen' : plural(notes.length);
+    q('.onb-title').textContent = io.title || 'Moje poznámky';
+    q('.onb-sub').textContent = tree.exists === false ? 'složka s poznámkami chybí' : plural(notes.length);
     renderList();
     loadAcl();
     if (!notes.length) {
-      failure(tree.exists === false ? 'Složka trezoru neexistuje.' : 'V trezoru zatím nejsou žádné poznámky.');
+      failure(tree.exists === false ? 'Složka s poznámkami chybí.'
+        : 'Zatím tu nejsou žádné poznámky — vytvoř první tlačítkem + Nová, nebo nahraj soubor.');
       return;
     }
     const has = (p) => notes.some((n) => n.path === p);

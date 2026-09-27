@@ -506,11 +506,28 @@ background:#e0a458;color:#1a1710;font-weight:600;text-decoration:none}
 """ + body + "</html>").encode("utf-8")
 
 
+def error_page(message):
+    """Chyba, kterou uvidí člověk v prohlížeči — věta a tlačítko zkusit znovu."""
+    return _page("Chvilku strpení — Claude Hub", f"""
+<div class=card>
+<h1>Chvilku strpení</h1>
+<p class=sub>{html.escape(message)}</p>
+<a class=button href="">Zkusit znovu</a>
+</div>""")
+
+
+# Lidské věty místo technických hlášek (detail jde do err.log přes _errlog).
+MSG_STARTING = "Tvůj prostor se právě spouští — obnov stránku za chvíli."
+MSG_FULL = "Server je teď plný, zkus to za pár minut."
+MSG_BROKEN = "Něco se pokazilo. Zkus to prosím za chvíli znovu."
+MSG_SAVE = "Uložit se nepodařilo. Zkus to prosím za chvíli znovu."
+
+
 def login_page(error=""):
     err = f'<div class=err>{html.escape(error)}</div>' if error else ''
-    return _page("Přihlášení — Code Hub", f"""
+    return _page("Přihlášení — Claude Hub", f"""
 <form class=card method=post action="/login">
-<h1>Code Hub</h1>
+<h1>Claude Hub</h1>
 <p class=sub>Přihlaš se ke svému účtu na serveru.</p>
 <label>E-mail</label>
 <input name=email type=email autocomplete=username autofocus required>
@@ -524,7 +541,7 @@ def login_page(error=""):
 def code_page(ticket, error=""):
     """Druhý krok přihlášení: kód z aplikace (nebo záložní kód)."""
     err = f'<div class=err>{html.escape(error)}</div>' if error else ''
-    return _page("Ověření — Code Hub", f"""
+    return _page("Ověření — Claude Hub", f"""
 <form class=card method=post action="/login/2fa">
 <h1>Ověření</h1>
 <p class=sub>Opiš šesticiferný kód z aplikace v mobilu
@@ -543,7 +560,7 @@ def setup_page(ticket, secret, email, error=""):
     """Při prvním přihlášení: zapnutí dvoufázového ověření."""
     err = f'<div class=err>{html.escape(error)}</div>' if error else ''
     svg = qr.svg(totp.uri(secret, email), quiet=2, scale=5)
-    return _page("Dvoufázové ověření — Code Hub", f"""
+    return _page("Dvoufázové ověření — Claude Hub", f"""
 <form class="card wide" method=post action="/login/2fa">
 <h1>Zapni dvoufázové ověření</h1>
 <p class=sub>Přihlášení na server teď chce kromě hesla i kód z telefonu.</p>
@@ -567,7 +584,7 @@ def setup_page(ticket, secret, email, error=""):
 def recovery_page(codes):
     """Záložní kódy hned po zapnutí ověřování — ukážou se jen tady."""
     items = "".join(f"<code>{html.escape(c)}</code>" for c in codes)
-    return _page("Záložní kódy — Code Hub", f"""
+    return _page("Záložní kódy — Claude Hub", f"""
 <div class="card wide">
 <h1>Záložní kódy</h1>
 <p class=sub>Když ztratíš telefon, přihlásíš se jedním z nich — každý platí
@@ -654,6 +671,17 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, obj, code=200):
         self._send(code, json.dumps(obj, ensure_ascii=False),
                    "application/json; charset=utf-8")
+
+    def _fail(self, code, message):
+        """Chyba pro člověka: navigaci prohlížeče stylovaná stránka, volání
+        z hubu JSON, ostatním (WebSocket, curl) prostý text. Stavový kód
+        zůstává, jak ho volající poslal."""
+        accept = self.headers.get("Accept") or ""
+        if self.command == "GET" and "text/html" in accept:
+            return self._send(code, error_page(message), HTML)
+        if self._wants_json():
+            return self._json({"error": message}, code)
+        return self._send(code, message)
 
     def _redirect(self, where, extra=None):
         self._send(303, b"", extra={"Location": where, **(extra or {})})
@@ -745,7 +773,7 @@ class Handler(BaseHTTPRequestHandler):
                 # Navigaci pošli na přihlášení, API/WS ať dostane jasné 401.
                 if method == "GET" and "text/html" in self.headers.get("Accept", ""):
                     return self._redirect("/login")
-                return self._send(401, b"Neprihlaseno.")
+                return self._fail(401, "Nejsi přihlášený. Přihlas se prosím znovu.")
 
             if route == "/gw/firma/publish":
                 return self._firma_publish(method, user)
@@ -764,7 +792,11 @@ class Handler(BaseHTTPRequestHandler):
             if route == "/gw/2fa/recovery":
                 return self._gw_recovery(method, user)
             if route == "/gw/sdilene":
+                if method == "POST":
+                    return self._gw_shared_change(user)
                 return self._gw_shared(user)
+            if route == "/gw/tym":
+                return self._gw_team(method, user)
             if route == "/gw/mcp-sdilene":
                 return self._mcp_shared(method, user)
             if route == "/gw/restart":
@@ -788,7 +820,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             _errlog("route " + self.path, exc)
             try:
-                self._json({"error": f"Brána: {exc}"}, 502)
+                self._fail(502, MSG_BROKEN)
             except Exception:
                 pass
 
@@ -866,7 +898,7 @@ class Handler(BaseHTTPRequestHandler):
         if method != "POST":
             return self._json({"error": "Jen POST."}, 405)
         if not self._same_origin() or self.headers.get("X-Hub-Firma") != "1":
-            return self._json({"error": "Nahrát jde jen tlačítkem v hubu."}, 403)
+            return self._json({"error": "Nahrát jde jen tlačítkem v aplikaci."}, 403)
         form = self._read_form()
         try:
             result = workspace.apply_proposal(user, form.get("id", ""),
@@ -875,7 +907,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(exc)}, 400)
         except OSError as exc:
             _errlog("firma publish", exc)
-            return self._json({"error": f"Uložit se nepodařilo: {exc}"}, 500)
+            return self._json({"error": MSG_SAVE}, 500)
         # Odebraní ze sdíleného Obsidianu: kdo zrovna nepracuje, tomu se prostor
         # zastaví hned (přístup zmizí); ostatním při dalším startu.
         if self.hubs:
@@ -896,7 +928,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "Jen GET nebo POST."}, 405)
         form = self._read_form()
         if not self._account_post_ok():
-            return self._json({"error": "Přístupy jde měnit jen v hubu."}, 403)
+            return self._json({"error": "Přístupy jde měnit jen v aplikaci."}, 403)
         try:
             target, old = self.accounts.set_company_level(
                 user, form.get("id"), str(form.get("level") or ""))
@@ -1180,7 +1212,7 @@ class Handler(BaseHTTPRequestHandler):
         if method != "POST":
             return self._json({"error": "Jen POST."}, 405)
         if not self._account_post_ok():
-            return self._json({"error": "Heslo jde změnit jen v nastavení hubu."}, 403)
+            return self._json({"error": "Heslo jde změnit jen v nastavení aplikace."}, 403)
         keys = self._fail_keys(user["email"])
         wait = self.accounts.fail_wait(keys)
         if wait:
@@ -1209,7 +1241,7 @@ class Handler(BaseHTTPRequestHandler):
         if method != "POST":
             return self._json({"error": "Jen POST."}, 405)
         if not self._account_post_ok():
-            return self._json({"error": "Kódy jde vygenerovat jen v nastavení hubu."}, 403)
+            return self._json({"error": "Kódy jde vygenerovat jen v nastavení aplikace."}, 403)
         keys = self._fail_keys(user["email"])
         wait = self.accounts.fail_wait(keys)
         if wait:
@@ -1235,6 +1267,56 @@ class Handler(BaseHTTPRequestHandler):
         gone = sorted(bound - {v["slug"] for v in vaults}) if bound else []
         return self._json({"vaults": vaults, "people": shared.people(), "gone": gone})
 
+    def _gw_shared_change(self, user):
+        """Sdílené Obsidiany naklikáním (panel v hubu): založit, členové,
+        odejít, smazat. Oprávnění ověřuje shared.py podle registru."""
+        form = self._read_form()
+        if not self._account_post_ok():
+            return self._json({"error": "Tohle jde jen v hubu."}, 403)
+        action = str(form.get("akce") or "")
+        try:
+            if action == "zalozit":
+                result = shared.create(user, form.get("nazev"), form.get("emaily") or [])
+            elif action == "clenove":
+                result = shared.change_members(user, form.get("slug"), form.get("pridat") or [],
+                                               form.get("odebrat") or [])
+            elif action == "odejit":
+                result = shared.leave(user, form.get("slug"))
+            elif action == "smazat":
+                result = shared.delete(user, form.get("slug"))
+            else:
+                return self._json({"error": "Neznámá akce."}, 400)
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, 400)
+        except OSError as exc:
+            _errlog("sdílené obsidiany", exc)
+            return self._json({"error": "Nepodařilo se to uložit, zkus to prosím znovu."}, 500)
+        try:
+            slozky.sync()                    # Sdílené/<název> ve firemním trezoru
+        except (OSError, ValueError):
+            pass
+        if self.hubs:
+            for uid in result.get("revoked") or []:
+                self.hubs.stop_idle(uid)
+        return self._json({"ok": True, "message": result.get("message", "")})
+
+    def _gw_team(self, method, user):
+        """Nastavení → Tým: lidé a jejich účty. Jen admin, změny jen z hubu."""
+        from . import tym
+        if user.get("role") != "admin":
+            return self._json({"error": "Tým spravují admini."}, 403)
+        if method == "GET":
+            return self._json({"lide": tym.people(self.accounts, self.hubs), "ja": user["id"]})
+        if method != "POST":
+            return self._json({"error": "Jen GET nebo POST."}, 405)
+        form = self._read_form()
+        if not self._account_post_ok():
+            return self._json({"error": "Tým jde měnit jen v hubu."}, 403)
+        try:
+            return self._json(tym.act(self.accounts, user, form, self.hubs))
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, 400)
+
     def _gw_restart(self, method, user):
         """Restart vlastního prostoru z hubu (nové sdílené Obsidiany, přepnutí
         na novou verzi)."""
@@ -1245,7 +1327,7 @@ class Handler(BaseHTTPRequestHandler):
         # („{}GET …" → 501) — a tím je hned načtení stránky po restartu.
         self._read_form()
         if not self._account_post_ok():
-            return self._json({"error": "Restart jde jen z hubu."}, 403)
+            return self._json({"error": "Restart jde jen z aplikace."}, 403)
         if self.hubs:
             self.hubs.restart(user)
         return self._json({"ok": True})
@@ -1331,7 +1413,8 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             return self._json({"error": str(exc)}, 400)
         except (RuntimeError, subprocess.TimeoutExpired) as exc:
-            return self._json({"error": f"Přepis selhal: {exc}"}, 500)
+            _errlog("hlas prepis", exc)
+            return self._json({"error": "Přepsat nahrávku se nepovedlo, zkus to prosím znovu."}, 500)
         finally:
             self._hlas_slots.release()
         return self._json({"text": text})
@@ -1350,7 +1433,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "Nepřihlášeno."}, 401)
         if method == "POST":
             if not bearer and not self._account_post_ok():
-                return self._json({"error": "Jen z nastavení hubu."}, 403)
+                return self._json({"error": "Jde to jen z nastavení aplikace."}, 403)
             form = self._read_form()
             try:
                 if form.get("remove") is True:
@@ -1467,7 +1550,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "Jen GET nebo POST."}, 405)
         form = self._read_form()
         if not self._account_post_ok():
-            return self._json({"error": "Sdílená napojení jde měnit jen v hubu."}, 403)
+            return self._json({"error": "Sdílená napojení jde měnit jen v aplikaci."}, 403)
         action = str(form.get("akce") or "")
         try:
             if action == "zalozit":
@@ -1536,7 +1619,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             hub = self.hubs.get(user)
         except RuntimeError as exc:
-            return self._send(503, str(exc).encode("utf-8"))
+            _errlog("proxy start", exc)
+            full = "plný" in str(exc)
+            return self._fail(503, MSG_FULL if full else MSG_STARTING)
         hub.touch()
         if "websocket" in self.headers.get("Upgrade", "").lower():
             return self._proxy_ws(hub)
@@ -1608,7 +1693,7 @@ class Handler(BaseHTTPRequestHandler):
                 break
         if data is None:
             _errlog("proxy_http " + self.path, last)
-            return self._send(502, f"Instance hubu neodpověděla: {last}")
+            return self._fail(502, MSG_STARTING)
         self.send_response(resp.status)
         for key, value in resp.getheaders():
             low = key.lower()
@@ -1633,7 +1718,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             up = socket.create_connection(("127.0.0.1", hub.port), timeout=15)
         except OSError as exc:
-            return self._send(502, f"Instance hubu neodpověděla: {exc}")
+            _errlog("proxy_ws", exc)
+            return self._fail(502, MSG_STARTING)
         # Sestav upgrade požadavek pro hub z hlaviček klienta + token.
         head = [f"GET {self.path} HTTP/1.1"]
         for key, value in self._forward_headers(

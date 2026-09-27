@@ -132,13 +132,19 @@
      (hub Claude pouští s --allow-dangerously-skip-permissions, viz agents.py
      bypass_arg) nebo rovnou v něm. Naměřené pořadí v Claude Code 2.1.272:
      normální → auto-accept → plán → bypass → auto → normální. */
+  /* Čtvrtý sloupec je popisek pro jednoduchý režim (bez HUB_ADVANCED):
+     tam se neříká, jak se režim jmenuje v Claude Code, ale co znamená. */
   const MODES = [
-    ['normal', 'Normální', /manual mode on/i],
-    ['accept', 'Auto-accept', /(auto-)?accept edits on/i],
-    ['plan', 'Plán', /plan mode on/i],
-    ['auto', 'Auto', /auto mode on/i],
-    ['bypass', 'Bypass', /bypass permissions on/i],
+    ['normal', 'Normální', /manual mode on/i, 'Ptát se před změnami'],
+    ['accept', 'Auto-accept', /(auto-)?accept edits on/i, 'Upravovat samo'],
+    ['plan', 'Plán', /plan mode on/i, 'Nejdřív plán'],
+    ['auto', 'Auto', /auto mode on/i, 'Dělat samo'],
+    ['bypass', 'Bypass', /bypass permissions on/i, 'Bez ptaní'],
   ];
+
+  // Jednoduchý režim (výchozí) × Pro pokročilé — hub.js nastavuje
+  // window.HUB_ADVANCED. Čte se pokaždé znovu, přepnout se dá bez reloadu.
+  const advanced = () => !!global.HUB_ADVANCED;
 
   // Kolikrát se zkusí Shift+Tab, než to vzdáme. Cyklus má nejvýš pět kroků,
   // šestý je pojistka proti tomu, že klávesu nikdo nečte.
@@ -152,8 +158,8 @@
   }
 
   function modeLabel(key) {
-    const found = MODES.find(m => m[0] === key);
-    return found ? found[1] : 'Normální';
+    const found = MODES.find(m => m[0] === key) || MODES[0];
+    return advanced() ? found[1] : found[3];
   }
 
   /* Číslované volby z dialogu, odshora dolů. Bere se jen souvislá řada od
@@ -411,7 +417,7 @@
      šipkami se vybírá v seznamech, Ctrl+C ukončí běžící příkaz, Tab doplňuje
      cesty. Na počítači je řádek skrytý přes CSS (`.is-touch`). */
   const KEYS = [
-    ['Esc', '\x1b', 'Zavřít dialog nebo přerušit, co agent dělá'],
+    ['Esc', '\x1b', 'Zavřít dialog nebo přerušit, co Claude dělá'],
     ['Tab', '\t', 'Doplnit'],
     ['\u21e7Tab', '\x1b[Z', 'Přepnout režim oprávnění'],
     ['^C', '\x03', 'Ukončit běžící příkaz'],
@@ -469,7 +475,7 @@
         <div class="composer-atts" hidden></div>
         <textarea class="composer-input" rows="1" spellcheck="false"
                   autocomplete="off" autocorrect="on" autocapitalize="sentences" aria-autocomplete="none" data-form-type="other" data-1p-ignore data-lpignore="true"
-                  placeholder="Napiš, co má agent udělat… (Enter odešle, Shift+Enter nový řádek)"></textarea>
+                  placeholder="Napiš, s čím ti má Claude pomoct… (Enter odešle, Shift+Enter nový řádek)"></textarea>
         <div class="composer-bar">
           <!-- Nástroje jedou v jedné řadě a na úzké obrazovce se posouvají
                prstem. Odeslat a Esc zůstávají mimo posuv, pořád na očích. -->
@@ -486,7 +492,7 @@
           <button class="composer-chip" data-act="mode"
                   title="Režim oprávnění (Shift+Tab) — normální / auto-accept / plán / auto / bypass">Režim: <span class="val"></span> ▾</button>
           </div>
-          <button class="composer-chip ghost" data-act="esc" title="Přeruší, co Claude právě dělá (Esc)">Esc</button>
+          <button class="composer-chip ghost" data-act="esc" title="Přeruší, co Claude právě dělá (Esc)">Zastavit</button>
           <button class="composer-mic" title="Diktovat česky — klikni, mluv, klikni znovu" hidden>${icon('i-mic')}</button>
           <button class="composer-send" title="Odeslat (Enter)">${icon('i-up')}</button>
         </div>
@@ -524,6 +530,8 @@
     const modeBtn = root.querySelector('[data-act=mode]');
     const modeChip = modeBtn.querySelector('.val');
     const agentBtn = root.querySelector('[data-act=agent]');
+    const slashBtn = root.querySelector('[data-act=slash]');
+    const askTermBtn = askRoot.querySelector('[data-act=term]');
     // Historie zadání. Ukládá se po projektech, ať přežije zavření okna —
     // jinak by pro ni člověk musel do Claudeova vlastního hledání v terminálu.
     // Po agentech zvlášť: co se psalo Claudeovi, nemusí dávat smysl v aiderovi.
@@ -733,7 +741,7 @@
       if (tab.cteni && (!tab.id || !everIdle)) {
         cekaZprava = cekaZprava ? cekaZprava + '\n' + body : body;
         ohlas(body, opts, 'start');
-        if (io.notice && !io.odeslano) io.notice('Claude Code ještě startuje — zpráva odejde, jakmile naběhne.');
+        if (io.notice && !io.odeslano) io.notice('Claude se ještě chystá… Zpráva odejde, jakmile bude připravený.');
         return;
       }
       if (opts.zeStartu) {
@@ -956,8 +964,10 @@
         }
         if (readMode() !== target) {
           io.notice(target === 'bypass'
-            ? 'Tahle session bypass nemá (spustila se před aktualizací) — otevři nový tab.'
-            : 'Režim se přepnout nepodařilo — zkus Shift+Tab v terminálu.');
+            ? 'Tenhle rozhovor režim bez ptaní neumí (začal ještě před aktualizací) — otevři nový rozhovor.'
+            : advanced()
+              ? 'Režim se přepnout nepodařilo — zkus Shift+Tab v terminálu.'
+              : 'Režim se přepnout nepodařilo — zkus to za chvíli znovu.');
         }
       } finally {
         switching = false;
@@ -968,11 +978,14 @@
     function modeMenu(ev) {
       const [x, y] = anchor(ev);
       readMode();
+      syncLevel();
+      const pro = advanced();
+      // Bypass je jen pro pokročilé — v jednoduchém režimu se nenabízí vůbec.
       const items = MODES
-        .filter(([key]) => key !== 'bypass' || AG.bypass || seenBypass)
-        .map(([key, label]) => ({
+        .filter(([key]) => key !== 'bypass' || (pro && (AG.bypass || seenBypass)))
+        .map(([key, label, , simple]) => ({
           icon: key === 'plan' ? 'i-note' : 'i-dot',
-          label,
+          label: pro ? label : simple,
           on: key === mode,
           run: () => (key === 'bypass' ? chooseBypass() : setMode(key)),
         }));
@@ -986,14 +999,15 @@
     async function chooseBypass() {
       if (tab.bypass || seenBypass) return setMode('bypass');
       const ok = window.confirm(
-        'Bypass: Claude pak spouští příkazy a mění soubory bez ptaní — ' +
-        'i ty, které můžou něco smazat nebo rozbít.\n\n' +
-        'Zapne se v novém tabu, tenhle zůstane, jak je. Pokračovat?');
+        'Režim bez ptaní: Claude pak sám spouští programy a mění soubory — ' +
+        'i takové, které můžou něco smazat nebo rozbít.\n\n' +
+        'Zapne se v novém rozhovoru, tenhle zůstane, jak je. Pokračovat?');
       if (!ok) return;
       try {
         if (io.acceptBypass) await io.acceptBypass();
       } catch (err) {
-        io.notice('Bypass se zapnout nepodařilo: ' + err.message);
+        console.warn('bypass:', err);
+        io.notice('Režim bez ptaní se teď zapnout nepodařilo, zkus to za chvíli znovu.');
         return;
       }
       if (io.openWith) io.openWith(AG.id, model, {mode: 'bypass'});
@@ -1045,6 +1059,33 @@
                     run: () => input.focus()});
       }
       io.menu(x, y, items, {above: true});
+    }
+
+    /* ── jednoduchý režim × pro pokročilé ─────────────────────────────────
+       V jednoduchém režimu (výchozí) zůstává jen to, čemu rozumí každý:
+       psaní, historie, příloha, režim srozumitelnými slovy a Zastavit.
+       Agent, model, / příkazy, řádek terminálových kláves a tlačítko
+       Terminál na kartě s dotazem jsou jen pro pokročilé. */
+    let levelNow = null;
+    function syncLevel() {
+      const pro = advanced();
+      if (pro === levelNow) return;
+      levelNow = pro;
+      // Pro pokročilé zůstává jako dřív — seznam agentů se může načíst
+      // až po otevření tabu, takže se podle jeho délky neschovává.
+      agentBtn.hidden = !pro;
+      // Model, který se nedá vybrat ani poslat vlastním příkazem, nemá chip.
+      modelBtn.hidden = !pro || (!AG.models.length && !AG.modelCmd);
+      slashBtn.hidden = !pro;
+      keyRow.hidden = !pro;
+      askTermBtn.hidden = !pro;
+      modeChip.textContent = modeLabel(mode);
+      modeBtn.title = pro
+        ? 'Režim oprávnění (Shift+Tab) — normální / auto-accept / plán / auto / bypass'
+        : 'Jak moc se má Claude ptát, než něco udělá';
+      // Jiná sada tlačítek = jiná výška bubliny, terminál se přeměří.
+      dirty = true;
+      syncHeight();
     }
 
     /* ── odpovídání na dialogy myší ───────────────────────────────────────── */
@@ -1668,9 +1709,10 @@
       if (io.upozorni && AG.full) {
         const zabit = visibleBottom(term, WORK_ROWS).some((l) => KILLED.test(l));
         if (zabit && !zabitVidet) {
-          io.upozorni('Claude Code v tomhle tabu spadl — nejspíš došla paměť (na serveru má ' +
-                      'prostor strop pro všechny taby dohromady). Konverzace je uložená; ' +
-                      'rozdělanou práci mu zadej znovu a nepotřebné taby zavři.');
+          // Technická příčina (došla paměť, strop na celý prostor) je
+          // v agent-wrapper.sh — člověku stačí vědět, co udělat.
+          io.upozorni('Claude se zasekl. Rozhovor je uložený — zavři rozhovory, ' +
+                      'které nepotřebuješ, a zkus to znovu.');
         }
         zabitVidet = zabit;
       }
@@ -1798,7 +1840,7 @@
     root.querySelector('[data-act=slash]').onclick = slashMenu;
     root.querySelector('[data-act=history]').onclick = historyMenu;
     root.querySelector('[data-act=file]').onclick = () => picker.click();
-    modeBtn.onclick = modeMenu;
+    modeBtn.onclick = (ev) => { syncLevel(); modeMenu(ev); };
     root.querySelector('[data-act=esc]').onclick = () => { toPty('\x1b'); input.focus(); };
     picker.onchange = () => {
       if (picker.files && picker.files.length) attach(picker.files);
@@ -1807,14 +1849,16 @@
 
     agentBtn.onclick = agentMenu;
     syncModel();
-    modeChip.textContent = modeLabel(mode);
     modeBtn.classList.add('normal');
     // Režim oprávnění cykluje Shift+Tab a hlásí se pod vstupním polem —
     // obojí je Claude Code. Jinde by to tlačítko jen mačkalo tabulátor.
     modeBtn.hidden = !AG.full;
-    // Model, který se nedá vybrat ani poslat vlastním příkazem, nemá chip.
-    modelBtn.hidden = !AG.models.length && !AG.modelCmd;
     agentBtn.querySelector('.val').textContent = AG.label;
+    syncLevel();
+    // Přepnutí „Pro pokročilé" mění třídu na <body> — bublina se podle ní
+    // přestaví hned, ne až při dalším překreslení terminálu.
+    const levelWatch = new MutationObserver(() => syncLevel());
+    levelWatch.observe(document.body, {attributes: true, attributeFilter: ['class']});
     if (io.agent) {
       const a = io.agent();
       // Barvu dodává hostitel: tečka v bublině má říkat totéž co tečka na
@@ -1827,8 +1871,8 @@
     // Na úzké obrazovce se dlouhá výzva zalomila do dvou řádků a spodní byl
     // uříznutý — pole vypadalo rozbitě. Tam stačí krátká.
     input.placeholder = window.matchMedia('(max-width: 520px)').matches
-      ? 'Napiš ' + AG.label + '…'
-      : 'Napiš, co má ' + AG.label + ' udělat… (Enter odešle, Shift+Enter nový řádek)';
+      ? 'Napiš zprávu…'
+      : 'Napiš, s čím ti má ' + AG.label + ' pomoct… (Enter odešle, Shift+Enter nový řádek)';
     schedule();
 
     return {
@@ -1864,6 +1908,7 @@
         pryc = true;
         fronta.length = 0;
         clearInterval(cekaHlidac);
+        levelWatch.disconnect();
         offRender.dispose();
         offScroll.dispose();
         offResize.dispose();

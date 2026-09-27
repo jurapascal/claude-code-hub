@@ -57,7 +57,10 @@
       draw();
       return res;
     } catch (exc) {
-      S.io.toast('Clockify: ' + exc.message);
+      // Detail do konzole a pokročilým; ostatním srozumitelná věta.
+      console.warn('clockify:', exc);
+      S.io.toast(global.HUB_ADVANCED ? 'Clockify: ' + exc.message
+        : 'Měření času teď nejde — server neodpovídá, zkus to za chvíli.');
     }
   }
 
@@ -85,7 +88,7 @@
       line.appendChild(time);
       box.appendChild(line);
       if (run.description) box.appendChild(el('div', 'clk-desc', run.description));
-      const stop = el('button', 'barbtn clk-stop', '■ Stop');
+      const stop = el('button', 'barbtn clk-stop', '■ Zastavit');
       stop.onclick = async () => {
         stop.disabled = true;
         const res = await call({action: 'stop'});
@@ -113,7 +116,7 @@
     note.placeholder = 'na čem děláš (nepovinné)';
     box.appendChild(note);
 
-    const start = el('button', 'barbtn clk-start', '▶ Start');
+    const start = el('button', 'barbtn clk-start', '▶ Spustit');
     start.onclick = async () => {
       if (!pick.value) { S.io.toast('Nejdřív vyber projekt.'); return; }
       start.disabled = true;

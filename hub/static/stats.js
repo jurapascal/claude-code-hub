@@ -16,6 +16,16 @@
 
   const DNY = ['po', 'út', 'st', 'čt', 'pá', 'so', 'ne'];
 
+  /* Jednoduchý režim (výchozí) × Pro pokročilé (hub.js → window.HUB_ADVANCED).
+     V jednoduchém se ukazuje jen to, čemu rozumí každý — zprávy, rozhovory,
+     dny s prací. Tokeny, cache, GitHub a cesty na disku jsou pro pokročilé. */
+  const pokrocile = () => !!global.HUB_ADVANCED;
+
+  // Tvar slova podle počtu: 1 rozhovor, 2–4 rozhovory, 5+ rozhovorů.
+  function tvar(n, jedna, dve, pet) {
+    return n === 1 ? jedna : n >= 2 && n <= 4 ? dve : pet;
+  }
+
   function el(tag, cls, text) {
     const node = document.createElement(tag);
     if (cls) node.className = cls;
@@ -115,8 +125,10 @@
       try {
         res = await io.api('stats' + (refresh ? '?refresh=1' : ''));
       } catch (err) {
+        console.warn('stats:', err);
         status.className = 'set-status warn';
-        status.textContent = 'Nepovedlo se: ' + err.message;
+        status.textContent = pokrocile() ? 'Nepovedlo se: ' + err.message
+          : 'Statistiky se teď nepodařilo spočítat, zkus to za chvíli znovu.';
         return;
       }
       refresh = false;
@@ -135,17 +147,34 @@
     const body = root.querySelector('.onb-body');
     body.textContent = '';
     const t = data.tokens || {};
+    const pro = pokrocile();
+    root.querySelector('.onb-sub').textContent = pro
+      ? 'Z toho, co si Claude Code ukládá na disk'
+      : 'Jak často s Claudem pracuješ';
 
     // ── velká čísla ──────────────────────────────────────────────────────
     const tiles = el('div', 'st-tiles');
-    tiles.appendChild(tile(cislo(t.out || 0), 'napsaných tokenů',
-      `z toho ${cislo(t.think || 0)} přemýšlení`));
-    tiles.appendChild(tile(cislo(data.prompts || 0), 'odeslaných zpráv',
-      `${cislo(t.answers || 0)} odpovědí`));
-    tiles.appendChild(tile(String(data.sessions || 0), 'sezení',
-      `${data.active_days || 0} dnů s prací`));
-    tiles.appendChild(tile(cislo(t.cache_r || 0), 'přečteno z cache',
-      `zapsáno ${cislo(t.cache_w || 0)}`));
+    if (pro) {
+      tiles.appendChild(tile(cislo(t.out || 0), 'napsaných tokenů',
+        `z toho ${cislo(t.think || 0)} přemýšlení`));
+      tiles.appendChild(tile(cislo(data.prompts || 0), 'odeslaných zpráv',
+        `${cislo(t.answers || 0)} odpovědí`));
+      tiles.appendChild(tile(String(data.sessions || 0), 'sezení',
+        `${data.active_days || 0} dnů s prací`));
+      tiles.appendChild(tile(cislo(t.cache_r || 0), 'přečteno z cache',
+        `zapsáno ${cislo(t.cache_w || 0)}`));
+    } else {
+      const zprav = data.prompts || 0;
+      const odpovedi = t.answers || 0;
+      const rozhovoru = data.sessions || 0;
+      const dni = data.active_days || 0;
+      tiles.appendChild(tile(cislo(zprav),
+        tvar(zprav, 'odeslaná zpráva', 'odeslané zprávy', 'odeslaných zpráv'),
+        odpovedi ? `${cislo(odpovedi)} ${tvar(odpovedi, 'odpověď', 'odpovědi', 'odpovědí')} od Clauda` : ''));
+      tiles.appendChild(tile(String(rozhovoru),
+        tvar(rozhovoru, 'rozhovor', 'rozhovory', 'rozhovorů')));
+      tiles.appendChild(tile(String(dni), tvar(dni, 'den s prací', 'dny s prací', 'dní s prací')));
+    }
     body.appendChild(tiles);
 
     // ── denní doba ───────────────────────────────────────────────────────
@@ -154,8 +183,8 @@
       tick: h % 6 === 0 ? String(h) : '',
     }));
     const peak = hours.reduce((a, b) => (b.value > a.value ? b : a), hours[0] || {});
-    const s1 = section('Kdy píšeš',
-      peak && peak.value ? `Nejvíc mezi ${peak.full} — ${peak.value} zpráv.` : '');
+    const s1 = section('Kdy píšeš', peak && peak.value
+      ? `Nejvíc mezi ${peak.full} — ${peak.value} ${tvar(peak.value, 'zpráva', 'zprávy', 'zpráv')}.` : '');
     s1.appendChild(bars(hours, {unit: ' zpráv'}));
     body.appendChild(s1);
 
@@ -181,26 +210,35 @@
     }
 
     // ── projekty ─────────────────────────────────────────────────────────
-    const projects = data.projects || [];
+    // Pokročilí vidí tokeny, ostatní počet zpráv — to je, co člověk napsal.
+    const kolik = (p) => (pro ? p.out : p.prompts) || 0;
+    const projects = (data.projects || []).slice();
+    if (!pro) projects.sort((a, b) => kolik(b) - kolik(a));
     if (projects.length) {
-      const s4 = section('Kde to padá', 'Napsané tokeny podle projektu.');
+      const s4 = section(pro ? 'Kde to padá' : 'Na čem pracuješ',
+        pro ? 'Napsané tokeny podle projektu.' : 'Počet zpráv podle projektu.');
       const list = el('div', 'st-rows');
-      const max = Math.max(1, ...projects.map(p => p.out));
+      const max = Math.max(1, ...projects.map(kolik));
       for (const p of projects) {
         const row = el('div', 'st-row');
         row.appendChild(el('span', 'st-row-name', p.name));
         const track = el('span', 'st-track');
         const fill = el('span', 'st-fill');
-        fill.style.width = Math.max(1, p.out / max * 100) + '%';
+        fill.style.width = Math.max(1, kolik(p) / max * 100) + '%';
         track.appendChild(fill);
         row.appendChild(track);
-        row.appendChild(el('span', 'st-row-val', cislo(p.out)));
-        row.title = `${p.path || p.name}\n${cislo(p.out)} tokenů · ${p.prompts} zpráv`;
+        row.appendChild(el('span', 'st-row-val', cislo(kolik(p))));
+        row.title = pro
+          ? `${p.path || p.name}\n${cislo(p.out)} tokenů · ${p.prompts} zpráv`
+          : `${p.name}\n${p.prompts || 0} ${tvar(p.prompts || 0, 'zpráva', 'zprávy', 'zpráv')}`;
         list.appendChild(row);
       }
       s4.appendChild(list);
       body.appendChild(s4);
     }
+
+    // Zbytek (GitHub, odkud se počítá) je jen pro pokročilé.
+    if (!pro) return;
 
     // ── GitHub ───────────────────────────────────────────────────────────
     const gh = data.github || {};
