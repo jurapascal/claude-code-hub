@@ -2864,13 +2864,7 @@ html:has(> body.is-app.is-touch), body.is-app.is-touch { height: var(--app-h, 10
 .shared-more:hover { background: var(--bg-card); color: var(--fg-bright); }
 .shared-new { margin: 6px 8px 0; font-size: 12.5px; }
 
-/* Nastavení → Tým (settings.js tym). */
-.tym-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
-.tym-card.off { opacity: .6; }
-.tym-btns { flex-wrap: wrap; gap: 6px; }
-.tym-heslo { border: 1px solid var(--accent); border-radius: 10px; padding: 12px 14px; margin: 10px 0;
   display: flex; flex-direction: column; gap: 8px; }
-.tym-pre { white-space: pre-wrap; font-size: 14px; background: var(--bg-card); padding: 10px 12px;
   border-radius: 8px; margin: 0; user-select: all; }
 .set-warn { color: var(--warn, #d29922); font-size: 12.5px; }
 
