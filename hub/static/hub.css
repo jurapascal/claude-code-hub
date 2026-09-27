@@ -2943,3 +2943,10 @@ body:not(.pokrocile) #projects-count { display: none !important; }
 .acc-card .set-row { margin-top: 10px; }
 .acc-card .set-row:empty, .acc-card > div:empty { display: none; }
 @media (max-width: 640px) { .acc-cards { grid-template-columns: 1fr; } }
+.onb-tile.hlas-voice { cursor: default; flex: 0 1 calc(50% - 6px); min-width: 14rem; }
+.hlas-voice > span:nth-child(2) { flex: 1; }
+.hlas-play { width: 36px; height: 36px; border-radius: 50%; flex: none; display: grid;
+  place-items: center; background: var(--accent); cursor: pointer; }
+.hlas-play svg { width: 18px; height: 18px; fill: #fff; margin-left: 2px; }
+.hlas-play:hover { filter: brightness(1.1); }
+.hlas-auto { margin-top: 10px; font-size: 13px; }

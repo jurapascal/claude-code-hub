@@ -1834,18 +1834,29 @@
         prepis.appendChild(t);
       }
 
+      // Předčítání: hlas jako dlaždice (jako model u diktování) s ukázkou
+      // uvnitř, pod ním obyčejné zaškrtávátko „číst samo".
       const cteni = group('i-speak', 'Předčítání');
-      const auto = !!(window.HubHlas && HubHlas.auto.get());
-      const samo = tile('i-speak', 'Číst samo', auto ? 'zapnuto' : 'vypnuto', auto);
-      samo.title = 'Nové odpovědi se přečtou samy — jen v tabu, na který se díváš, na tomhle zařízení.';
-      samo.onclick = () => {
-        if (window.HubHlas) HubHlas.auto.set(!auto);
-        drawReady(s);
-      };
-      const zkus = tile('i-play', 'Vyzkoušet', 'přehraje ukázku', false);
-      zkus.onclick = () => window.HubHlas && HubHlas.speak(
+      const hlasTile = tile('i-speak', 'Jirka', 'český hlas', true);
+      hlasTile.classList.add('hlas-voice');
+      hlasTile.onclick = null;
+      const play = el('span', 'hlas-play');
+      play.title = 'Přehrát ukázku';
+      play.setAttribute('role', 'button');
+      play.innerHTML = '<svg><use href="#i-play"/></svg>';
+      play.onclick = () => window.HubHlas && HubHlas.speak(
         'Ahoj, tady je hub. Tohle je český hlas, kterým ti budu číst odpovědi.', null, io.toast);
-      cteni.append(samo, zkus);
+      hlasTile.appendChild(play);
+      cteni.appendChild(hlasTile);
+
+      const row = el('label', 'onb-row hlas-auto');
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.checked = !!(window.HubHlas && HubHlas.auto.get());
+      cb.onchange = () => { if (window.HubHlas) HubHlas.auto.set(cb.checked); };
+      row.append(cb, el('span', null, 'Číst nové odpovědi samy'));
+      row.title = 'Jen v tabu, na který se díváš, a jen na tomhle zařízení.';
+      ready.appendChild(row);
     }
 
     let poll = null;
