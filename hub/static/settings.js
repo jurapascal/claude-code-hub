@@ -1027,12 +1027,14 @@
 
   /* Ikonka služby, ať ji člověk pozná na první pohled (hub/static/sluzby/,
      oficiální ikony z webů služeb — nic se nenačítá zvenku). */
-  const SVC_ICONS = ['freelo', 'canva', 'ecomail', 'clockify', 'google', 'wordpress'];
+  const SVC_ICONS = ['freelo', 'canva', 'ecomail', 'clockify', 'google', 'wordpress',
+                     'facebook', 'reklamy'];
+  const SVC_ICON_FILE = {facebook: 'facebook-instagram', reklamy: 'meta'};
   function svcIcon(id) {
     const key = String(id || '').toLowerCase();
     if (!SVC_ICONS.includes(key)) return null;
     const img = el('img', 'svc-ico');
-    img.src = '/sluzby/' + key + '.png';
+    img.src = '/sluzby/' + (SVC_ICON_FILE[key] || key) + '.png';
     img.alt = '';
     return img;
   }
@@ -1168,7 +1170,7 @@
         row.appendChild(share);
       }
       // API klíč se znovu nepřihlašuje — špatný klíč = odebrat a přidat nový.
-      if (acc.state !== 'ok' && acc.state !== 'unknown' && svc.kind !== 'apikey') {
+      if (acc.state !== 'ok' && acc.state !== 'unknown' && svc.kind !== 'apikey' && svc.kind !== 'token') {
         const again = el('button', 'btn ghost', 'Přihlásit');
         again.onclick = async () => {
           again.disabled = true;
@@ -1258,12 +1260,31 @@
         inputs.label = field(form, 'Popisek účtu', 'třeba firma nebo osobní',
           'Podle něj účty poznáš ty i Claude.');
       }
+      // Návod krok za krokem (token Mety) — tlačítko otevře přesně tu stránku.
+      if (svc.kind === 'token' && (svc.setup || []).length) {
+        const steps = el('ol', 'mcp-steps');
+        for (const step of svc.setup) {
+          const li = el('li', 'mcp-step');
+          const head = el('div', 'mcp-step-head');
+          head.appendChild(el('strong', null, step.title));
+          if (step.url) {
+            head.appendChild(el('span', 'spacer'));
+            const go = el('button', 'btn ghost', step.button || 'Otevřít');
+            go.onclick = () => io.open(step.url);
+            head.appendChild(go);
+          }
+          li.appendChild(head);
+          li.appendChild(el('div', 'set-note', step.text));
+          steps.appendChild(li);
+        }
+        form.appendChild(steps);
+      }
       if (svc.field) {
         inputs.account = field(form, svc.field.label, '', svc.field.help);
         if (svc.field.secret) inputs.account.type = 'password';
       }
       const goText = svc.kind === 'google' ? 'Přihlásit Google účet'
-        : svc.kind === 'apikey' ? 'Napojit' : 'Přihlásit';
+        : (svc.kind === 'apikey' || svc.kind === 'token') ? 'Napojit' : 'Přihlásit';
       const go = el('button', 'btn primary', goText);
       form.appendChild(go);
       const slot = el('div', 'svc-slot');

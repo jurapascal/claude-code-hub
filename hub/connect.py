@@ -83,6 +83,42 @@ SERVICES = {
                   "help": "Clockify → foto profilu → Preferences → Advanced → "
                           "Manage API keys → Generate New"},
     },
+    # Facebook stránky i Instagram (firemní/tvůrce) jedním tokenem Mety —
+    # open-source @oliverames/meta-mcp-server (MIT). Meta vlastní server na
+    # příspěvky nemá. Verze je pevná: cizí kód se nemá měnit pod rukama.
+    "facebook": {
+        "label": "Facebook a Instagram",
+        "note": "Příspěvky, komentáře a statistiky stránek i Instagramu.",
+        "kind": "token",
+        "command": ["npx", "-y", "@oliverames/meta-mcp-server@2.0.2"],
+        "package": "@oliverames/meta-mcp-server",
+        "env": "META_ACCESS_TOKEN",
+        "field": {"name": "account", "label": "Přístupový token Mety (EAA…)", "secret": True,
+                  "help": "developers.facebook.com → Graph API Explorer → Generate Access "
+                          "Token (stránky a Instagram) → v Access Token Debuggeru "
+                          "Extend Access Token (platí 60 dní)."},
+        "warn": "Instagram musí být firemní nebo tvůrce a propojený s facebookovou stránkou.",
+        "setup": [
+            {"title": "Založ aplikaci", "button": "Otevřít",
+             "url": "https://developers.facebook.com/apps",
+             "text": "Create App → typ Business. Pro vlastní stránku nic neschvaluje Meta."},
+            {"title": "Vygeneruj token", "button": "Graph API Explorer",
+             "url": "https://developers.facebook.com/tools/explorer",
+             "text": "Vpravo nahoře vyber svou aplikaci, zaškrtni oprávnění pages_* , "
+                     "instagram_* , read_insights a business_management a dej Generate "
+                     "Access Token. Vyber stránku i Instagram."},
+            {"title": "Prodluž ho na 60 dní", "button": "Token Debugger",
+             "url": "https://developers.facebook.com/tools/debug/accesstoken/",
+             "text": "Vlož token, dej Debug → Extend Access Token a nový token vlož sem dolů."},
+        ],
+    },
+    # Oficiální server Mety — jen reklamy, přihlášení Facebookem.
+    "reklamy": {
+        "label": "Meta reklamy",
+        "note": "Reklamy na Facebooku a Instagramu: výkon, kampaně, katalogy.",
+        "kind": "mcp",
+        "url": "https://mcp.facebook.com/ads",
+    },
     "google": {
         "label": "Google",
         "note": "Gmail, Disk, Kalendář, Dokumenty, Tabulky, Prezentace, "
@@ -257,6 +293,23 @@ def _mcp_accounts(service_id, spec, states):
     return out
 
 
+def _cmd_accounts(service_id, spec, states):
+    """Účty služby spouštěné příkazem — podle jména a balíčku v příkazu."""
+    out = []
+    for name, entry in sorted(_user_servers().items()):
+        if not isinstance(entry, dict):
+            continue
+        if name != service_id and not name.startswith(service_id + "-"):
+            continue
+        if not any(spec["package"] in str(a) for a in entry.get("args") or []):
+            continue
+        state, status = states.get(name, ("unknown", "zjišťuju…"))
+        out.append({"name": name,
+                    "label": name[len(service_id) + 1:] if name != service_id else "hlavní",
+                    "state": state, "status": status, "detail": ""})
+    return out
+
+
 def services(refresh=False):
     """Karty služeb s účty a jejich stavem. Stav je z `claude mcp list`, který
     se ptá každého serveru (~10 s) — počítá se na pozadí v úloze „mcp"."""
@@ -285,6 +338,11 @@ def services(refresh=False):
             elif not shutil.which("uvx"):
                 item["missing"] = ("Chybí uv (uvx), na kterém napojení na Google "
                                    "běží: https://docs.astral.sh/uv/")
+        elif spec["kind"] == "token":
+            item["accounts"] = _cmd_accounts(sid, spec, states)
+            item["setup"] = spec.get("setup")
+            if not shutil.which("npx"):
+                item["missing"] = "Chybí Node.js (npx), na kterém napojení běží: https://nodejs.org"
         else:
             item["accounts"] = _mcp_accounts(sid, spec, states)
         if not _claude():
@@ -306,7 +364,23 @@ def add_account(service, label="", account=""):
         return {"ok": False, "detail": "Claude Code (claude) tu není nainstalovaný."}
     slug = _slug(label) or "ucet"
     name = f"{service}-{slug}"
-    url = spec["url"]
+    url = spec.get("url", "")
+    if spec["kind"] == "token":
+        key = (account or "").strip()
+        if not key:
+            return {"ok": False, "detail": f"Chybí {spec['field']['label']}."}
+        if name in _user_servers():
+            return {"ok": False, "detail": f"Účet „{slug}“ u služby {spec['label']} už je "
+                                           "— zvol jiný popisek."}
+        r = _run([claude, "mcp", "add", "-s", "user", name, "-e", f"{spec['env']}={key}",
+                  "--", *spec["command"]])
+        if r.returncode != 0:
+            return {"ok": False, "detail": (r.stderr or r.stdout or "nepovedlo se").strip()[:300]}
+        core.log(f"služby: přidán účet {name}")
+        write_claude_md()
+        core.start_job("mcp", core.mcp_list)
+        return {"ok": True, "name": name,
+                "login": {"done": True, "message": f"{spec['label']} napojené."}}
     if spec["kind"] == "apikey":
         key = (account or "").strip()
         if not key:

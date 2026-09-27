@@ -321,7 +321,10 @@ def delete(user, slug):
 
 # ── účty ze služeb vlastníka (druh „ucet") ──────────────────────────────────
 SERVICES = {"freelo": "Freelo", "canva": "Canva", "ecomail": "Ecomail",
-            "clockify": "Clockify", "google": "Google"}
+            "clockify": "Clockify", "google": "Google", "facebook": "Facebook a Instagram",
+            "reklamy": "Meta reklamy"}
+# Služby spouštěné příkazem s tokenem v proměnné (hub/connect.py, druh „token").
+COMMAND_SERVICES = {"facebook": ("@oliverames/meta-mcp-server", "META_ACCESS_TOKEN")}
 ACCOUNT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
 GOOGLE_TOOLS = ["gmail", "drive", "calendar", "docs", "sheets", "slides",
                 "forms", "tasks", "contacts"]
@@ -358,6 +361,32 @@ def _owner_server(entry):
     return url, headers
 
 
+def _owner_command(entry):
+    """Účet spouštěný příkazem (npx balíček + token) jako záznam „prikaz".
+    Příkaz se nebere od vlastníka — ten by si tam mohl napsat cokoli a běželo
+    by to na bráně —, jen token z jeho proměnné."""
+    home = _home(entry.get("owner"))
+    raw = safefs.read_text(home, ".claude.json", 16 * 1024 * 1024) if home else None
+    try:
+        servers = (json.loads(raw or "{}").get("mcpServers") or {})
+    except ValueError:
+        servers = {}
+    spec = servers.get(entry.get("account"))
+    package, var = COMMAND_SERVICES[entry["service"]]
+    if not isinstance(spec, dict) or \
+            not any(package in str(a) for a in spec.get("args") or []):
+        raise RuntimeError("Vlastník tenhle účet u sebe už nemá — sdílení je potřeba "
+                           "nastavit znovu.")
+    token = str((spec.get("env") or {}).get(var) or "")
+    if not token:
+        raise RuntimeError("U účtu vlastníka chybí token.")
+    # Jen balíček, nanejvýš s číslem verze — nic, co by npx vzal odjinud.
+    verze = [str(a) for a in spec.get("args") or []
+             if re.fullmatch(re.escape(package) + r"(@\d+\.\d+\.\d+)?", str(a))]
+    return {"kind": "prikaz", "command": ["npx", "-y", verze[0] if verze else package],
+            "env": {var: token}}
+
+
 def _check_account(owner_uid, service, account):
     """Má vlastník tenhle účet opravdu u sebe? Jinak ValueError."""
     if service not in SERVICES:
@@ -372,7 +401,10 @@ def _check_account(owner_uid, service, account):
             (account != service and not account.startswith(service + "-")):
         raise ValueError("Takový účet u služby není.")
     try:
-        _owner_server({"owner": owner_uid, "account": account})
+        if service in COMMAND_SERVICES:
+            _owner_command({"owner": owner_uid, "account": account, "service": service})
+        else:
+            _owner_server({"owner": owner_uid, "account": account})
     except RuntimeError as exc:
         raise ValueError(str(exc)) from None
 
@@ -795,6 +827,8 @@ class Pool:
                 item.close()
             if entry["kind"] == "ucet" and entry.get("service") == "google":
                 entry = _google_entry(entry)
+            elif entry["kind"] == "ucet" and entry.get("service") in COMMAND_SERVICES:
+                entry = _owner_command(entry)
             if entry["kind"] == "prikaz":
                 procs = [k for k, v in self.items.items() if isinstance(v, _Process)]
                 if len(procs) >= MAX_PROCS:
