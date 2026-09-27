@@ -35,7 +35,7 @@
     ['napojeni',   'Propojené služby', 'i-hub', () => napojeni()],   // MCP — Claude Code
     ['aktualizace','Aktualizace', 'i-up',     () => aktualizace()],
     ['logy',       'Logy',      'i-status',   () => logy(), 'dev'],
-    ['pokrocile',  'Pro pokročilé', 'i-status', () => pokrocile()],
+    ['ostatni',    'Ostatní',   'i-gear',     () => ostatni()],
   ];
 
   function el(tag, cls, text) {
@@ -168,24 +168,27 @@
   }
 
   /* Jednoduchý režim je výchozí: aplikace se chová jako chat s Claudem a nic
-     technického neukazuje. Tady si ho zapne, kdo chce terminál, GitHub,
-     výběr modelu a další nástroje pro programátory. */
-  function pokrocile() {
-    const box = section('Pro pokročilé',
+     technického neukazuje. Vývojářský režim se zapíná jen tady (ne v průvodci)
+     a ukáže všechno do detailu. */
+  function ostatni() {
+    const box = section('Ostatní');
+    box.appendChild(el('div', 'set-title', 'Vývojářský režim'));
+    box.appendChild(el('div', 'set-note',
       'Aplikace je nastavená jednoduše — na psaní s Claudem, poznámky a soubory. ' +
-      'Kdo programuje nebo spravuje weby, tu zapne i nástroje pro programátory.');
+      'Vývojářský režim ukáže všechno do detailu. Běžně ho nepotřebuješ.'));
     const row = el('label', 'onb-row');
     const cb = el('input');
     cb.type = 'checkbox';
     cb.checked = advanced();
     cb.onchange = () => save({dev_mode: cb.checked});
     row.appendChild(cb);
-    row.appendChild(el('span', null, 'Zapnout nástroje pro programátory'));
+    row.appendChild(el('span', null, 'Zapnout vývojářský režim'));
     box.appendChild(row);
     box.appendChild(el('div', 'set-note',
-      'Přibude: terminál, výběr modelu a příkazy v poli na psaní, nahrávání webů ' +
-      'a GitHub, spotřeba tokenů, výběr jiných AI pomocníků, technické ' +
-      'podrobnosti napojení a záznam chyb. Vypnutím se zase schová — nic se nesmaže.'));
+      'Přibude: projekty a jejich složky, terminál, výběr modelu a příkazy v poli ' +
+      'na psaní, nahrávání webů a GitHub, spotřeba tokenů, jiní AI pomocníci, ' +
+      'technické podrobnosti napojení, cesty na disku a záznam chyb. Vypnutím se ' +
+      'zase schová — nic se nesmaže.'));
     return box;
   }
 
@@ -576,9 +579,12 @@
 
   function pamet() {
     const box = section('Paměť',
-      'Složka s poznámkami, které si Claude nese mezi sezeními.');
-    box.appendChild(Object.assign(el('div', 'onb-path'),
-      {textContent: state.config.brain_dir || '(vypnutá)'}));
+      'Claude si pamatuje, na čem jste spolu pracovali — i v dalším rozhovoru. ' +
+      'Najdeš to v Mých poznámkách.');
+    if (advanced()) {
+      box.appendChild(Object.assign(el('div', 'onb-path'),
+        {textContent: state.config.brain_dir || '(vypnutá)'}));
+    }
     if (state.config.brain_dir) box.appendChild(autosave());
 
     // Záloha paměti do privátního repa je práce s GitHubem: chce `gh`, umí si
@@ -623,6 +629,8 @@
     }
     box.appendChild(line);
 
+    // Jiná složka s pamětí a přesun — jen vývojářský režim.
+    if (!advanced()) return box;
     const vaults = (state.vaults || []).filter(v => v.path !== state.config.brain_dir);
     if (vaults.length) {
       box.appendChild(el('div', 'set-note', 'Použít jinou složku s poznámkami:'));
@@ -695,10 +703,8 @@
     const col = el('div', 'onb-col');
     col.appendChild(el('span', null, 'Ukládat do paměti samo'));
     col.appendChild(el('small', null,
-      'Po skončení práce (zavřený tab, konec session nebo 20 minut ticha) si ' +
-      'Claude na pozadí doplní poznámku k projektu a to, co stojí za zapamatování. ' +
-      'Nemusíš nic ukládat. Jedno uložení bere zhruba tolik ' +
-      'jako jedna delší odpověď.'));
+      'Když rozhovor skončí (zavřeš ho, nebo 20 minut nikdo nepíše), Claude si ' +
+      'sám zapíše, co stojí za zapamatování. Nemusíš nic ukládat.'));
     row.appendChild(col);
     wrap.appendChild(row);
 

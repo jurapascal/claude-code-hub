@@ -114,7 +114,7 @@ dělá jednu aplikaci:
   platí to i na všechno, co do ní později přibude.
 - **Jednoduchý režim** — aplikace se chová jako chat s Claudem: žádný terminál,
   modely, příkazy ani tokeny, srozumitelné texty a všechno na kliknutí.
-  Nástroje pro programátory zapneš v Nastavení → **Pro pokročilé**. Na serveru
+  Všechno do detailu ukáže **vývojářský režim** — zapíná se jen v Nastavení → **Ostatní**. Na serveru
   je jednoduchý režim výchozí pro všechny.
 - **Tým naklikáním** — admin v Nastavení → **Tým** pozve člověka (heslo vymyslí
   server), vytvoří nové heslo, zruší ověření při ztraceném telefonu, nastaví

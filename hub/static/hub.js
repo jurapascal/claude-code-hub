@@ -50,6 +50,13 @@ function markAdvanced() {
   const on = !!(STATE && STATE.config && STATE.config.dev_mode);
   window.HUB_ADVANCED = on;
   document.body.classList.toggle('pokrocile', on);
+  // Projekty (složky na disku) jsou vývojářská věc — v jednoduchém režimu je
+  // v panelu jen seznam rozhovorů.
+  const projTab = document.querySelector('.side-tab[data-view=projects]');
+  if (projTab) {
+    projTab.hidden = !on;
+    if (!on && $('chats-view') && $('chats-view').hidden) sidebarView('chats');
+  }
 }
 
 /* ── server calls ─────────────────────────────────────────────────────────── */
@@ -1034,7 +1041,8 @@ function renderChats() {
   if (!list.length) {
     const note = document.createElement('div');
     note.className = 'empty';
-    note.textContent = words.length ? '(nic nenalezeno)' : '(zatím žádné konverzace)';
+    note.textContent = words.length ? 'Nic takového jsem nenašel.'
+      : 'Zatím tu nejsou žádné rozhovory — začni tlačítkem Nový rozhovor.';
     box.appendChild(note);
     return;
   }
@@ -1141,7 +1149,7 @@ function initChats() {
   $('chats-search').addEventListener('input', () => { chatsShown = CHATS_PAGE; renderChats(); });
   let saved = 'projects';
   try { saved = localStorage.getItem('hub-side-view') || 'projects'; } catch (_) {}
-  sidebarView(saved);
+  sidebarView(window.HUB_ADVANCED ? saved : 'chats');
 }
 
 function renderMemory() {
@@ -1351,9 +1359,9 @@ function renderPlace() {
   badge.classList.toggle('plain', !lzePrepnout);
   badge.onclick = lzePrepnout ? switchPlace : null;
   badge.title = u
-    ? `Claude Code server · ${u.name || u.email}` +
-      (lzePrepnout ? ' — přepnout na počítač' : '')
-    : 'Claude Code PC — přepnout do prostoru na serveru';
+    ? `Pracuješ na serveru · ${u.name || u.email}` +
+      (lzePrepnout ? ' — klikni a přepneš na počítač' : '')
+    : 'Pracuješ na tomhle počítači — klikni a přepneš na server';
   // Počítač, na který Claude z prostoru dosáhne (hub/pocitac.py).
   if (u) HubPocitac.chip(hubIO());
   // Připojené předplatné, které běžící prostor ještě nemá — jednou za načtení.
@@ -1529,7 +1537,8 @@ function renderWelcome() {
     if (STATE.memory_autosave) facts.push('ukládá se sama');
   }
   facts.push('verze ' + STATE.version.version);
-  $('welcome-facts').textContent = facts.join('  ·  ');
+  // Technický řádek (paměť, verze) jen ve vývojářském režimu.
+  $('welcome-facts').textContent = window.HUB_ADVANCED ? facts.join('  ·  ') : '';
 }
 
 /* Statistiky na úvodu: jen pár čísel a poslední měsíc, zbytek je pod ⧉.

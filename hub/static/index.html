@@ -120,8 +120,8 @@
     </div>
     <div class="section section-head">
       <span class="side-tabs">
-        <button class="side-tab on" data-view="projects">PROJEKTY</button>
-        <button class="side-tab" data-view="chats">ROZHOVORY</button>
+        <button class="side-tab" data-view="projects" hidden>PROJEKTY</button>
+        <button class="side-tab on" data-view="chats">ROZHOVORY</button>
       </span>
       <span class="section-count" id="projects-count"></span>
       <span class="section-count" id="chats-count" hidden></span>
@@ -130,14 +130,14 @@
       <button id="btn-drawer-close" class="iconbtn drawer-close" title="Zavřít panel">
         <svg class="ico"><use href="#i-close"/></svg></button>
     </div>
-    <div id="projects-view">
+    <div id="projects-view" hidden>
       <div class="searchwrap">
         <svg class="ico search-ico"><use href="#i-search"/></svg>
         <input id="search" type="search" placeholder="Hledat projekt…" autocomplete="off">
       </div>
       <div id="projects" class="cards"></div>
     </div>
-    <div id="chats-view" hidden>
+    <div id="chats-view">
       <div class="searchwrap">
         <svg class="ico search-ico"><use href="#i-search"/></svg>
         <input id="chats-search" type="search" placeholder="Hledat rozhovor…" autocomplete="off">
@@ -178,7 +178,7 @@
         <svg class="ico"><use href="#i-plus"/></svg><span>Nový rozhovor</span></button>
       <button id="btn-new-firma" class="tabplus firma" title="Rozhovor s Claudem nad firemními poznámkami" hidden>
         <svg class="ico"><use href="#i-plus"/></svg><span>Firemní</span></button>
-      <button id="btn-new-shell" class="tabplus" title="Otevřít terminál">
+      <button id="btn-new-shell" class="tabplus" title="Otevřít terminál" hidden>
         <svg class="ico"><use href="#i-plus"/></svg><span>Terminál</span></button>
       <!-- Jen na telefonu: tři „+" vedle sebe zabraly celou lištu a na taby
            nezbylo místo. Tohle je jedno „+" a nabídka, co otevřít. -->
@@ -190,7 +190,7 @@
         <div class="welcome-scene" id="welcome-scene"></div>
         <!-- „Hub" tu bývalo napevno. Teď se píše prostředí (renderWelcome):
              na počítači „Claude Code PC", v prostoru „Claude Code server". -->
-        <div class="welcome-big">Claude <b id="welcome-place">PC</b></div>
+        <div class="welcome-big">Claude <b id="welcome-place"></b></div>
         <div class="welcome-greet" id="welcome-greet"></div>
         <!-- Otevřené chaty (taby) — appka po otevření zůstává tady, na Domů. -->
         <div class="welcome-open" id="welcome-open" hidden></div>

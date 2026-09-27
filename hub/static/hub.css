@@ -2862,3 +2862,10 @@ html:has(> body.is-app.is-touch), body.is-app.is-touch { height: var(--app-h, 10
 @media (prefers-reduced-motion: reduce) {
   .ag .claudik, .ag .claudik * { animation: none !important; }
 }
+
+/* Jednoduchý režim: panel bez počítadel paměti a seznamu posledních zápisů,
+   bez tlačítka „načíst znovu“ (hub.js markAdvanced přidá body.pokrocile). */
+body:not(.pokrocile) #memory-summary,
+body:not(.pokrocile) #memory,
+body:not(.pokrocile) #btn-refresh,
+body:not(.pokrocile) #projects-count { display: none !important; }

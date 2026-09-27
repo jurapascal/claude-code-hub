@@ -158,29 +158,13 @@
     // Věta se musí trefit do počtu kroků, které pak přijdou — jinak průvodce
     // slíbí nastavení projektů a paměti a hned skončí.
     const uvod = el('p', 'onb-lead');
-    uvod.textContent = 'Každý projekt má vlastní okno s Claudem. ' + (chosen.dev
-        ? 'Teď si nastavíme vzhled, kde máš projekty a kde jsou poznámky.'
-        : 'Zbývá vybrat vzhled a můžeme začít.');
+    uvod.textContent = chosen.dev
+        ? 'Každý projekt má vlastní okno s Claudem. Teď si nastavíme vzhled, kde máš projekty a kde jsou poznámky.'
+        : 'Vítej! Stačí vybrat, jak má aplikace vypadat, a můžeš začít psát s Claudem.';
     box.appendChild(uvod);
 
-    // Volba režimu. Rozhoduje o zbytku průvodce, tak patří sem, ne na konec.
-    box.appendChild(el('div', 'onb-lead', 'Jak budeš aplikaci používat?'));
-    const rezim = el('div', 'onb-tiles');
-    for (const [dev, label, note] of [
-      [false, 'Běžné používání (doporučeno)',
-       'Píšeš si s Claudem, on si pamatuje, na čem jste pracovali. Nic navíc.'],
-      [true, 'Pro programátory',
-       'Navíc terminál, GitHub, nasazování webů a složky projektů.'],
-    ]) {
-      const t = el('button', 'onb-tile' + (chosen.dev === dev ? ' on' : ''));
-      t.appendChild(el('span', 'onb-tile-t', label));
-      t.appendChild(el('span', 'onb-tile-s', note));
-      t.onclick = () => { chosen.dev = dev; render(); };
-      rezim.appendChild(t);
-    }
-    box.appendChild(rezim);
-    box.appendChild(el('div', 'onb-note',
-      'Dá se přepnout kdykoli v Nastavení → Vzhled.'));
+    // Vývojářský režim se v průvodci nevybírá — zapíná se jen v Nastavení →
+    // Ostatní. Průvodce zůstává jednoduchý pro každého.
 
     /* Kontrola součástí. V běžném režimu se ukazuje jen to, co chybí —
        seznam samých fajfek člověku nic neřekne. Obsidian je volitelný,

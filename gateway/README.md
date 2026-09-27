@@ -308,7 +308,7 @@ dál nosí Claude návrhem; soubory nahrává **jen člověk v prohlížeči**.
 - **Sdílené poznámky** v panelu: `POST /gw/sdilene` s `akce` zalozit / clenove /
   odejit / smazat — stejná pravidla jako přes Clauda (`shared.py`).
 - **Jednoduchý režim:** v prostorech je výchozí `dev_mode` vypnutý (hub/core.py),
-  technické věci si člověk zapne v Nastavení → Pro pokročilé.
+  technické věci ukáže vývojářský režim (jen v Nastavení → Ostatní, průvodce se na něj neptá).
 
 ## Napojení z appky Claude (MCP)
 
