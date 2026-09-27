@@ -2944,3 +2944,11 @@ body:not(.pokrocile) #projects-count { display: none !important; }
 .hlas-play svg { width: 18px; height: 18px; fill: #fff; margin-left: 2px; }
 .hlas-play:hover { filter: brightness(1.1); }
 .hlas-auto { margin-top: 10px; font-size: 13px; }
+.hlas-play .hlas-i-stop, .hlas-play .hlas-spin { display: none; }
+.hlas-play.hraje .hlas-i-play { display: none; }
+.hlas-play.hraje .hlas-i-stop { display: block; margin-left: 0; }
+.hlas-play.pripravuje .hlas-i-stop { display: none; }
+.hlas-play.pripravuje .hlas-spin { display: block; width: 18px; height: 18px; border-radius: 50%;
+  border: 2.5px solid rgba(255,255,255,.35); border-top-color: #fff;
+  animation: hlas-spin .8s linear infinite; }
+@keyframes hlas-spin { to { transform: rotate(360deg); } }

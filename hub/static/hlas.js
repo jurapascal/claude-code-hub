@@ -375,13 +375,15 @@
     const casti = kusy(plain(text));
     const ja = {audio: null, btn, zruseno: false};
     hraje = ja;
-    if (btn) btn.classList.add('hraje');
+    // „pripravuje" = hlas se teprve počítá (první věta trvá pár vteřin).
+    if (btn) btn.classList.add('hraje', 'pripravuje');
     try {
       let pristi = casti.length ? zvuk(casti[0]) : null;
       for (let i = 0; i < casti.length && !ja.zruseno; i++) {
         const url = await pristi;
         pristi = i + 1 < casti.length ? zvuk(casti[i + 1]) : null;   // další se chystá, zatímco tahle hraje
         if (ja.zruseno) break;
+        if (btn) btn.classList.remove('pripravuje');
         await new Promise((hotovo) => {
           const a = new Audio(url);
           ja.audio = a;
@@ -392,7 +394,7 @@
     } catch (err) {
       if (notice) notice(chyba('Předčítání se nepovedlo', err));
     }
-    if (btn) btn.classList.remove('hraje');
+    if (btn) btn.classList.remove('hraje', 'pripravuje');
     if (hraje === ja) hraje = null;
     dalsi(notice);
   }

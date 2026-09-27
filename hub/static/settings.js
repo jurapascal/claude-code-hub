@@ -43,10 +43,11 @@
     return node;
   }
 
-  // Nadpis ani popisek sekce se nekreslí — kde člověk je, ukazuje vybrané
-  // tlačítko vlevo. Parametry zůstávají jako popis sekce pro čtenáře kódu.
-  function section(_title, _note) {
-    return el('div', 'set-sec');
+  function section(title, note) {
+    const box = el('div', 'set-sec');
+    box.appendChild(el('div', 'set-title', title));
+    if (note) box.appendChild(el('div', 'set-note', note));
+    return box;
   }
 
   async function open(opts) {
@@ -1660,9 +1661,12 @@
       const play = el('span', 'hlas-play');
       play.title = 'Přehrát ukázku';
       play.setAttribute('role', 'button');
-      play.innerHTML = '<svg><use href="#i-play"/></svg>';
+      // Během přípravy se točí kolečko, během čtení je tam stop.
+      play.innerHTML = '<svg class="hlas-i-play"><use href="#i-play"/></svg>' +
+                       '<svg class="hlas-i-stop"><use href="#i-stop"/></svg>' +
+                       '<span class="hlas-spin"></span>';
       play.onclick = () => window.HubHlas && HubHlas.speak(
-        'Ahoj, tady je hub. Tohle je český hlas, kterým ti budu číst odpovědi.', null, io.toast);
+        'Ahoj, tady je hub. Tohle je český hlas, kterým ti budu číst odpovědi.', play, io.toast);
       hlasTile.appendChild(play);
       cteni.appendChild(hlasTile);
 
