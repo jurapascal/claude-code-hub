@@ -43,11 +43,10 @@
     return node;
   }
 
-  function section(title, note) {
-    const box = el('div', 'set-sec');
-    box.appendChild(el('div', 'set-title', title));
-    if (note) box.appendChild(el('div', 'set-note', note));
-    return box;
+  // Nadpis ani popisek sekce se nekreslí — kde člověk je, ukazuje vybrané
+  // tlačítko vlevo. Parametry zůstávají jako popis sekce pro čtenáře kódu.
+  function section(_title, _note) {
+    return el('div', 'set-sec');
   }
 
   async function open(opts) {
@@ -189,6 +188,14 @@
       'zase schová — nic se nesmaže.'));
     return box;
   }
+
+  /* Vlastní název a ikona appky (hub/vzhled.py). Ikonu kreslí prohlížeč —
+     emoji na barevném pozadí, nebo nahraný obrázek — do PNG 512/192/32 a hub
+     je uloží. Platí v liště, pro ikonu na ploše telefonu i pro spouštěč. */
+  const EMOJI = ['🏠', '👨‍👩‍👧‍👦', '🐱', '🐶', '🦄', '🌻', '⭐', '🚀', '🌈', '❤️',
+                 '🎨', '📚', '🧸', '🍀', '☀️', '🐝', '🦊', '🐼', '🎈', '🤖'];
+  const BARVY = ['#e0843c', '#4c97f0', '#3fb950', '#a371f7', '#f85149',
+                 '#f2cc60', '#ff7ab6', '#1b2129', '#ffffff'];
 
   function appka() {
     const app = state.app || {};
