@@ -87,9 +87,51 @@
   // při každém kreslení — přepnout se dá bez reloadu.
   const pokrocile = () => !!global.HUB_ADVANCED;
 
+  // V jednoduchém režimu jsou pomocníci Claudíci — postavička místo „agenta“.
+  const CLAUDIK_PROFESE = {Explore: 'Průzkumník', Plan: 'Plánovač', 'claude-code-guide': 'Rádce'};
+
   function jmenoAgenta(typ) {
-    if (!typ || typ === 'general-purpose') return pokrocile() ? 'Agent' : 'Pomocník';
+    if (!pokrocile()) {
+      return CLAUDIK_PROFESE[typ] ? 'Claudík ' + CLAUDIK_PROFESE[typ] : 'Claudík';
+    }
+    if (!typ || typ === 'general-purpose') return 'Agent';
     return typ.charAt(0).toUpperCase() + typ.slice(1);
+  }
+
+  /* Claudík: malá pixelová postavička v barvě pomocníka (currentColor).
+     Oči se mění podle stavu (CSS: .ag.hotovo úsměv, .ag.chyba křížky),
+     Průzkumník nese lupu, Plánovač papír s tužkou, Rádce čepici. */
+  function claudik(typ) {
+    const doplnek = {
+      Explore: '<g class="cl-dopl"><rect x="13" y="3" width="3" height="1"/><rect x="12" y="4" width="1" height="3"/>' +
+               '<rect x="16" y="4" width="1" height="3"/><rect x="13" y="7" width="3" height="1"/>' +
+               '<rect x="12" y="8" width="1" height="1"/><rect x="11" y="9" width="1" height="1"/></g>',
+      Plan: '<g class="cl-dopl"><rect x="13" y="5" width="4" height="5" fill="#fff"/>' +
+            '<rect x="14" y="6" width="2" height="1" fill="#999"/><rect x="14" y="8" width="2" height="1" fill="#999"/></g>',
+      'claude-code-guide': '<g class="cl-dopl"><rect x="4" y="1" width="8" height="2"/><rect x="3" y="3" width="10" height="1"/></g>',
+    }[typ] || '';
+    return `<svg class="claudik" viewBox="0 1 18 13" shape-rendering="crispEdges" aria-hidden="true">
+      <g class="cl-telo" fill="currentColor">
+        <rect x="3" y="4" width="10" height="7"/>
+        <rect x="1" y="6" width="2" height="2"/><rect x="13" y="6" width="2" height="2"/>
+        <rect class="cl-noha a" x="4" y="11" width="1" height="2"/><rect class="cl-noha b" x="6" y="11" width="1" height="2"/>
+        <rect class="cl-noha a" x="9" y="11" width="1" height="2"/><rect class="cl-noha b" x="11" y="11" width="1" height="2"/>
+        ${doplnek}
+      </g>
+      <g class="cl-oci" fill="#1b1b1b">
+        <rect class="cl-oko" x="5" y="6" width="1" height="2"/><rect class="cl-oko" x="10" y="6" width="1" height="2"/>
+      </g>
+      <g class="cl-usmev" fill="#1b1b1b">
+        <rect x="4" y="7" width="1" height="1"/><rect x="5" y="6" width="1" height="1"/><rect x="6" y="7" width="1" height="1"/>
+        <rect x="9" y="7" width="1" height="1"/><rect x="10" y="6" width="1" height="1"/><rect x="11" y="7" width="1" height="1"/>
+      </g>
+      <g class="cl-krizky" fill="#1b1b1b">
+        <rect x="4" y="6" width="1" height="1"/><rect x="6" y="6" width="1" height="1"/><rect x="5" y="7" width="1" height="1"/>
+        <rect x="4" y="8" width="1" height="1"/><rect x="6" y="8" width="1" height="1"/>
+        <rect x="9" y="6" width="1" height="1"/><rect x="11" y="6" width="1" height="1"/><rect x="10" y="7" width="1" height="1"/>
+        <rect x="9" y="8" width="1" height="1"/><rect x="11" y="8" width="1" height="1"/>
+      </g>
+    </svg>`;
   }
 
   // „claude-haiku-4-5-20251001" → „Haiku 4.5", „opus" → „Opus".
@@ -297,7 +339,7 @@
       box.style.setProperty('--ag', barvaAgenta(b.type));
       box.innerHTML = `
         <div class="ag-top">
-          <span class="ag-avatar"><span class="ag-pismeno"></span></span>
+          <span class="ag-avatar"></span>
           <span class="ag-jmeno">
             <span class="ag-radek"><b class="ag-typ"></b><span class="ag-model"></span><span class="ag-bg">na pozadí</span></span>
             <span class="ag-ukol"></span>
@@ -313,7 +355,8 @@
         </div>
         <div class="ag-telo" hidden></div>`;
       const q = (sel) => box.querySelector(sel);
-      q('.ag-pismeno').textContent = jmenoAgenta(b.type).charAt(0);
+      q('.ag-avatar').innerHTML = claudik(b.type);
+      q('.ag-avatar').title = jmenoAgenta(b.type);
       q('.ag-typ').textContent = jmenoAgenta(b.type);
       q('.ag-ukol').textContent = b.title || 'bez popisu';
       const telo = q('.ag-telo');
@@ -397,7 +440,7 @@
       const bezi = karty.filter((k) => k.stav === 'bezi').length;
       g.pocet.textContent = (pokrocile()
         ? pocet(karty.length, 'agent', 'agenti', 'agentů')
-        : pocet(karty.length, 'pomocník', 'pomocníci', 'pomocníků')) + ' najednou';
+        : pocet(karty.length, 'Claudík', 'Claudíci', 'Claudíků')) + ' najednou';
       const kus = [];
       if (bezi) kus.push(bezi + ' běží');
       if (karty.length - bezi) kus.push((karty.length - bezi) + ' hotovo');

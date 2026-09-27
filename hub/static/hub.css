@@ -2343,7 +2343,7 @@ select option { background-color: var(--bg-card); color: var(--fg-bright); }
 .ag.stop { border-left-color: var(--section); }
 .ag-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .ag-avatar {
-  position: relative; flex: none; width: 32px; height: 32px; border-radius: 50%;
+  position: relative; flex: none; width: 36px; height: 36px; border-radius: 50%;
   display: grid; place-items: center;
   background: color-mix(in srgb, var(--ag) 20%, var(--bg-card));
   color: var(--ag); font-weight: 700; font-size: 14px;
@@ -2830,3 +2830,23 @@ html:has(> body.is-app.is-touch), body.is-app.is-touch { height: var(--app-h, 10
 .vault-access-modal .mcp-field > .set-input,
 .vault-access-modal .mcp-field > input,
 .vault-access-modal .mcp-field > select { width: 100%; box-sizing: border-box; }
+
+/* Claudík — postavička pomocníka na kartě agenta (cteni.js claudik). */
+.ag-avatar .claudik { width: 31px; height: 23px; margin-top: 1px; color: var(--ag); overflow: visible; }
+.claudik .cl-usmev, .claudik .cl-krizky { display: none; }
+.ag.hotovo .claudik .cl-oci, .ag.chyba .claudik .cl-oci { display: none; }
+.ag.hotovo .claudik .cl-usmev { display: inline; }
+.ag.chyba .claudik .cl-krizky { display: inline; }
+.ag.stop .claudik { opacity: .55; }
+.ag.bezi .claudik { animation: claudik-hop .9s ease-in-out infinite; }
+.ag.bezi .claudik .cl-noha.a { animation: claudik-krok .45s steps(1) infinite; }
+.ag.bezi .claudik .cl-noha.b { animation: claudik-krok .45s steps(1) infinite reverse; }
+.claudik .cl-oko { animation: claudik-mrk 3.2s infinite; transform-origin: center 7px; transform-box: fill-box; }
+.ag.hotovo .claudik { animation: claudik-radost .6s ease-out 1; }
+@keyframes claudik-hop { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+@keyframes claudik-krok { 0% { transform: translateY(0); } 50% { transform: translateY(-1px); } }
+@keyframes claudik-mrk { 0%, 94%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.15); } }
+@keyframes claudik-radost { 0% { transform: translateY(0); } 40% { transform: translateY(-5px); } 100% { transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .ag .claudik, .ag .claudik * { animation: none !important; }
+}
