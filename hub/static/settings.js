@@ -884,7 +884,7 @@
 
     const box = section('Účet',
       naServeru
-        ? 'Tvůj prostor na serveru — vidíš ho jen ty.'
+        ? ''
         : 'Na serveru máš vlastní prostor, který běží pořád a dostaneš se na ' +
           'něj odkudkoli — z téhle appky i z telefonu.');
 
