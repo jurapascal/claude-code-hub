@@ -868,6 +868,43 @@ body { display: flex; flex-direction: column; }
   color: var(--dim); font-size: 11px; font-weight: 700;
 }
 .ask-opt.sel .ask-num { color: var(--accent); border-color: var(--accent); }
+/* Zaškrtávací volba (AskUserQuestion s multiSelect): vybrané je, co má
+   fajfku — ne to, na čem stojí kurzor v terminálu. */
+.ask-box {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; flex: none; border-radius: 4px;
+  border: 1.5px solid var(--border); background: var(--bg-card);
+  color: #fff; font-size: 12px; font-weight: 800; line-height: 1;
+}
+.ask-opt.check.sel .ask-box { background: var(--accent); border-color: var(--accent); }
+.ask-opt { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.ask-desc {
+  display: block; margin-top: 2px;
+  color: var(--dim); font-size: 11.5px; font-weight: 400; line-height: 1.4;
+}
+/* Víc otázek najednou: kde člověk je a co už má odpovězené. */
+.ask-tabs {
+  display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px;
+}
+.ask-tabs[hidden] { display: none; }
+.ask-tab {
+  padding: 2px 8px; border-radius: 999px; font-size: 11px;
+  border: 1px solid var(--border); color: var(--dim);
+}
+.ask-tab.done {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.ask-nav {
+  padding: 5px 12px; border-radius: 8px; cursor: pointer;
+  background: var(--accent); border: 1px solid var(--accent);
+  color: #fff; font: inherit; font-size: 12.5px; font-weight: 600;
+  touch-action: manipulation;
+}
+.ask-nav.ghost {
+  background: none; color: var(--fg); border-color: var(--border);
+}
+.ask-nav[hidden] { display: none; }
 
 .ask-foot {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
@@ -2869,3 +2906,5 @@ body:not(.pokrocile) #memory-summary,
 body:not(.pokrocile) #memory,
 body:not(.pokrocile) #btn-refresh,
 body:not(.pokrocile) #projects-count { display: none !important; }
+.svc-sharing { color: var(--accent); }
+.svc-share { margin: 4px 0 8px; }

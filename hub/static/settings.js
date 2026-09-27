@@ -1176,46 +1176,53 @@
     },
   };
 
+  // Brána: sdílená napojení a sdílení účtů ze služeb (gateway/mcp_sdilene.py).
+  async function gwShared(payload) {
+    const r = await fetch('/gw/mcp-sdilene', payload === undefined ? {credentials: 'same-origin'} : {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-Hub-Account': '1'},
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || 'Server teď neodpovídá, zkus to za chvíli.');
+    return data;
+  }
+
+  /* Výběr lidí zaškrtávátky — kdo účet nebo napojení uvidí. */
+  function peopleChecks(people, chosen) {
+    const box = el('div', 'svc-people');
+    const me = ((state.config && state.config.gateway_user) || {}).email || '';
+    const others = people.filter((p) => p.email !== me);
+    if (!others.length) box.appendChild(el('span', 'set-dim', 'Na serveru zatím nikdo další není.'));
+    for (const p of others) {
+      const row = el('label', 'svc-person');
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.value = p.email;
+      cb.checked = chosen.has(p.email);
+      row.append(cb, el('span', null, p.name || p.email));
+      box.appendChild(row);
+    }
+    box.value = () => [...box.querySelectorAll('input:checked')].map((c) => c.value);
+    return box;
+  }
+
   function sdilenaNapojeni() {
     const wrap = el('div', 'svc-shared');
-    wrap.appendChild(el('div', 'set-title svc-tech', 'Sdílená napojení'));
+    wrap.appendChild(el('div', 'set-title svc-tech', 'Další sdílená napojení'));
     wrap.appendChild(el('div', 'set-note',
-      'Napojení, které si nastavíš jednou a nasdílíš dalším lidem. Klíče a hesla ' +
-      'drží server — nikdo z nich je neuvidí, ani jejich Claude. Sdílení jde ' +
-      'kdykoli zrušit a platí hned.'));
+      'Účty výš sdílíš tlačítkem „Sdílet“ přímo u nich. Tady je WordPress a další ' +
+      'napojení, které si nastavíš jednou a nasdílíš. Klíče a hesla drží server — ' +
+      'nikdo z nich je neuvidí, ani jejich Claude.'));
     const list = el('div', 'svc-list');
     wrap.appendChild(list);
     let people = [];
 
-    const gw = async (payload) => {
-      const r = await fetch('/gw/mcp-sdilene', payload === undefined ? {credentials: 'same-origin'} : {
-        method: 'POST', credentials: 'same-origin',
-        headers: {'Content-Type': 'application/json', 'X-Hub-Account': '1'},
-        body: JSON.stringify(payload),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error || 'Server teď neodpovídá, zkus to za chvíli.');
-      return data;
-    };
+    const gw = gwShared;
     // Claude Code v prostoru si most zaregistruje (nebo odebere) hned.
     const sync = () => io.api('connect', {action: 'shared-sync'}).catch(() => {});
 
-    function peoplePicker(chosen) {
-      const box = el('div', 'svc-people');
-      const me = ((state.config && state.config.gateway_user) || {}).email || '';
-      for (const p of people) {
-        if (p.email === me) continue;
-        const row = el('label', 'svc-person');
-        const cb = el('input');
-        cb.type = 'checkbox';
-        cb.value = p.email;
-        cb.checked = chosen.has(p.email);
-        row.append(cb, el('span', null, p.name || p.email));
-        box.appendChild(row);
-      }
-      box.value = () => [...box.querySelectorAll('input:checked')].map((c) => c.value);
-      return box;
-    }
+    const peoplePicker = (chosen) => peopleChecks(people, chosen);
 
     async function test(n, out) {
       out.textContent = 'Zkouším…';
@@ -1418,10 +1425,10 @@
       }
       people = data.people || [];
       list.textContent = '';
-      for (const n of data.napojeni || []) list.appendChild(card(n));
-      if (!(data.napojeni || []).length) {
-        list.appendChild(el('div', 'svc-empty', 'Zatím žádné — ani tvoje, ani nasdílené.'));
-      }
+      // Účty ze služeb (druh „ucet") jsou v kartách služeb výš.
+      const items = (data.napojeni || []).filter((n) => n.kind !== 'ucet');
+      for (const n of items) list.appendChild(card(n));
+      if (!items.length) list.appendChild(el('div', 'svc-empty', 'Zatím žádné.'));
       const add = el('button', 'btn ghost svc-add', '+ Nové sdílené napojení');
       add.onclick = () => { add.replaceWith(newForm()); };
       list.appendChild(add);
@@ -1446,13 +1453,22 @@
     const wrap = el('div', 'svc-list');
     wrap.appendChild(el('div', 'set-dim', 'Načítám služby…'));
     let data = null;
+    // Na serveru: kdo co s kým sdílí (brána). Účet jde nasdílet dalším lidem
+    // a nasdílené od ostatních se ukážou v kartě služby.
+    const onServer = !!(state.config && state.config.gateway_user);
+    let shared = null;
+    const sharedItems = (svcId) => ((shared && shared.napojeni) || [])
+      .filter((n) => n.kind === 'ucet' && n.service === svcId);
     let timer = null;
     const wait = (ms) => new Promise((res) => setTimeout(res, ms));
 
     async function load(refresh) {
       clearTimeout(timer);
       try {
-        data = await io.api('connect' + (refresh ? '?refresh=1' : ''));
+        [data, shared] = await Promise.all([
+          io.api('connect' + (refresh ? '?refresh=1' : '')),
+          onServer ? gwShared().catch(() => null) : null,
+        ]);
       } catch (err) {
         wrap.textContent = '';
         wrap.appendChild(el('div', 'set-warn', 'Služby se nenačetly: ' + err.message));
@@ -1460,7 +1476,8 @@
       }
       if (!wrap.isConnected && wrap.parentNode === null && data) { /* ještě nevložené */ }
       // Rozdělané přihlášení se nepřekresluje — člověk by přišel o vložený text.
-      if (!wrap.querySelector('.svc-login')) draw();
+      // …ani rozdělaný výběr lidí u sdílení.
+      if (!wrap.querySelector('.svc-login, .svc-share')) draw();
       if (data.checking) timer = setTimeout(() => load(false), 2500);
     }
 
@@ -1493,8 +1510,12 @@
       box.appendChild(head);
 
       const list = el('div', 'svc-accounts');
-      if (!(svc.accounts || []).length) list.appendChild(el('div', 'svc-empty', 'Zatím žádný účet.'));
+      const fromOthers = sharedItems(svc.id).filter((n) => !n.is_owner);
+      if (!(svc.accounts || []).length && !fromOthers.length) {
+        list.appendChild(el('div', 'svc-empty', 'Zatím žádný účet.'));
+      }
       for (const acc of svc.accounts || []) list.appendChild(accountRow(svc, acc));
+      for (const n of fromOthers) list.appendChild(sharedRow(n));
       box.appendChild(list);
       if (svc.warn) box.appendChild(el('div', 'mcp-warn', svc.warn));
 
@@ -1535,9 +1556,25 @@
       const col = el('span', 'onb-col');
       col.appendChild(el('span', null, acc.label));
       col.appendChild(el('small', null, [acc.status, acc.detail].filter(Boolean).join(' · ')));
+      const mine = sharedItems(svc.id).find((n) => n.is_owner && n.account === acc.name);
+      const members = (mine && mine.members) || [];
+      if (members.length) {
+        col.appendChild(el('small', 'svc-sharing',
+          'vidí i: ' + members.map((m) => m.name || m.email).join(', ')));
+      }
       row.appendChild(col);
       row.appendChild(el('span', 'spacer'));
       const slot = el('div', 'svc-slot');
+      if (onServer && shared) {
+        const share = el('button', 'btn ghost', members.length ? 'Sdíleno' : 'Sdílet');
+        share.title = 'Vyber, kdo další může tenhle účet používat';
+        share.onclick = () => {
+          if (slot.querySelector('.svc-share')) { slot.textContent = ''; return; }
+          slot.textContent = '';
+          slot.appendChild(shareForm(svc, acc, members, slot));
+        };
+        row.appendChild(share);
+      }
       // API klíč se znovu nepřihlašuje — špatný klíč = odebrat a přidat nový.
       if (acc.state !== 'ok' && acc.state !== 'unknown' && svc.kind !== 'apikey') {
         const again = el('button', 'btn ghost', 'Přihlásit');
@@ -1561,6 +1598,10 @@
         if (!confirm(`Odebrat účet ${acc.label} (${svc.label})?`)) return;
         try {
           const r = await io.api('connect', {action: 'remove', service: svc.id, name: acc.name});
+          if (mine) {
+            await gwShared({akce: 'sdilet-ucet', service: svc.id, account: acc.name, emaily: []})
+              .catch(() => {});
+          }
           io.toast(r.detail || 'Odebráno.');
           load(true);
         } catch (err) { io.toast('Nepovedlo se: ' + err.message); }
@@ -1569,6 +1610,53 @@
       wrapRow.appendChild(row);
       wrapRow.appendChild(slot);
       return wrapRow;
+    }
+
+    /* Kdo další účet uvidí. Klíče ani přihlášení se nikam nekopírují — brána
+       je čte z tvého prostoru, ostatní dostanou jen most (sdilene-…). */
+    function shareForm(svc, acc, members, slot) {
+      const f = el('div', 'svc-form svc-share');
+      f.appendChild(el('div', 'set-note', 'Kdo další může účet ' + acc.label +
+        ' používat? Budou pracovat pod tvým přihlášením' +
+        (svc.id === 'google' ? ' — uvidí tvůj Gmail, Disk i Kalendář.' : '.') +
+        ' Přihlašovací údaje neuvidí nikdo z nich.'));
+      const picker = peopleChecks((shared && shared.people) || [],
+                                  new Set(members.map((m) => m.email)));
+      const save = el('button', 'btn primary', 'Uložit');
+      const cancel = el('button', 'btn ghost', 'Zrušit');
+      const btns = el('div', 'svc-acc');
+      btns.append(save, cancel);
+      f.append(picker, btns);
+      cancel.onclick = () => { slot.textContent = ''; };
+      save.onclick = async () => {
+        save.disabled = true;
+        const emaily = picker.value();
+        try {
+          await gwShared({akce: 'sdilet-ucet', service: svc.id, account: acc.name,
+                          label: acc.label, emaily});
+          io.toast(emaily.length ? 'Účet ' + acc.label + ' teď vidí i vybraní lidé.'
+                                 : 'Účet ' + acc.label + ' už s nikým nesdílíš.');
+          load(false);
+        } catch (err) {
+          io.toast('Nepovedlo se: ' + err.message);
+          save.disabled = false;
+        }
+      };
+      return f;
+    }
+
+    // Účet, který mi nasdílel někdo jiný — jen ke čtení, spravuje ho vlastník.
+    function sharedRow(n) {
+      const row = el('div', 'svc-acc-wrap');
+      const r = el('div', 'svc-acc');
+      r.appendChild(el('span', 'mcp-dot set-ok', '●'));
+      const col = el('span', 'onb-col');
+      col.appendChild(el('span', null, n.label || n.account));
+      col.appendChild(el('small', null, 'nasdílel ' + (n.owner_name || n.owner) +
+        ' · v Claude jako ' + n.mcp_name));
+      r.appendChild(col);
+      row.appendChild(r);
+      return row;
     }
 
     function addForm(svc, form) {

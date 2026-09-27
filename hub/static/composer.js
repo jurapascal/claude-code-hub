@@ -310,6 +310,71 @@
   const HINT_NUM = 'Odpovědět jde i číslem · Enter potvrdí vybranou volbu';
   const HINT_PLAIN = 'Enter potvrdí vybranou volbu';
 
+  /* Dotaz s víc otázkami nebo se zaškrtávátky (AskUserQuestion). Naměřeno
+     v Claude Code 2.1.283:
+
+         ←  ☒ Barvy  ☐ Jidlo  ✔ Submit  →
+         Ktere barvy mas rad?
+         ❯ 1. [✔] Cervena
+                  Vibrantni a energicka barva
+           2. [ ] Modra
+           …
+           4. [ ] Type something
+              Next
+         ──────────────
+           5. Chat about this
+         Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+
+     Číslo volbu PŘEPNE (kurzor ❯ se nehne), Enter a mezerník přepnou tu pod
+     kurzorem, Tab (i →) jde na další otázku a nakonec na „Submit". Šipka ❯
+     tu tedy neznamená „tohle je vybrané" — vybrané je, co má [✔]. A číslo
+     „Chat about this" dotaz rovnou zahodí. */
+  const TABS = /^[\s│|]*←\s.*→[\s│|]*$/;
+  const TAB_ITEM = /([☐☒✔✓■□])\s+(.+?)(?=\s{2,}[☐☒✔✓■□]|\s*→|$)/g;
+  const CHECKBOX = /^\[([^\]]?)\]\s*/;
+  const NEXT_LINE = /^(Next|Submit)$/;
+  const HINT_MULTI = 'Zaškrtni všechno, co platí · pak Další';
+  const HINT_TABS = 'Klikni na odpověď — pak přijde další otázka';
+  // Popisky, které Claude Code do dotazu dává sám, anglicky.
+  const OWN_LABELS = [
+    [/^Type something\.?$/i, 'Napsat vlastní odpověď…'],
+    [/^Chat about this$/i, 'Radši to probrat v chatu (dotaz zavře)'],
+    [/^Submit answers$/i, 'Odeslat odpovědi'],
+    [/^Cancel$/i, 'Zrušit'],
+  ];
+  function ownLabel(label) {
+    for (const [re, cz] of OWN_LABELS) if (re.test(label)) return cz;
+    return label;
+  }
+
+  /* Záložky otázek z řádku „←  ☒ Barvy  ☐ Jidlo  ✔ Submit  →". Submit je
+     vždycky s fajfkou, tak se vynechává — patří mu tlačítko Další. */
+  function scanTabs(line) {
+    const out = [];
+    const inner = line.replace(/^[\s│|]*←\s*/, '').replace(/\s*→[\s│|]*$/, '');
+    for (const m of inner.matchAll(TAB_ITEM)) {
+      const label = m[2].trim();
+      if (/^submit$/i.test(label)) continue;
+      out.push({label, done: m[1] !== '☐' && m[1] !== '□'});
+    }
+    return out;
+  }
+
+  /* Popis pod volbou (odsazené řádky mezi ní a další volbou). Bez něj by
+     v kartě zbyla holá slova a nebylo by poznat, čím se volby liší. */
+  function optionDesc(lines, from, to) {
+    const out = [];
+    for (let i = from + 1; i < to && i < lines.length; i++) {
+      const raw = unbox(lines[i]);
+      const s = raw.replace(/^\s*[❯>]?\s*/, '').trim();
+      // Popis je vždycky odsazený — nápověda pod volbami („Enter to select")
+      // začíná u kraje a do popisu nepatří.
+      if (!s || !/^\s{3}/.test(raw) || RULE.test(s) || NEXT_LINE.test(s)) break;
+      out.push(s);
+    }
+    return out.join(' ').slice(0, 200);
+  }
+
   // Vestavěné příkazy Claude Code, které se nedají vyčíst ze složky skillů.
   // Ostatní agenti si svoje nesou v katalogu (hub/agents.py).
   const BUILTIN = ['/clear', '/compact', '/context', '/model', '/status',
@@ -507,12 +572,15 @@
     askRoot.hidden = true;
     askRoot.innerHTML = `
       <div class="ask-card">
+        <div class="ask-tabs" hidden></div>
         <div class="ask-title"></div>
         <div class="ask-body"></div>
         <div class="ask-opts"></div>
         <div class="ask-foot">
           <span class="ask-hint"></span>
           <span class="spacer"></span>
+          <button class="ask-nav ghost" data-act="prev" hidden title="Předchozí otázka">← Zpět</button>
+          <button class="ask-nav" data-act="next" hidden title="Další otázka (Tab)">Další →</button>
           <button class="ask-ghost" data-act="term" title="Schová kartu a ukáže dotaz tak, jak ho kreslí Claude Code">${icon('i-terminal')} Terminál</button>
           <button class="ask-ghost" data-act="esc" title="Zavře dotaz bez odpovědi (Esc)">Zrušit</button>
         </div>
@@ -1101,14 +1169,26 @@
     const askBody = askRoot.querySelector('.ask-body');
     const askOpts = askRoot.querySelector('.ask-opts');
     const askHint = askRoot.querySelector('.ask-hint');
+    const askTabs = askRoot.querySelector('.ask-tabs');
+    const askPrev = askRoot.querySelector('[data-act=prev]');
+    const askNext = askRoot.querySelector('[data-act=next]');
     const askEsc = askRoot.querySelector('[data-act=esc]');
     let answerSig = '';
+    let questionSig = '';      // která otázka je v kartě — bez stavu zaškrtnutí
 
     function press(data) {
       toPty(data);
       // Psaní (filtr v hledání, vlastní odpověď) má po kliknutí pokračovat
       // v terminálu, ne na tlačítku.
       term.focus();
+    }
+
+    /* Klávesa bez fokusu do terminálu. Zaškrtávání se kliká několikrát za
+       sebou a fokus by na telefonu pokaždé vytáhl klávesnici: okno se
+       zmenší, Claude Code překreslí, karta poskočí — a další klik se trefí
+       vedle. Přesně tohle bylo to „lagování". */
+    function tap(data) {
+      toPty(data);
     }
 
     /* Nabídka bez čísel se ovládá jedině šipkami, takže kliknutí znamená
@@ -1140,6 +1220,26 @@
          kreslí jedině u toho, co se dá vybrat. */
       const found = lines.length ? scanOptions(lines) : [];
       const opts = found.some(o => o.sel) ? found : [];
+      // Záložky otázek nad volbami (AskUserQuestion) — poslední nad první volbou.
+      let tabsRow = -1;
+      if (opts.length) {
+        for (let i = opts[0].row - 1; i >= 0; i--) {
+          if (TABS.test(lines[i])) { tabsRow = i; break; }
+        }
+      }
+      const tabs = tabsRow >= 0 ? scanTabs(lines[tabsRow]) : [];
+      const multi = opts.some(o => CHECKBOX.test(o.label));
+      /* Na úzkém telefonu se řádek se záložkami zalomí a nenajde. Dotaz pak
+         začíná pod vodorovnou čárou, kterou ho Claude Code odděluje od výpisu. */
+      let top = tabsRow + 1;
+      if (tabsRow < 0 && multi) {
+        for (let i = opts[0].row - 1; i >= 0; i--) {
+          if (RULE.test(lines[i]) && lines[i].trim()) { top = i + 1; break; }
+        }
+      }
+      // Otázka (ne závěrečné „Submit answers") — na ní má smysl Další.
+      const asking = (tabsRow >= 0 || multi) &&
+                     !opts.some(o => /^Submit answers$/i.test(o.label));
       const plain = opts.length || !lines.length ? [] : scanPlain(lines);
       const picker = !opts.length && !plain.length && PICKER.test(text);
       const yesno = !opts.length && !plain.length && !picker && YESNO.test(text);
@@ -1147,7 +1247,23 @@
       /* Volby jako řádky karty. Číslované se odpovídají číslem, nečíslované
          dojezdem šipek — pro člověka je to v obou případech jedno kliknutí. */
       const rows = [];
-      if (opts.length) {
+      if (opts.length && (multi || asking || tabsRow >= 0)) {
+        opts.forEach((o, i) => {
+          const box = CHECKBOX.exec(o.label);
+          const label = box ? o.label.slice(box[0].length) : o.label;
+          const typing = /^Type something/i.test(label);
+          const end = i + 1 < opts.length ? opts[i + 1].row : lines.length;
+          rows.push({
+            key: o.key, label: ownLabel(label), row: o.row,
+            desc: typing ? '' : optionDesc(lines, o.row, end),
+            // U zaškrtávátek „vybrané" = [✔], ne kurzor; jinde kurzor.
+            sel: multi ? !!(box && box[1].trim()) : o.sel,
+            check: !!box,
+            // Vlastní odpověď se píše v terminálu, tam fokus patří.
+            run: () => (typing ? press(o.key) : tap(o.key)),
+          });
+        });
+      } else if (opts.length) {
         for (const o of opts) {
           rows.push({key: o.key, label: o.label, sel: o.sel, row: o.row,
                      run: () => press(o.key)});
@@ -1168,9 +1284,13 @@
       // Text nad volbami a nápověda pod nimi. Ano/ne se nekreslí jako seznam,
       // takže tam žádné „nad" a „pod" není — bere se celý dotaz.
       const numbered = rows.length && rows[0].row != null;
+      /* Nad záložkami je obyčejný výpis konverzace (rámeček tu není), takže
+         text dotazu začíná až pod nimi — jinak by se do karty dostalo až
+         třicet řádků toho, co Claude psal předtím. */
       const body = rows.length || note
-        ? dialogBody(lines, numbered ? rows[0].row : lines.length) : [];
+        ? dialogBody(lines.slice(top), (numbered ? rows[0].row : lines.length) - top) : [];
       const hint = !rows.length ? ''
+                 : multi ? HINT_MULTI : asking ? HINT_TABS
                  : opts.length ? HINT_NUM : plain.length ? HINT_PLAIN : '';
       let blocks = bodyBlocks(body);
       /* „Esc to cancel" v textu je nápověda ke klávese, ne věta dotazu —
@@ -1214,6 +1334,8 @@
       // uprostřed kliknutí, protože terminál překresluje i sám od sebe.
       const sig = [
         rows.map(r => (r.sel ? '*' : '') + (r.key || '') + r.label).join('|'),
+        tabs.map(t => (t.done ? '+' : '') + t.label).join('|'),
+        asking ? 'nav' : '',
         title,
         blocks.map(b => b.lines.join('\n')).join('\n\n'),
         hint,
@@ -1240,6 +1362,12 @@
         }, ASK_HOLD_MS);
       }
       if (rows.length) {
+        askTabs.textContent = '';
+        for (const t of tabs) {
+          askTabs.appendChild(el('span', 'ask-tab' + (t.done ? ' done' : ''),
+                                 (t.done ? '✓ ' : '') + t.label));
+        }
+        askTabs.hidden = tabs.length < 2;
         askTitle.textContent = title;
         askTitle.hidden = !title;
         askBody.textContent = '';
@@ -1251,11 +1379,15 @@
         askBody.hidden = !blocks.length;
         askOpts.textContent = '';
         for (const r of rows) {
-          const btn = el('button', 'ask-opt' + (r.sel ? ' sel' : ''));
-          if (r.key) btn.appendChild(el('span', 'ask-num', r.key));
-          btn.appendChild(el('span', 'ask-opt-label', r.label));
+          const btn = el('button', 'ask-opt' + (r.sel ? ' sel' : '') + (r.check ? ' check' : ''));
+          btn.type = 'button';
+          if (r.check) btn.appendChild(el('span', 'ask-box', r.sel ? '✓' : ''));
+          else if (r.key) btn.appendChild(el('span', 'ask-num', r.key));
+          const text = el('span', 'ask-opt-label', r.label);
+          if (r.desc) text.appendChild(el('small', 'ask-desc', r.desc));
+          btn.appendChild(text);
           // Na kterou volbu ukazuje ❯ v terminálu — tam padne Enter.
-          if (r.sel) btn.insertAdjacentHTML('beforeend', icon('i-check'));
+          if (r.sel && !r.check) btn.insertAdjacentHTML('beforeend', icon('i-check'));
           btn.onclick = r.run;
           askOpts.appendChild(btn);
         }
@@ -1263,7 +1395,18 @@
         // U hlášky je „Zavřít" jediné tlačítko nahoře — „Zrušit" v patičce
         // dělá to samé a jen mate, čím z toho se vlastně odchází.
         askEsc.hidden = note;
-        askCard.scrollTop = 0;
+        // Zpět i ze závěrečného „Odeslat odpovědi" — kdo si to rozmyslí.
+        askPrev.hidden = tabs.length < 2;
+        askNext.hidden = !asking;
+        askNext.textContent = tabs.length && tabs.every(t => t.done) || tabs.length < 2
+          ? 'Hotovo →' : 'Další →';
+        /* Nahoru jen u nové otázky. Zaškrtnutí kartu překreslí taky, a kdyby
+           pokaždé vyjela nahoru, další volba by utekla zpod prstu. */
+        const q = title + '\u0000' + rows.map(r => r.key + r.label).join('|');
+        if (q !== questionSig) askCard.scrollTop = 0;
+        questionSig = q;
+      } else {
+        questionSig = '';
       }
 
       answer.hidden = !buttons.length;
@@ -1294,6 +1437,9 @@
     askRoot.querySelector('[data-act=term]').onclick = () => askShow(false);
     askRoot.querySelector('.ask-back').onclick = () => askShow(true);
     askEsc.onclick = () => press('\x1b');
+    // Tab i ← jdou mezi otázkami bez ohledu na to, kde stojí kurzor ❯.
+    askNext.onclick = () => tap('\t');
+    askPrev.onclick = () => tap('\x1b[D');
 
     /* Lišta s odpovědí leží přes spodek terminálu — tedy přes poslední řádky
        dialogu, který popisuje. Terminál se o ni proto na tu chvíli zkrátí,

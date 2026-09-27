@@ -1559,6 +1559,8 @@ class Handler(BaseHTTPRequestHandler):
                 result = mcp_sdilene.update(user, form)
             elif action == "smazat":
                 result = mcp_sdilene.delete(user, form.get("slug"))
+            elif action == "sdilet-ucet":
+                result = mcp_sdilene.share_account(user, form)
             elif action == "test":
                 if not mcp_sdilene.member(user, form.get("slug")):
                     raise ValueError("Takové napojení nemáš.")
@@ -1586,7 +1588,9 @@ class Handler(BaseHTTPRequestHandler):
         if form.get("op") == "seznam":
             return self._json({"ok": True, "napojeni": [
                 {"slug": n["slug"], "name": n["name"], "owner": n["owner_name"] or n["owner"],
-                 "mcp_name": n["mcp_name"]} for n in mcp_sdilene.for_user(user)]})
+                 "mcp_name": n["mcp_name"]} for n in mcp_sdilene.for_user(user)
+                # Svůj účet ze služby má vlastník v prostoru napřímo.
+                if not (n.get("kind") == "ucet" and n.get("is_owner"))]})
         try:
             out = mcp_sdilene.call(user, form.get("slug"), form.get("relace"), form.get("zprava"))
         except PermissionError as exc:

@@ -737,6 +737,7 @@ def login_cancel(login_id):
 
 # ── sdílená napojení (jen v prostoru na serveru) ─────────────────────────────
 SHARED_PREFIX = "sdilene-"
+SHARED_SYNC_EVERY = 120
 _shared_lock = threading.Lock()
 
 
@@ -757,7 +758,7 @@ def _gateway_call(body, timeout=15):
         return None
 
 
-def sync_shared():
+def sync_shared(force=True):
     """Srovná `sdilene-*` v Claude Code s tím, co s uživatelem kdo sdílí.
 
     Každé sdílené napojení je v Claude Code stdio most tools/sdilene_mcp.py —
@@ -777,20 +778,24 @@ def sync_shared():
         want = {n["mcp_name"]: n["slug"] for n in data.get("napojeni") or []
                 if isinstance(n, dict) and re.fullmatch(r"sdilene-[a-z0-9-]{1,40}",
                                                         str(n.get("mcp_name") or ""))}
+        changed = False
         for name, spec in have.items():
             if name in want and spec.get("command") == python \
                     and spec.get("args") == [script, want[name]]:
                 continue
             _run([claude, "mcp", "remove", name, "-s", "user"])
+            changed = True
         for name, slug in want.items():
             spec = have.get(name) or {}
             if spec.get("command") == python and spec.get("args") == [script, slug]:
                 continue
+            changed = True
             r = _run([claude, "mcp", "add", name, "-s", "user", "--", python, script, slug])
             if r.returncode != 0:
                 core.log(f"sdílené napojení {name}: {(r.stderr or r.stdout or '').strip()[:200]}",
                          "warn")
-    write_claude_md()
+    if changed or force:
+        write_claude_md()
     return len(want)
 
 
@@ -809,6 +814,15 @@ def _sync_on_start():
     # sync_shared přehled v CLAUDE.md zapíše samo — když doběhne.
     if not core.on_gateway() or sync_shared() is None:
         write_claude_md()
+        return
+    # Co mi kdo nově nasdílí (nebo vezme), se v Claude Code objeví samo —
+    # bez restartu prostoru a bez otevírání nastavení.
+    while True:
+        time.sleep(SHARED_SYNC_EVERY)
+        try:
+            sync_shared(force=False)
+        except Exception as exc:
+            core.log(f"sdílená napojení: {exc}", "warn")
 
 
 # ── přehled napojení pro Clauda ──────────────────────────────────────────────

@@ -10,6 +10,14 @@ Dva druhy:
 
 * **adresa** — vzdálený MCP server (Streamable HTTP). Brána k požadavku
   přidá uložené hlavičky (typicky `Authorization: Bearer …`).
+* **účet** — účet ze služby, kterou má vlastník napojenou u sebe v prostoru
+  (Nastavení → Propojené služby: Freelo, Canva, Ecomail, Clockify, Google).
+  Nic se nekopíruje do registru: brána si adresu, hlavičky a přihlášení čte
+  při každém spojení z vlastníkova domova, takže když se vlastník přihlásí
+  znovu, platí to hned i pro ostatní. Vypršelé přihlášení OAuth brána obnoví
+  sama a nové tokeny zapíše vlastníkovi zpátky (jinak by mu ten starý přestal
+  fungovat). Google běží jako příkaz (workspace-mcp) v sandboxu s kopií
+  tokenu jen toho jednoho účtu.
 * **příkaz** — MCP server spouštěný příkazem (`npx -y balíček`), tajemství
   v proměnných prostředí. Brána ho pustí sama, v bwrap sandboxu, který vidí
   jen systém ke čtení a vlastní složku na cache (HOME) — žádný domov, žádný
@@ -41,7 +49,7 @@ import time
 import unicodedata
 import urllib.parse
 
-from . import config, isolation, shared
+from . import config, isolation, safefs, shared
 
 DIR = os.environ.get("HUB_GW_MCP_SHARED_DIR", os.path.join(config.GATEWAY_DIR, "mcp-sdilene"))
 REGISTRY = os.path.join(DIR, "registr.json")
@@ -57,6 +65,7 @@ IDLE = int(os.environ.get("HUB_GW_MCP_SHARED_IDLE", str(15 * 60)))
 MAX_PROCS = int(os.environ.get("HUB_GW_MCP_SHARED_PROCS", "24"))
 TIMEOUT = 180                      # jedno volání nástroje (třeba export z WordPressu)
 MAX_MESSAGE = 8 * 1024 * 1024
+UA = "claude-code-hub-brana/1"
 _LOCK = threading.Lock()
 
 
@@ -118,6 +127,10 @@ def _public(slug, entry, uid):
            "owner": owner["email"] if owner else "", "owner_name": _label(entry.get("owner")),
            "is_owner": entry.get("owner") == uid, "created": entry.get("created", ""),
            "mcp_name": "sdilene-" + slug}
+    if entry.get("kind") == "ucet":
+        out["service"] = entry.get("service", "")
+        out["account"] = entry.get("account", "")
+        out["label"] = entry.get("label", "")
     if entry.get("owner") == uid:
         out["members"] = [{"email": u["email"], "name": u.get("name", "")}
                           for u in (_account(m) for m in entry.get("members", []))
@@ -125,7 +138,7 @@ def _public(slug, entry, uid):
         if entry.get("kind") == "adresa":
             out["url"] = entry.get("url", "")
             out["secrets"] = sorted(entry.get("headers") or {})
-        else:
+        elif entry.get("kind") == "prikaz":
             out["command"] = " ".join(entry.get("command") or [])
             out["secrets"] = sorted(entry.get("env") or {})
     return out
@@ -306,6 +319,105 @@ def delete(user, slug):
     return {"ok": True, "slug": slug}
 
 
+# ── účty ze služeb vlastníka (druh „ucet") ──────────────────────────────────
+SERVICES = {"freelo": "Freelo", "canva": "Canva", "ecomail": "Ecomail",
+            "clockify": "Clockify", "google": "Google"}
+ACCOUNT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
+GOOGLE_TOOLS = ["gmail", "drive", "calendar", "docs", "sheets", "slides",
+                "forms", "tasks", "contacts"]
+
+
+def _home(uid):
+    from . import workspace          # workspace importuje shared → až tady
+    u = _account(uid)
+    return workspace.home_for(u) if u else ""
+
+
+def _google_file(email):
+    import urllib.parse as up
+    return ".google_workspace_mcp/credentials/" + up.quote(email, safe="@._-") + ".json"
+
+
+def _owner_server(entry):
+    """(adresa, hlavičky) účtu z vlastníkova ~/.claude.json — nebo ValueError."""
+    home = _home(entry.get("owner"))
+    raw = safefs.read_text(home, ".claude.json", 16 * 1024 * 1024) if home else None
+    try:
+        servers = (json.loads(raw or "{}").get("mcpServers") or {})
+    except ValueError:
+        servers = {}
+    spec = servers.get(entry.get("account"))
+    if not isinstance(spec, dict) or not spec.get("url"):
+        raise RuntimeError("Vlastník tenhle účet u sebe už nemá — sdílení je potřeba "
+                           "nastavit znovu.")
+    url = str(spec["url"])
+    if urllib.parse.urlparse(url).scheme != "https":
+        raise RuntimeError("Sdílet jde jen napojení na https adresu.")
+    headers = {str(k): str(v) for k, v in (spec.get("headers") or {}).items()
+               if HEADER_NAME.fullmatch(str(k)) and str(k).lower() not in OWN_HEADERS}
+    return url, headers
+
+
+def _check_account(owner_uid, service, account):
+    """Má vlastník tenhle účet opravdu u sebe? Jinak ValueError."""
+    if service not in SERVICES:
+        raise ValueError("Tuhle službu sdílet neumím.")
+    home = _home(owner_uid)
+    if service == "google":
+        if "@" not in account or len(account) > 200 or \
+                not safefs.is_file(home, _google_file(account)):
+            raise ValueError("Tenhle Google účet u sebe nemáš.")
+        return
+    if not ACCOUNT_NAME.fullmatch(account) or \
+            (account != service and not account.startswith(service + "-")):
+        raise ValueError("Takový účet u služby není.")
+    try:
+        _owner_server({"owner": owner_uid, "account": account})
+    except RuntimeError as exc:
+        raise ValueError(str(exc)) from None
+
+
+def share_account(user, form):
+    """Nastaví, s kým vlastník sdílí svůj účet ze služby. Prázdný seznam =
+    sdílení zrušit. Záznam je jeden na (vlastník, služba, účet)."""
+    uid = int(user["id"])
+    service = str(form.get("service") or "")
+    account = str(form.get("account") or "").strip()
+    label = " ".join(str(form.get("label") or "").split())[:40]
+    _check_account(uid, service, account)
+    ids, unknown = _resolve(form.get("emaily"))
+    if unknown:
+        raise ValueError("Tihle lidé tu účet nemají: " + ", ".join(unknown))
+    ids = [i for i in ids if i != uid]
+    with _locked():
+        items = _load()
+        slug = next((s for s, e in items.items() if e.get("kind") == "ucet"
+                     and e.get("owner") == uid and e.get("service") == service
+                     and e.get("account") == account), None)
+        removed = []
+        if not ids:
+            if slug:
+                removed = items.pop(slug).get("members", [])
+                _save(items)
+        elif slug:
+            entry = items[slug]
+            removed = [m for m in entry.get("members", []) if m != uid and m not in ids]
+            entry["members"] = [uid] + ids
+            _save(items)
+        else:
+            owner = _label(uid).split("@")[0].split(" ")[0]
+            name = f"{SERVICES[service]} {label or account} ({owner})"[:60]
+            slug = _slugify(f"{service} {label or account.split('@')[0]} {owner}", items)
+            items[slug] = {"name": name, "owner": uid, "members": [uid] + ids,
+                           "created": time.strftime("%Y-%m-%d %H:%M:%S"), "kind": "ucet",
+                           "service": service, "account": account, "label": label}
+            _save(items)
+    if slug:
+        _log(user, "sdilet-ucet", slug, clenove=[_label(i) for i in ids])
+        POOL.stop(slug, None if not ids else removed)
+    return {"ok": True, "slug": slug if ids else ""}
+
+
 def forget_user(uid):
     """Smazaný účet: pryč ze sdílení; jeho napojení zmizí celá (klíče byly jeho)."""
     if not os.path.exists(REGISTRY):
@@ -343,9 +455,11 @@ class _Remote:
     def send(self, msg):
         self.used = time.time()
         body = json.dumps(msg).encode("utf-8")
-        headers = dict(self.headers)
+        headers = self._headers()
         headers.update({"Content-Type": "application/json",
                         "Accept": "application/json, text/event-stream"})
+        # Bez User-Agent některé služby (Ecomail za firewallem) odpoví 403.
+        headers.setdefault("User-Agent", UA)
         if self.session:
             headers["Mcp-Session-Id"] = self.session
         path = self.url.path or "/"
@@ -377,6 +491,9 @@ class _Remote:
         finally:
             conn.close()
 
+    def _headers(self):
+        return dict(self.headers)
+
     @staticmethod
     def _events(resp, want):
         """Zprávy ze streamu SSE až po odpověď na náš požadavek."""
@@ -406,6 +523,177 @@ class _Remote:
         pass
 
 
+_TOKEN_LOCK = threading.Lock()
+
+
+class _Account(_Remote):
+    """Účet ze služby vlastníka (druh „ucet"): adresa a hlavičky z jeho
+    ~/.claude.json, přihlášení OAuth z jeho ~/.claude/.credentials.json.
+    Čte se znovu u každé zprávy — nové přihlášení vlastníka platí hned."""
+
+    def __init__(self, entry):
+        self.entry = entry
+        url, headers = _owner_server(entry)
+        super().__init__({"url": url, "headers": headers})
+        self.server_url = url
+
+    def _headers(self):
+        url, headers = _owner_server(self.entry)
+        if url != self.server_url:
+            raise RuntimeError("Vlastník účet mezitím změnil — Claude se připojí znovu.")
+        if not any(k.lower() == "authorization" for k in headers):
+            # Klíč v hlavičce (Clockify) přihlášení OAuth nepotřebuje.
+            token = _oauth_token(self.entry, url, required=not headers)
+            if token:
+                headers["Authorization"] = "Bearer " + token
+        return headers
+
+
+def _oauth_entry(creds, name, url):
+    for key, item in (creds.get("mcpOAuth") or {}).items():
+        if isinstance(item, dict) and item.get("serverName") == name and \
+                item.get("serverUrl") == url and item.get("accessToken"):
+            return key, item
+    return None, None
+
+
+def _oauth_token(entry, url, required=True):
+    """Platný přístupový token vlastníka pro tenhle účet. Vypršelý obnoví
+    a nové tokeny zapíše vlastníkovi zpátky — bez toho by mu obnovovací token,
+    který služba po použití zneplatní, přestal fungovat."""
+    home = _home(entry.get("owner"))
+    rel = ".claude/.credentials.json"
+    with _TOKEN_LOCK:
+        try:
+            creds = json.loads(safefs.read_text(home, rel) or "{}")
+        except ValueError:
+            creds = {}
+        key, item = _oauth_entry(creds, entry.get("account"), url)
+        if not item and not required:
+            return ""
+        if not item:
+            raise RuntimeError("Vlastník u tohohle účtu není přihlášený — má se v "
+                               "Propojených službách přihlásit znovu.")
+        expires = item.get("expiresAt") or 0
+        if not expires or expires / 1000 > time.time() + 90:
+            return item["accessToken"]
+        if not item.get("refreshToken") or not item.get("clientId"):
+            raise RuntimeError("Přihlášení vlastníka vypršelo — má se v Propojených "
+                               "službách přihlásit znovu.")
+        fresh = _refresh(item, url)
+        # Mezitím mohl zapisovat Claude Code vlastníka — načíst znovu a změnit
+        # jen tenhle záznam, a jen když je pořád ten, který jsme obnovovali.
+        try:
+            creds = json.loads(safefs.read_text(home, rel) or "{}")
+        except ValueError:
+            creds = {}
+        cur = (creds.get("mcpOAuth") or {}).get(key)
+        if isinstance(cur, dict) and cur.get("refreshToken") == item["refreshToken"]:
+            cur["accessToken"] = fresh["access_token"]
+            if fresh.get("refresh_token"):
+                cur["refreshToken"] = fresh["refresh_token"]
+            cur["expiresAt"] = int((time.time() + int(fresh.get("expires_in") or 3600)) * 1000)
+            safefs.write_text(home, rel, json.dumps(creds, indent=2), mode=0o600, heal=False)
+        return fresh["access_token"]
+
+
+def _http_json(url, data=None):
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise RuntimeError("Přihlašovací server služby není na https.")
+    path = (parsed.path or "/") + ("?" + parsed.query if parsed.query else "")
+    conn = http.client.HTTPSConnection(parsed.hostname, parsed.port or 443, timeout=20,
+                                       context=ssl.create_default_context())
+    try:
+        if data is None:
+            conn.request("GET", path, headers={"Accept": "application/json", "User-Agent": UA})
+        else:
+            conn.request("POST", path, body=urllib.parse.urlencode(data).encode(),
+                         headers={"Content-Type": "application/x-www-form-urlencoded",
+                                  "Accept": "application/json", "User-Agent": UA})
+        resp = conn.getresponse()
+        body = resp.read(1024 * 1024)
+        try:
+            out = json.loads(body.decode("utf-8") or "null")
+        except ValueError:
+            out = None
+        return resp.status, out
+    finally:
+        conn.close()
+
+
+def _token_endpoint(item, url):
+    base = ((item.get("discoveryState") or {}).get("authorizationServerUrl") or "").rstrip("/")
+    if not base:
+        # Kde služba přihlašuje, prozradí metadata chráněného zdroje (RFC 9728).
+        p = urllib.parse.urlparse(url)
+        base = f"{p.scheme}://{p.netloc}"
+        for meta in (f"{base}/.well-known/oauth-protected-resource{p.path}",
+                     f"{base}/.well-known/oauth-protected-resource"):
+            try:
+                status, data = _http_json(meta)
+            except (OSError, http.client.HTTPException):
+                continue
+            servers = (data or {}).get("authorization_servers") if status == 200 else None
+            if servers:
+                base = str(servers[0]).rstrip("/")
+                break
+    p = urllib.parse.urlparse(base)
+    root, sub = f"{p.scheme}://{p.netloc}", p.path.strip("/")
+    tries = [f"{root}/.well-known/oauth-authorization-server" + (f"/{sub}" if sub else ""),
+             f"{root}/.well-known/openid-configuration" + (f"/{sub}" if sub else ""),
+             f"{base}/.well-known/oauth-authorization-server",
+             f"{base}/.well-known/openid-configuration"]
+    for meta in dict.fromkeys(tries):
+        try:
+            status, data = _http_json(meta)
+        except (OSError, http.client.HTTPException):
+            continue
+        if status == 200 and isinstance(data, dict) and data.get("token_endpoint"):
+            return data["token_endpoint"]
+    raise RuntimeError("Nepovedlo se obnovit přihlášení vlastníka (služba nemá token "
+                       "endpoint) — má se přihlásit znovu.")
+
+
+def _refresh(item, url):
+    form = {"grant_type": "refresh_token", "refresh_token": item["refreshToken"],
+            "client_id": item["clientId"], "resource": url}
+    if item.get("clientSecret"):
+        form["client_secret"] = item["clientSecret"]
+    endpoint = _token_endpoint(item, url)
+    try:
+        status, data = _http_json(endpoint, form)
+        if status == 400 and isinstance(data, dict) and "resource" in str(data):
+            form.pop("resource")
+            status, data = _http_json(endpoint, form)
+    except (OSError, http.client.HTTPException) as exc:
+        raise RuntimeError(f"Přihlašovací server služby není k dosažení: {exc}") from None
+    if status != 200 or not isinstance(data, dict) or not data.get("access_token"):
+        raise RuntimeError("Přihlášení vlastníka vypršelo a nejde obnovit — má se v "
+                           "Propojených službách přihlásit znovu.")
+    return data
+
+
+def _google_entry(entry):
+    """Google účet vlastníka jako příkaz: workspace-mcp s kopií tokenu jen toho
+    jednoho účtu ve vlastní složce napojení (ne ve vlastníkově domově)."""
+    from . import workspace
+    cid, secret = workspace.google_client()
+    if not cid or not secret:
+        raise RuntimeError("Google na tomhle serveru není nastavený.")
+    email = entry["account"]
+    data = safefs.read_bytes(_home(entry.get("owner")), _google_file(email), 256 * 1024)
+    if not data:
+        raise RuntimeError("Vlastník tenhle Google účet u sebe už nemá.")
+    return {"kind": "prikaz",
+            "command": ["uvx", "workspace-mcp", "--tool-tier", "extended",
+                        "--tools", *GOOGLE_TOOLS],
+            "env": {"GOOGLE_OAUTH_CLIENT_ID": cid, "GOOGLE_OAUTH_CLIENT_SECRET": secret,
+                    "USER_GOOGLE_EMAIL": email,
+                    "WORKSPACE_MCP_CREDENTIALS_DIR": "{home}/.google_workspace_mcp/credentials"},
+            "files": {_google_file(email): data}}
+
+
 class _Process:
     """MCP server spuštěný příkazem, v sandboxu, za jedno sezení mostu."""
 
@@ -418,8 +706,10 @@ class _Process:
             # Proces patří bráně: když brána skončí, skončí i on (a s ním celý
             # jmenný prostor PID) — žádná scope, kterou by musel někdo uklízet.
             argv.insert(argv.index("--"), "--die-with-parent")
+        for rel, data in (entry.get("files") or {}).items():
+            safefs.write_bytes(home, rel, data, mode=0o600)
         env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": home, "LANG": "C.UTF-8",
-               **(entry.get("env") or {})}
+               **{k: str(v).replace("{home}", home) for k, v in (entry.get("env") or {}).items()}}
         self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.DEVNULL, env=env, cwd=home,
                                      start_new_session=True)
@@ -503,12 +793,16 @@ class Pool:
                 return item
             if item:
                 item.close()
+            if entry["kind"] == "ucet" and entry.get("service") == "google":
+                entry = _google_entry(entry)
             if entry["kind"] == "prikaz":
                 procs = [k for k, v in self.items.items() if isinstance(v, _Process)]
                 if len(procs) >= MAX_PROCS:
                     oldest = min(procs, key=lambda k: self.items[k].used)
                     self.items.pop(oldest).close()
                 item = _Process(slug, entry)
+            elif entry["kind"] == "ucet":
+                item = _Account(entry)
             else:
                 item = _Remote(entry)
             self.items[key] = item
