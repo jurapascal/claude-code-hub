@@ -2920,3 +2920,26 @@ body:not(.pokrocile) #projects-count { display: none !important; }
 .hlas-ico { width: 26px; height: 26px; flex: none; fill: currentColor; opacity: .75; }
 .hlas-tile.on .hlas-ico { opacity: 1; }
 .hlas-tile.on .hlas-ico { fill: var(--accent); }
+
+/* Nastavení → Účet na serveru: profil nahoře a karty s ikonkami. */
+.acc-pass[hidden] { display: none; }
+.acc-profile { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-card); margin-top: 6px; }
+.acc-avatar { width: 44px; height: 44px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; font-weight: 700; font-size: 16px;
+  background: var(--accent); color: #fff; }
+.acc-id { flex: 1 1 12rem; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.acc-id strong { font-size: 15px; color: var(--fg-bright); }
+.acc-id small { font-size: 12.5px; opacity: .7; overflow-wrap: anywhere; }
+.acc-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.acc-cards { display: grid; grid-template-columns: 1fr 1fr;
+  gap: 12px; margin-top: 12px; }
+.acc-cards .acc-sec.acc-card { margin: 0; padding: 14px 16px; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--bg-card); }
+.acc-cards .acc-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.acc-card > .set-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.acc-card > .set-title .ico { width: 18px; height: 18px; fill: var(--accent); }
+.acc-card .set-row { margin-top: 10px; }
+.acc-card .set-row:empty, .acc-card > div:empty { display: none; }
+@media (max-width: 640px) { .acc-cards { grid-template-columns: 1fr; } }

@@ -884,8 +884,7 @@
 
     const box = section('Účet',
       naServeru
-        ? 'Pracuješ ve svém prostoru na serveru. Projekty, paměť i napojení ' +
-          'jsou tvoje a nikdo jiný na ně nevidí.'
+        ? 'Tvůj prostor na serveru — vidíš ho jen ty.'
         : 'Na serveru máš vlastní prostor, který běží pořád a dostaneš se na ' +
           'něj odkudkoli — z téhle appky i z telefonu.');
 
@@ -907,21 +906,45 @@
     }
 
     // ---- hub na serveru ----
+    // Karta s ikonkou v nadpisu — Claude, počítač, zabezpečení vedle sebe
+    // přehledně, ne jako jeden dlouhý text pod sebou.
+    function card(block, ico) {
+      block.classList.add('acc-card');
+      const title = block.querySelector('.set-title');
+      if (title) {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('class', 'ico');
+        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+        use.setAttribute('href', '#' + ico);
+        svg.appendChild(use);
+        title.prepend(svg);
+      }
+      return block;
+    }
+
     function drawServer() {
       const u = state.config.gateway_user || {};
       const zpet = HubServer.localBack();
       body.textContent = '';
-      body.appendChild(el('div', 'set-ok', '✓ Jsi ve svém prostoru na serveru'));
-      who(u, location.host);
 
-      const row = el('div', 'set-row');
+      // Kdo jsem: iniciály, jméno, e-mail a role — a odhlášení hned vedle.
+      const prof = el('div', 'acc-profile');
+      const name = u.name || u.email || '';
+      const initials = name.split(/[\s.@]+/).filter(Boolean).slice(0, 2)
+        .map((w) => w[0].toUpperCase()).join('');
+      prof.appendChild(el('span', 'acc-avatar', initials || '?'));
+      const col = el('span', 'acc-id');
+      col.appendChild(el('strong', null, name));
+      col.appendChild(el('small', null, [u.name ? u.email : '',
+        u.role === 'admin' ? 'správce' : ''].filter(Boolean).join(' · ')));
+      prof.appendChild(col);
+      const acts = el('span', 'acc-acts');
       if (zpet) {
-        const local = el('button', 'btn primary', 'Pracovat na tomto počítači');
+        const local = el('button', 'btn primary', 'Na tomto počítači');
         local.title = 'Okno se vrátí na hub v tvém počítači. Prostor na ' +
           'serveru běží dál a přihlášení zůstává.';
         local.onclick = () => HubServer.backTo('local');
-        row.appendChild(local);
-        row.appendChild(el('span', 'spacer'));
+        acts.appendChild(local);
       }
       const out = el('button', 'btn ghost', 'Odhlásit se');
       out.title = zpet
@@ -935,17 +958,15 @@
         try { await fetch('/logout', {credentials: 'same-origin'}); } catch (_) {}
         HubServer.backTo('logout');
       };
-      row.appendChild(out);
-      body.appendChild(row);
+      acts.appendChild(out);
+      prof.appendChild(acts);
+      body.appendChild(prof);
 
-      if (!zpet) {
-        body.appendChild(el('div', 'set-note',
-          'Otevřeno v prohlížeči. Na počítači se mezi ním a serverem ' +
-          'přepíná v appce Claude Code Hub.'));
-      }
-      body.appendChild(HubPredplatne.serverBlock(io));
-      body.appendChild(HubPocitac.serverBlock(io));
-      body.appendChild(zabezpeceni());
+      const cards = el('div', 'acc-cards');
+      cards.appendChild(card(HubPredplatne.serverBlock(io), 'i-hub'));
+      cards.appendChild(card(HubPocitac.serverBlock(io), 'i-laptop'));
+      cards.appendChild(card(zabezpeceni(), 'i-lock'));
+      body.appendChild(cards);
     }
 
     /* Zabezpečení na serveru: dvoufázové ověření a heslo. Mluví přímo s bránou
@@ -966,6 +987,11 @@
 
       const tfa = el('div', 'set-note', 'Dvoufázové ověření: zjišťuji…');
       wrap.appendChild(tfa);
+      // Tlačítka vedle sebe; formuláře se rozbalí až po kliknutí.
+      const actions = el('div', 'set-row');
+      const passBtn = el('button', 'btn ghost', 'Změnit heslo');
+      actions.appendChild(passBtn);
+      wrap.appendChild(actions);
       const codesBox = el('div');
       wrap.appendChild(codesBox);
       gw('/gw/account').then((d) => {
@@ -975,11 +1001,9 @@
           t.enabled ? '✓ Dvoufázové ověření zapnuté' : '! Dvoufázové ověření není zapnuté'));
         if (!t.enabled) return;
         tfa.appendChild(document.createTextNode(' · záložních kódů zbývá ' + t.recovery_left));
-        const row = el('div', 'set-row');
         const again = el('button', 'btn ghost', 'Nové záložní kódy');
         again.onclick = newCodes;
-        row.appendChild(again);
-        codesBox.appendChild(row);
+        actions.prepend(again);
       }, (e) => { tfa.textContent = 'Stav ověření se nenačetl: ' + e.message; });
 
       function newCodes() {
@@ -1014,8 +1038,12 @@
         code.focus();
       }
 
-      wrap.appendChild(el('div', 'set-title acc-sub', 'Změna hesla'));
       const form = el('div', 'acc-pass');
+      form.hidden = true;
+      passBtn.onclick = () => {
+        form.hidden = !form.hidden;
+        if (!form.hidden) form.querySelector('input').focus();
+      };
       const field = (placeholder, auto) => {
         const input = el('input', 'srv-input');
         input.type = 'password';
@@ -1043,6 +1071,7 @@
         try {
           await gw('/gw/password', {current: cur.value, new: nw.value});
           cur.value = nw.value = nw2.value = '';
+          form.hidden = true;
           io.toast('Heslo změněno. Ostatní zařízení jsou odhlášená.');
         } catch (e) {
           io.toast(e.message);
