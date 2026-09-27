@@ -107,6 +107,20 @@ dělá jednu aplikaci:
   na serveru) u každé poznámky firemního Obsidianu vyberou, kdo ji vidí:
   tlačítkem u poznámky nebo pravým kliknutím na puntík v grafu. Kdo ji vidět
   nemá, nemá ji v prostoru vůbec — ani jeho Claude.
+- **Složky ve firemním Obsidianu** — firemní trezor má `Lidé/<jméno>` (tvůj
+  osobní Obsidian, vidíš ho jen ty a ukládá se rovnou), `Sdílené/<název>`
+  (sdílené Obsidiany, vidí je jen jejich členové) a firemní složky. Správci
+  poznámek u firemní složky vyberou, kdo ji vidí (tlačítko **Vidí…** u složky);
+  platí to i na všechno, co do ní později přibude.
+- **Pokračuje, kde jsi skončil** — zavřeš appku (na počítači) nebo se prostor na
+  serveru uspí, a po dalším otevření jsou zpátky všechny taby, Claude v nich
+  navazuje na svou konverzaci (`--resume`), vybraný je tab, na kterém jsi byl,
+  a otevře se i poznámka v Obsidianu. Taby se ukládají i průběžně, takže
+  obnova vyjde i po pádu. Stav z minula platí 14 dní.
+- **Soubory v Obsidianu** — do své, sdílené i firemní složky nahraješ jakýkoli
+  soubor (PDF, obrázky, tabulky…): tlačítko **Nahrát soubor** nebo přetažení
+  na složku. Server znovu ověří právo, cestu i velikost (do 20 MB); soubory se
+  jen stahují, nikdy se neotevírají jako stránka.
 - **Sdílená napojení** — napojení na službu (WordPress, Ecomail s klíčem, jiné
   MCP) si nastavíš jednou a nasdílíš vybraným lidem. Klíče drží server, nikdo
   z nich je neuvidí; sdílení jde kdykoli zrušit.

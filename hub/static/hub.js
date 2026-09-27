@@ -14,6 +14,30 @@ let TABS = [];             // {ref,id,title,kind,path,term,fit,pane,el,exited}
 let ACTIVE = null;
 // Po otevření appky zůstat na Domů (restore nepřepíná do posledního chatu).
 let START_HOME = true;
+
+/* Kde člověk skončil: aktivní tab a otevřená poznámka v Obsidianu. Po dalším
+   otevření appky (počítač i prostor na serveru) se na ně vrátí. Taby samotné
+   drží server (a po zavření appky/uspání prostoru hub/restart.py). Ukládá se
+   jen v tomhle prohlížeči — nic citlivého, cesty a názvy. */
+const PLACE_KEY = 'hub.misto';
+function readPlace() {
+  try {
+    const v = JSON.parse(localStorage.getItem(PLACE_KEY) || '{}');
+    return v && typeof v === 'object' ? v : {};
+  } catch (_) { return {}; }
+}
+function writePlace(patch) {
+  try { localStorage.setItem(PLACE_KEY, JSON.stringify({...readPlace(), ...patch})); } catch (_) { /* soukromé okno */ }
+}
+const LAST_PLACE = readPlace();
+let placeReady = false;           // do první obnovy se místo nepřepisuje
+const tabKey = (t) => ({kind: t.kind || '', path: t.path || '', title: t.title || '', vault: t.vault || ''});
+function findPlaceTab(key) {
+  if (!key) return null;
+  const same = (t, strict) => (t.kind || '') === key.kind && (t.path || '') === key.path &&
+    (t.vault || '') === (key.vault || '') && (!strict || (t.title || '') === key.title);
+  return TABS.find((t) => same(t, true)) || TABS.find((t) => same(t, false)) || null;
+}
 let DARK = true;
 let refSeq = 0;
 
@@ -485,6 +509,15 @@ function vaultPreview() {
   return !!window.HubVault && (onServer() || !STATE.obsidian);
 }
 
+/* Obsidian, který byl otevřený při zavření appky, se otevře znovu (jen
+   náhled v hubu — aplikaci Obsidian na počítači neotvíráme sami). */
+function reopenVaultPlace() {
+  const v = LAST_PLACE.vault;
+  if (!v || !STATE || !vaultPreview()) return;
+  if (v.vault === 'firma' && !(STATE.firma && STATE.firma.vault)) return;
+  openVault(v.path || '', v.vault || '', v.title || '');
+}
+
 function openVault(path, vault, title) {
   const firma = vault === 'firma';
   const shared = /^sdilene:/.test(vault || '');
@@ -496,6 +529,9 @@ function openVault(path, vault, title) {
     fileUrl: (p) => `/api/vault-file?path=${encodeURIComponent(p)}` +
       (firma || shared ? '&vault=' + encodeURIComponent(vault) : '') +
       `&t=${encodeURIComponent(TOKEN)}`,
+    uploadUrl: (p, overwrite) => `/api/vault-upload?path=${encodeURIComponent(p)}` +
+      (firma || shared ? '&vault=' + encodeURIComponent(vault) : '') +
+      (overwrite ? '&prepsat=1' : '') + `&t=${encodeURIComponent(TOKEN)}`,
     openLink,
     toast,
     // Firemní: jen ke čtení podle práva účtu, správa přístupů pro adminy.
@@ -506,6 +542,9 @@ function openVault(path, vault, title) {
       .catch(() => toast('Obsidian se nepodařilo otevřít.')),
     // Změněné přístupy k firemním poznámkám se načtou restartem prostoru.
     restartSpace,
+    // Kde člověk v Obsidianu je — po dalším otevření appky se sem vrátí.
+    onPlace: (p) => writePlace({vault: p === null ? null
+      : {vault: firma || shared ? vault : '', path: p || '', title: title || ''}}),
   });
 }
 
@@ -1889,6 +1928,7 @@ function measure(tab) {
 
 function activate(tab) {
   ACTIVE = tab;
+  if (placeReady) writePlace({tab: tab ? tabKey(tab) : null});
   for (const t of TABS) {
     t.el.classList.toggle('active', t === tab);
     t.pane.classList.toggle('active', t === tab);
@@ -2544,12 +2584,15 @@ async function restoreAfterRestart() {
   if (restartRestored) return;
   restartRestored = true;
   let tabs = [];
+  let res = {};
   try {
-    tabs = (await api('restore')).tabs || [];
+    res = await api('restore');
+    tabs = res.tabs || [];
   } catch (_) {
     return;                 // obnova je bonus, chyba tu nesmí nic shodit
   }
   if (!tabs.length) return;
+  const reason = res.duvod || 'restart';
   const drafts = takeDrafts();
   for (const t of tabs) {
     const tab = openTab({kind: t.kind, path: t.path, title: t.title,
@@ -2561,8 +2604,12 @@ async function restoreAfterRestart() {
       drafts.splice(at, 1);
     }
   }
+  // A na tab, kde člověk skončil (ne na poslední otevřený).
+  const last = findPlaceTab(LAST_PLACE.tab);
+  if (last) activate(last);
   const back = tabs.filter(t => t.resume).length;
-  toast(`Hub aktualizovaný — ${tabs.length} ${tabyWord(tabs.length)} zpátky` +
+  const head = reason === 'restart' ? 'Hub aktualizovaný' : 'Pokračuješ, kde jsi skončil';
+  toast(`${head} — ${tabs.length} ${tabyWord(tabs.length)} zpátky` +
         (back ? `, z toho ${back} pokračuje v konverzaci.` : '.'));
 }
 
@@ -2600,7 +2647,11 @@ function restore(list) {
   // Po znovupřipojení (výpadek sítě) zůstává tab, na kterém člověk byl.
   if (START_HOME) {
     START_HOME = false;
-    activate(before && TABS.includes(before) ? before : null);
+    // Zpátky na tab, kde člověk skončil — jinak Domů s přehledem chatů.
+    const last = before && TABS.includes(before) ? before : findPlaceTab(LAST_PLACE.tab);
+    activate(last);
+    placeReady = true;
+    reopenVaultPlace();
     return;
   }
   const keep = before && TABS.includes(before) ? before : TABS[TABS.length - 1];

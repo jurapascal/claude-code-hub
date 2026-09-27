@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from hub import __version__, qr
 
-from . import (config, isolation, mcp, mcp_sdilene, pocitac, poznamky, safefs, shared, totp,
+from . import (config, isolation, mcp, mcp_sdilene, pocitac, poznamky, safefs, shared, slozky, totp,
                workspace)
 from .accounts import Accounts
 
@@ -307,8 +307,26 @@ class HubProc:
     def touch(self):
         self.last_active = time.time()
 
-    def stop(self):
-        """Zastaví prostor i se vším, co v něm běží (hub, shelly, Claude Code)."""
+    def snapshot(self, reason="uspani"):
+        """Než se prostor zastaví: hub v něm uloží otevřené taby (i id
+        konverzací), ať po dalším otevření appka pokračuje, kde člověk skončil.
+        Chyba nevadí — zastavit se musí i zaseklý prostor."""
+        if not (self.port and self.token and self.proc):
+            return
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+            body = json.dumps({"duvod": reason}).encode()
+            conn.request("POST", "/api/prostor-snapshot", body=body,
+                         headers={"X-Hub-Token": self.token, "Content-Type": "application/json"})
+            conn.getresponse().read()
+            conn.close()
+        except Exception:
+            pass
+
+    def stop(self, reason="uspani"):
+        """Zastaví prostor i se vším, co v něm běží (hub, shelly, Claude Code).
+        Předtím si hub v něm uloží taby (`reason` = uspani / restart)."""
+        self.snapshot(reason)
         p, self.proc = self.proc, None
         self._alive = False
         if self.unit:
@@ -419,7 +437,8 @@ class HubManager:
         with self._lock:
             proc = self.procs.pop(user["id"], None)
         if proc:
-            proc.stop()
+            # Restart na přání z hubu: taby zpátky hned, jako po aktualizaci.
+            proc.stop(reason="restart")
         return bool(proc)
 
     def stop_idle(self, uid):
@@ -734,6 +753,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._firma_access(method, user)
             if route == "/gw/firma/poznamky":
                 return self._firma_notes(method, user)
+            if route == "/gw/firma/soubor":
+                return self._firma_file(method, user, parsed.query)
             # Zabezpečení účtu z Nastavení → Účet (hub v prostoru o heslech nic neví).
             if route == "/gw/account":
                 return self._json({"user": user, "twofa": self.accounts.twofa(user["id"]),
@@ -902,6 +923,54 @@ class Handler(BaseHTTPRequestHandler):
             pass
         return self._json({"ok": True, "level": level, "note": note})
 
+    def _firma_file(self, method, user, query):
+        """Nahrání souboru do firemního nebo sdíleného Obsidianu (gateway/soubory.py).
+
+        Tělo je soubor sám, cíl v adrese: `vault` (firma | sdilene:<zkratka>),
+        `cesta` (relativně k trezoru), `prepsat=1`. Jen člověk ze stránky hubu —
+        cookie brány do prostoru nechodí, hlavička X-Hub-Firma z cizího webu
+        neprojde. Velikost se hlídá před čtením těla."""
+        from . import soubory
+        if method != "POST":
+            return self._json({"error": "Jen POST."}, 405)
+        if not self._same_origin() or self.headers.get("X-Hub-Firma") != "1":
+            return self._json({"error": "Nahrát soubor jde jen v hubu."}, 403)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if length <= 0:
+            return self._json({"error": "Soubor je prázdný."}, 400)
+        if length > soubory.UPLOAD_MAX:
+            self.close_connection = True
+            return self._json({"error": f"Soubor je větší než "
+                                        f"{soubory.UPLOAD_MAX // (1024 * 1024)} MB."}, 413)
+        q = urllib.parse.parse_qs(query)
+        vault = (q.get("vault") or [""])[0]
+        rel = (q.get("cesta") or [""])[0]
+        overwrite = (q.get("prepsat") or [""])[0] == "1"
+        raw = self.rfile.read(length)
+        if len(raw) != length:
+            return self._json({"error": "Soubor nedorazil celý."}, 400)
+        try:
+            if vault == "firma":
+                if self.accounts.company_level(user) == "none":
+                    return self._json({"error": "K firemnímu Obsidianu nemáš přístup."}, 403)
+                result = workspace.upload_company(user, rel, raw, overwrite)
+            elif vault.startswith("sdilene:"):
+                result = shared.upload(user, vault[len("sdilene:"):], rel, raw, overwrite)
+            else:
+                return self._json({"error": "Neznámý Obsidian."}, 400)
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, 400)
+        except OSError as exc:
+            _errlog("nahrání souboru", exc)
+            return self._json({"error": f"Uložit se nepodařilo: {exc}"}, 500)
+        if not result.get("ok"):
+            return self._json({**result, "error": "Soubor s tímhle jménem už tam je."}, 409)
+        result.pop("sha256", None)
+        return self._json(result)
+
     def _firma_notes(self, method, user):
         """Kdo vidí kterou poznámku firemního Obsidianu (gateway/poznamky.py).
 
@@ -914,11 +983,15 @@ class Handler(BaseHTTPRequestHandler):
         manager = poznamky.is_manager(user)
         if method == "GET":
             proc = self.hubs.procs.get(user["id"]) if self.hubs else None
+            # Cizí Lidé/ a Sdílené/ se nepočítají: nový kolega nebo sdílený
+            # trezor jiných lidí restart nepotřebuje (Sdílené hlídá svůj panel).
+            firm = lambda paths: sorted(p for p in paths if not slozky.special(p))
             changed = bool(proc and proc.alive()
-                           and sorted(proc.hidden) != poznamky.hidden_for(user))
+                           and firm(proc.hidden) != firm(poznamky.hidden_for(user)))
             out = {"spravce": manager, "zmena": changed}
             if manager:
-                out.update(poznamky=poznamky.listing(), lide=poznamky.people())
+                out.update(poznamky=poznamky.listing(), slozky=poznamky.folders(),
+                           lide=poznamky.people())
             return self._json(out)
         if method != "POST":
             return self._json({"error": "Jen GET nebo POST."}, 405)

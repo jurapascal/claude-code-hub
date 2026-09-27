@@ -1,9 +1,14 @@
 """
-Kdo vidí kterou poznámku ve firemním Obsidianu.
+Kdo vidí kterou poznámku a složku ve firemním Obsidianu.
 
 Bez záznamu poznámku vidí každý, kdo vidí firemní Obsidian (gateway/accounts.py:
-none / read / write). U poznámky jde vybrat konkrétní lidi — pak ji vidí jen
-oni a správci poznámek. Nastavovat to smí jen **správci poznámek**: pevný
+none / read / write). U poznámky i u složky jde vybrat konkrétní lidi — pak ji
+vidí jen oni a správci poznámek. Pravidlo složky platí na všechno v ní, i na
+poznámky, které do ní přibudou později; poznámka ve složce musí projít
+pravidlem složky i svým vlastním.
+
+Složky `Lidé/` a `Sdílené/` sem nepatří — kdo je vidí, určuje vlastník
+(gateway/slozky.py): osobní složku jen on, sdílenou její členové. Nastavovat to smí jen **správci poznámek**: pevný
 seznam účtů (`claude-hub-admin poznamky spravci …`), nezávislý na roli admin.
 
 Skrytí je natvrdo: prostor skrytou poznámku vůbec nemá. Firemní trezor se do
@@ -14,17 +19,18 @@ Změna se projeví při dalším startu prostoru; kdo přístup ztratil a zrovna
 nepracuje, tomu brána prostor zastaví hned.
 
 Registr leží vedle trezoru, ne v něm (COMPANY_DIR/poznamky-pristupy.json), podle
-id účtů a relativních cest. Přesun poznámky mimo bránu (git, Obsidian na
+id účtů a relativních cest (`poznamky` a `slozky`). Přesun poznámky mimo bránu (git, Obsidian na
 počítači správce) omezení nepřenese — poznámka na nové cestě je pro všechny.
 """
 import contextlib
 import fcntl
 import json
 import os
+import re
 import threading
 import time
 
-from . import config, shared
+from . import config, shared, slozky
 
 REGISTRY = os.path.join(config.COMPANY_DIR, "poznamky-pristupy.json")
 LOG = os.path.join(config.COMPANY_DIR, "poznamky-pristupy.jsonl")
@@ -54,10 +60,12 @@ def _load():
     if not isinstance(data, dict):
         data = {}
     managers = [int(u) for u in data.get("spravci") or [] if isinstance(u, int)]
-    notes = data.get("poznamky") if isinstance(data.get("poznamky"), dict) else {}
-    notes = {str(rel): [int(u) for u in uids if isinstance(u, int)]
-             for rel, uids in notes.items() if isinstance(uids, list)}
-    return {"spravci": managers, "poznamky": notes}
+    out = {"spravci": managers}
+    for key in ("poznamky", "slozky"):
+        rules = data.get(key) if isinstance(data.get(key), dict) else {}
+        out[key] = {str(rel): [int(u) for u in uids if isinstance(u, int)]
+                    for rel, uids in rules.items() if isinstance(uids, list)}
+    return out
 
 
 def _save(data):
@@ -94,6 +102,16 @@ def _rel(rel):
     return company_rel(rel)
 
 
+def _dir_rel(rel):
+    """Cesta ke složce ve firemním trezoru — jako company_rel, jen bez .md."""
+    raw = str(rel or "").replace("\\", "/").strip()
+    parts = [p for p in raw.strip("/").split("/") if p not in ("", ".")]
+    if (not parts or len(raw) > 300 or raw.startswith("/") or re.match(r"^[A-Za-z]:", raw)
+            or any(p == ".." or p.startswith(".") for p in parts)):
+        raise ValueError(f"Neplatná cesta ve firemním Obsidianu: {raw or '(prázdná)'}")
+    return "/".join(parts)
+
+
 # ── kdo co smí ───────────────────────────────────────────────────────────────
 def managers():
     return list(_load()["spravci"])
@@ -104,8 +122,19 @@ def is_manager(user):
 
 
 def _sees(data, uid, rel):
-    allowed = data["poznamky"].get(rel)
-    return not allowed or uid in allowed or uid in data["spravci"]
+    """Vidí `uid` cestu `rel`? Musí projít pravidly všech složek nad ní
+    i vlastním (poznámky, nebo složky)."""
+    if uid in data["spravci"]:
+        return True
+    parts = rel.split("/")
+    for i in range(1, len(parts) + 1):
+        path = "/".join(parts[:i])
+        allowed = data["slozky"].get(path)
+        if i == len(parts):
+            allowed = data["poznamky"].get(path) or allowed
+        if allowed and uid not in allowed:
+            return False
+    return True
 
 
 def allowed(user, rel):
@@ -117,20 +146,37 @@ def allowed(user, rel):
     return _sees(_load(), int(user["id"]), rel)
 
 
+def allowed_path(user, rel):
+    """Jako `allowed`, jen pro jakýkoli soubor (ne jen .md) — nahrávání."""
+    return _sees(_load(), int(user["id"]), str(rel))
+
+
 def hidden_for(user, data=None):
-    """Relativní cesty poznámek, které `user` nevidí a v trezoru opravdu jsou."""
+    """Relativní cesty poznámek a složek, které `user` nevidí a v trezoru
+    opravdu jsou — i cizí osobní a sdílené složky (gateway/slozky.py).
+    Co leží ve skryté složce, se už nevypisuje: skryje se s ní."""
     data = data or _load()
     uid = int(user["id"])
     vault = config.COMPANY_VAULT
-    return sorted(rel for rel in data["poznamky"]
-                  if not _sees(data, uid, rel)
-                  and os.path.isfile(os.path.join(vault, *rel.split("/"))))
+
+    def there(rel, check):
+        path = os.path.join(vault, *rel.split("/"))
+        return check(path) and not os.path.islink(path)
+
+    hidden = {rel for rel in data["poznamky"] if there(rel, os.path.isfile)} | \
+             {rel for rel in data["slozky"] if there(rel, os.path.isdir)}
+    hidden = {rel for rel in hidden if not _sees(data, uid, rel)}
+    hidden = {rel for rel in hidden
+              if not any(rel.startswith(h + "/") for h in hidden)}
+    return sorted(hidden | set(slozky.hidden_for(user)))
 
 
 def masked_dirs():
-    """Složky (relativně k trezoru), ve kterých je nějaká omezená poznámka —
-    aspoň pro někoho v nich leží tmpfs s jednotlivě přivázanými soubory."""
-    return {os.path.dirname(rel) for rel in _load()["poznamky"]}
+    """Složky (relativně k trezoru), ve kterých je nějaká omezená poznámka nebo
+    složka — aspoň pro někoho v nich leží tmpfs s jednotlivě přivázanými soubory."""
+    data = _load()
+    return ({os.path.dirname(rel) for rel in data["poznamky"]}
+            | {os.path.dirname(rel) for rel in data["slozky"]} | set(slozky.ROOTS))
 
 
 # ── sandbox ──────────────────────────────────────────────────────────────────
@@ -188,12 +234,19 @@ def people():
 
 
 def listing():
-    """Omezené poznámky a kdo je vidí (pro správce)."""
+    """Omezené poznámky i složky a kdo je vidí (pro správce). Složky jsou
+    bez .md, podle toho se od poznámek poznají."""
+    data = _load()
     out = {}
-    for rel, uids in sorted(_load()["poznamky"].items()):
+    for rel, uids in sorted({**data["slozky"], **data["poznamky"]}.items()):
         out[rel] = [{"email": u["email"], "name": u.get("name", "")}
                     for u in (_account(i) for i in uids) if u]
     return out
+
+
+def folders():
+    """Cesty omezených složek."""
+    return sorted(_load()["slozky"])
 
 
 def _resolve(emails):
@@ -210,18 +263,34 @@ def _resolve(emails):
     return ids, unknown
 
 
-def set_note(user, rel, emails, only=None):
-    """Nastaví, kdo poznámku vidí. `only` False (nebo prázdný seznam bez
-    `only`) = všichni, omezení se zruší. `only` s prázdným seznamem = jen
-    správci poznámek.
+def _target(rel):
+    """(druh, cesta): složka (`slozky`), nebo poznámka (`poznamky`)."""
+    vault = config.COMPANY_VAULT
+    raw = str(rel or "").replace("\\", "/").strip().strip("/")
+    if slozky.special(raw):
+        raise ValueError("Kdo vidí osobní a sdílené složky, určuje jejich vlastník — "
+                         f"v {slozky.PEOPLE}/ a {slozky.SHARED}/ se to tady nenastavuje.")
+    if not raw.lower().endswith(".md"):
+        folder = _dir_rel(raw)
+        path = os.path.join(vault, *folder.split("/"))
+        if os.path.isdir(path) and not os.path.islink(path):
+            return "slozky", folder
+    rel = _rel(raw)
+    if not os.path.isfile(os.path.join(vault, *rel.split("/"))):
+        raise ValueError(f"{rel} ve firemním Obsidianu není.")
+    return "poznamky", rel
 
-    Vrací {"ok", "path", "people", "revoked": [id účtů, které ji přestaly
-    vidět], "granted": [id, které ji nově vidí]}."""
+
+def set_note(user, rel, emails, only=None):
+    """Nastaví, kdo poznámku (nebo složku) vidí. `only` False (nebo prázdný
+    seznam bez `only`) = všichni, omezení se zruší. `only` s prázdným
+    seznamem = jen správci poznámek.
+
+    Vrací {"ok", "path", "slozka", "people", "revoked": [id účtů, které ji
+    přestaly vidět], "granted": [id, které ji nově vidí]}."""
     if not is_manager(user):
         raise PermissionError("Kdo vidí poznámku, nastavují jen správci poznámek.")
-    rel = _rel(rel)
-    if not os.path.isfile(os.path.join(config.COMPANY_VAULT, *rel.split("/"))):
-        raise ValueError(f"Poznámka {rel} ve firemním Obsidianu není.")
+    kind, rel = _target(rel)
     if isinstance(emails, str):
         emails = emails.replace(",", " ").split()
     ids, unknown = _resolve(emails)
@@ -232,18 +301,19 @@ def set_note(user, rel, emails, only=None):
         only = bool(ids)
     with _locked():
         data = _load()
-        before = data["poznamky"].get(rel, [])
+        before = data[kind].get(rel, [])
         saw = {u for u in everyone if _sees(data, u, rel)}
         if only:
             # -1 = nikdo navíc; prázdný seznam by znamenal „všichni“.
-            data["poznamky"][rel] = sorted(ids) or [NOBODY]
+            data[kind][rel] = sorted(ids) or [NOBODY]
         else:
             ids = []
-            data["poznamky"].pop(rel, None)
+            data[kind].pop(rel, None)
         sees = {u for u in everyone if _sees(data, u, rel)}
         _save(data)
     _log(user, rel, before, ids if only else None)
-    return {"ok": True, "path": rel, "jen": bool(only), "people": [_email(i) for i in ids],
+    return {"ok": True, "path": rel, "slozka": kind == "slozky", "jen": bool(only),
+            "people": [_email(i) for i in ids],
             "revoked": sorted(saw - sees), "granted": sorted(sees - saw)}
 
 
@@ -268,9 +338,10 @@ def forget_user(uid):
         data = _load()
         changed = uid in data["spravci"]
         data["spravci"] = [u for u in data["spravci"] if u != uid]
-        for rel, uids in data["poznamky"].items():
-            if uid in uids:
-                data["poznamky"][rel] = [u for u in uids if u != uid] or [NOBODY]
-                changed = True
+        for rules in (data["poznamky"], data["slozky"]):
+            for rel, uids in rules.items():
+                if uid in uids:
+                    rules[rel] = [u for u in uids if u != uid] or [NOBODY]
+                    changed = True
         if changed:
             _save(data)

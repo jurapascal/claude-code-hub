@@ -209,6 +209,19 @@ def write_note(user, slug, rel, text, overwrite=False):
             "message": f"Nahráno do sdíleného Obsidianu „{entry.get('name') or slug}“: {rel}"}
 
 
+def upload(user, slug, rel, raw, overwrite=False):
+    """Soubor (jakýkoli) do sdíleného Obsidianu — jen člen, nahrává člověk v hubu."""
+    from . import soubory
+    slug, entry = _entry(_load(), slug)
+    if int(user["id"]) not in entry.get("members", []):
+        raise ValueError("Do tohohle sdíleného Obsidianu nahrávají jen jeho členové.")
+    result = soubory.write(vault_dir(slug), rel, raw, overwrite, quota=soubory.SHARED_QUOTA)
+    if result.get("ok"):
+        soubory.log(LOG, user, "sdilene:" + slug, result)
+        result["message"] = f"Nahráno do „{entry.get('name') or slug}“: {result['path']}"
+    return result
+
+
 def change_members(user, slug, add, remove):
     with _locked():
         vaults = _load()

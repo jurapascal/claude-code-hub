@@ -46,7 +46,7 @@ import subprocess
 import sys
 import time
 
-from . import config, isolation, mcp_sdilene, poznamky, shared, workspace
+from . import config, isolation, mcp_sdilene, poznamky, shared, slozky, workspace
 from .accounts import Accounts
 
 
@@ -491,6 +491,10 @@ def cmd_remove(a, args):
     shared.forget_user(user["id"])
     poznamky.forget_user(user["id"])
     mcp_sdilene.forget_user(user["id"])
+    try:
+        slozky.sync()                    # pryč i jeho Lidé/<jméno>
+    except (OSError, ValueError):
+        pass
     # Prostor smazaného účtu nemá komu běžet — a nikdo by ho už nezastavil.
     for name in _units(user):
         isolation.stop_scope(name)
@@ -579,10 +583,14 @@ def cmd_poznamky(a, args):
     print("Správci: " + (", ".join((a.by_id(i) or {}).get("email", f"#{i}") for i in ids)
                          or "nikdo"))
     notes = poznamky.listing()
+    folders = set(poznamky.folders())
     if not notes:
         print("Všechny poznámky vidí každý, kdo vidí firemní Obsidian.")
     for rel, people in notes.items():
-        print(f"{rel}\n    vidí: " + (", ".join(p["email"] for p in people) or "jen správci"))
+        label = f"{rel}/ (složka)" if rel in folders else rel
+        print(f"{label}\n    vidí: " + (", ".join(p["email"] for p in people) or "jen správci"))
+    print(f"{slozky.PEOPLE}/<jméno> vidí jen jeho vlastník, {slozky.SHARED}/<název> jen členové "
+          "sdíleného Obsidianu (claude-hub-admin sdilene).")
 
 
 def cmd_mcp_sdilene(a, args):

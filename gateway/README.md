@@ -239,6 +239,64 @@ Obsidian; s vybranými lidmi jen oni a **správci poznámek**.
   `firma/poznamky-pristupy.jsonl`. **Přesun poznámky mimo bránu** (git,
   Obsidian na počítači) omezení nepřenese — na nové cestě ji uvidí všichni.
 
+## Složky ve firemním Obsidianu: Lidé, Sdílené, firma
+
+Firemní trezor je jeden strom pro všechny tři úrovně (`gateway/slozky.py`):
+
+    Firemní Brain/
+    ├─ Lidé/<jméno>/      osobní Obsidian člověka — vidí jen on
+    ├─ Sdílené/<název>/   sdílený Obsidian — vidí jen jeho členové
+    └─ …                  firemní poznámky a složky (přístupy výš)
+
+- **Odkazy, ne kopie.** `Lidé/<jméno>` je odkaz na osobní trezor v domově
+  (`<domov>/Obsidian/<vault>`), `Sdílené/<název>` na sdílený trezor
+  (`sdilene/<zkratka>`). Data zůstávají, kde byla; zálohy je nezdvojí a do gitu
+  firemního trezoru se odkazy nedostanou (`.gitignore`). Srovnává je brána při
+  každém startu prostoru, po založení či smazání sdíleného Obsidianu a po
+  smazání účtu (`slozky.sync`). Maže jen své odkazy, skutečné soubory nechá.
+- **Kdo co vidí:** cizí `Lidé/…` a sdílené trezory, kde člověk není členem,
+  jsou v jeho prostoru skryté stejně natvrdo jako omezená poznámka
+  (`poznamky.hidden_for` → `mask_args`). Správci poznámek cizí osobní složky
+  nevidí. Kdo vidí sdílenou složku, mění její zakladatel (Sdílené Obsidiany,
+  `tools/sdilene.py`), v registru poznámek se `Lidé/` a `Sdílené/` nastavit nedá.
+- **Zápis:** do `Lidé/<já>` hub (editor, Přejmenovat, Smazat) zapisuje rovnou —
+  je to osobní trezor (`core.vault_route`). Do `Sdílené/<název>` přes kartu jako
+  do sdíleného Obsidianu. `tools/firma.py` a zápis z appky Claude na tyhle
+  cesty brána odmítne.
+- **Přístup k firmě `none`:** trezor se do prostoru nepřiváže vůbec, jako dřív
+  — osobní a sdílené Obsidiany takový člověk má dál samostatně.
+- **Firemní složky:** správce poznámek u složky nastaví, kdo ji vidí (v hubu
+  tlačítko **Vidí…** na řádku složky, brána `POST /gw/firma/poznamky` s cestou
+  ke složce). Pravidlo platí na všechno ve složce, i na poznámky, které
+  přibudou; poznámka ve složce musí projít pravidlem složky i svým. Registr
+  `poznamky-pristupy.json` má vedle `poznamky` klíč `slozky`.
+
+## Soubory v Obsidianech (PDF, obrázky, tabulky…)
+
+Do každé složky, kam člověk smí zapisovat, jde nahrát jakýkoli soubor — v hubu
+tlačítko **Nahrát soubor** nebo přetažení na seznam (na složku). Poznámky
+dál nosí Claude návrhem; soubory nahrává **jen člověk v prohlížeči**.
+
+- **Osobní (i `Lidé/<já>`):** hub rovnou (`POST /api/vault-upload`, tělo je
+  soubor). Strop na trezor `vault_quota_mb` v hub-config (2 GB).
+- **Firemní a sdílené:** brána `POST /gw/firma/soubor?vault=firma|sdilene:<zkratka>&cesta=…[&prepsat=1]`
+  (`gateway/soubory.py`). Jen ze stránky hubu: stejný původ, cookie brány
+  (do prostoru nechodí) a hlavička `X-Hub-Firma` — Claude v prostoru soubor do
+  společného trezoru nedostane. Firemní chce právo zápisu a složku, kterou
+  člověk vidí (pravidla složek), sdílený členství.
+- **Co se hlídá:** každá část cesty (žádné `..`, skryté části, řídicí znaky,
+  `Lidé/`/`Sdílené/` přes firmu), cíl nesmí být odkaz a rodič musí ležet
+  v trezoru, soubor do `HUB_GW_UPLOAD_MB` (20 MB, kontrola před čtením těla;
+  nginx pustí 25 MB), strop trezoru `HUB_GW_COMPANY_QUOTA_MB` (5 GB)
+  a `HUB_GW_SHARED_QUOTA_MB` (2 GB), přepis jen s `prepsat=1` (hub se zeptá).
+- **Nic se nespouští:** soubory 0644; hub je vydává jen ke stažení
+  (`vault-file?download=1`: attachment, `nosniff`, CSP sandbox) — HTML ani SVG
+  se pod adresou hubu neotevře jako stránka.
+- **Záznam:** firemní do `firma/nahrano.jsonl`, sdílené do `sdilene/zmeny.jsonl`
+  (kdo, kam, velikost, sha256).
+- Soubor nahraný do složky s omezeným přístupem se v prostorech ostatních
+  (i v tvém) ukáže po restartu prostoru — složka je přivázaná po souborech.
+
 ## Napojení z appky Claude (MCP)
 
 Každý si v appce Claude (claude.ai na webu, desktop, mobil) přidá vlastní

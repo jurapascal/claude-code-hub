@@ -687,6 +687,46 @@ def shared_state():
     return out
 
 
+def company_links():
+    """Osobní a sdílené složky ve firemním trezoru, které prostor má
+    (Lidé/<jméno>, Sdílené/<název>; hub-config od brány, gateway/slozky.py)."""
+    out = []
+    for v in CONFIG.get("company_links") or []:
+        if isinstance(v, dict) and v.get("path") and v.get("kind") in ("osobni", "sdilene"):
+            out.append({k: v.get(k) for k in ("path", "kind", "slug", "name", "members")
+                        if v.get(k) is not None})
+    return out
+
+
+def vault_route(rel, vault=""):
+    """Kam doopravdy patří zápis na cestu `rel` trezoru `vault`.
+
+    Ve firemním trezoru jsou `Lidé/<já>` a `Sdílené/<název>` odkazy na osobní
+    a sdílený trezor — zápis tam jde rovnou do osobního (vault '') nebo jako
+    návrh do sdíleného. Vrací (vault, cesta v něm, předpona pro odpověď)."""
+    if vault != "firma":
+        return vault, rel, ""
+    path = str(rel or "").replace("\\", "/").strip().strip("/")
+    for link in company_links():
+        prefix = link["path"] + "/"
+        if not path.startswith(prefix):
+            continue
+        if link["kind"] == "osobni":
+            return "", path[len(prefix):], prefix
+        if link.get("slug"):
+            return "sdilene:" + link["slug"], path[len(prefix):], prefix
+    return vault, rel, ""
+
+
+def vault_prefixed(result, prefix):
+    """Cesty v odpovědi zápisu zpátky do pohledu firemního trezoru."""
+    if prefix and isinstance(result, dict):
+        for key in ("path", "was"):
+            if result.get(key):
+                result[key] = prefix + result[key]
+    return result
+
+
 def _vault_root(vault=""):
     """Kořen trezoru: osobní (BRAIN), `firma` = firemní, `sdilene:<zkratka>` =
     sdílený Obsidian svázaný do prostoru ('' když takový není)."""
@@ -702,7 +742,7 @@ def _vault_root(vault=""):
 
 
 def vault_path(rel, exts=(".md",), vault=""):
-    """Plná cesta k souboru trezoru s danou příponou, nebo ''."""
+    """Plná cesta k souboru trezoru s danou příponou (None = jakoukoli), nebo ''."""
     root = _vault_root(vault)
     rel = str(rel or "").replace("\\", "/").strip()
     if not root or not rel or rel.startswith("/") or re.match(r"^[A-Za-z]:", rel):
@@ -710,8 +750,15 @@ def vault_path(rel, exts=(".md",), vault=""):
     parts = [p for p in rel.split("/") if p not in ("", ".")]
     if not parts or any(p == ".." or p.startswith(".") or p in VAULT_SKIP for p in parts):
         return ""
+    # Cizí Lidé/… a Sdílené/… prostor nemá (sandbox je skryje); bez sandboxu
+    # by odkaz vedl do cizího domova — tak ani nezkoušet.
+    if (vault == "firma" and parts[0] in ("Lidé", "Sdílené")
+            and "/".join(parts[:2]) not in {v["path"] for v in company_links()}):
+        return ""
     full = os.path.join(root, *parts)
-    if not full.lower().endswith(tuple(exts)) or not os.path.isfile(full):
+    if exts is not None and not full.lower().endswith(tuple(exts)):
+        return ""
+    if not os.path.isfile(full):
         return ""
     return full
 
@@ -722,8 +769,14 @@ def _walk_vault(vault=""):
     if not root:
         return
     seen = 0
-    for base, dirs, files in os.walk(root):
-        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in VAULT_SKIP)
+    # Ve firemním trezoru se jde i do odkazů Lidé/<já> a Sdílené/<název>
+    # (osobní a sdílené trezory); jinde odkazy dál nenásledujeme.
+    links = {os.path.join(root, *v["path"].split("/")) for v in company_links()} \
+        if vault == "firma" else set()
+    for base, dirs, files in os.walk(root, followlinks=bool(links)):
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in VAULT_SKIP
+                         and (not os.path.islink(os.path.join(base, d))
+                              or os.path.join(base, d) in links))
         for name in sorted(files):
             if name.startswith("."):
                 continue
@@ -740,17 +793,26 @@ def _walk_vault(vault=""):
 
 def vault_tree(vault=""):
     """Poznámky a obrázky trezoru pro náhled."""
-    notes, images = [], []
-    for rel, _full, mtime in _walk_vault(vault):
+    notes, images, files = [], [], []
+    for rel, full, mtime in _walk_vault(vault):
         low = rel.lower()
         if low.endswith(".md"):
             notes.append({"path": rel, "mtime": int(mtime)})
-        elif low.endswith(VAULT_IMAGES):
+            continue
+        if low.endswith(VAULT_IMAGES):
             images.append(rel)
+        if low.endswith(".hub-tmp"):
+            continue
+        try:
+            size = os.path.getsize(full)
+        except OSError:
+            continue
+        files.append({"path": rel, "mtime": int(mtime), "size": size})
     root = _vault_root(vault)
     return {"name": os.path.basename(root.rstrip(os.sep)),
             "exists": bool(root) and os.path.isdir(root),
-            "notes": notes, "images": images}
+            "notes": notes, "images": images, "files": files,
+            "slozky": company_links() if vault == "firma" else []}
 
 
 def _note_meta(full, mtime):
@@ -1001,6 +1063,68 @@ def vault_delete(rel, vault=""):
         return {"ok": False, "error": f"Smazat se nepodařilo: {exc}"}
     _VAULT_LINKS.pop(src, None)
     return {"ok": True, "path": vault_rel(src), "trash": ".trash/" + name}
+
+
+VAULT_UPLOAD_MAX = 20 * 1024 * 1024
+_UPLOAD_BAD = re.compile(r"[\x00-\x1f\x7f/\\:*?\"<>|]")
+
+
+def vault_upload(rel, raw, overwrite=False):
+    """Soubor (jakýkoli) do osobního trezoru — z tlačítka Nahrát soubor.
+
+    Jen osobní: do firemního a sdílených nahrává brána (gateway/soubory.py).
+    Cesta se ověřuje po částech, cíl nesmí být odkaz ani mimo trezor, strop
+    na soubor i na celý trezor (`vault_quota_mb`, výchozí 2 GB) — na serveru
+    sdílí disk celý tým. Soubor se nespouští: 0644."""
+    if not isinstance(raw, (bytes, bytearray)) or not raw:
+        return {"ok": False, "error": "Soubor je prázdný."}
+    if len(raw) > VAULT_UPLOAD_MAX:
+        return {"ok": False, "error": f"Soubor je větší než {VAULT_UPLOAD_MAX // (1024 * 1024)} MB."}
+    raw_rel = str(rel or "").replace("\\", "/")
+    parts = [p.strip() for p in raw_rel.split("/") if p.strip() not in ("", ".")]
+    if (not parts or raw_rel.startswith("/") or re.match(r"^[A-Za-z]:", raw_rel) or len(raw_rel) > 300
+            or any(p == ".." or p.startswith(".") or _UPLOAD_BAD.search(p) or len(p) > 150
+                   or p in VAULT_SKIP for p in parts)):
+        return {"ok": False, "error": "Tohle jméno nebo složka v trezoru nejde."}
+    root = _vault_root("")
+    real_root = os.path.realpath(root)
+    full = os.path.join(root, *parts)
+    at = os.path.dirname(full)
+    while not os.path.isdir(at) and os.path.dirname(at) != at:
+        at = os.path.dirname(at)
+    try:
+        if os.path.commonpath([os.path.realpath(at), real_root]) != real_root:
+            return {"ok": False, "error": "Tuhle cestu v trezoru uložit nejde."}
+    except ValueError:
+        return {"ok": False, "error": "Tuhle cestu v trezoru uložit nejde."}
+    if os.path.islink(full) or (os.path.exists(full) and not os.path.isfile(full)):
+        return {"ok": False, "error": "Na téhle cestě je něco, co přepsat nejde."}
+    existed = os.path.exists(full)
+    if existed and not overwrite:
+        return {"ok": False, "exists": True, "path": vault_rel(full)}
+    quota = int(CONFIG.get("vault_quota_mb") or 2048) * 1024 * 1024
+    used = 0
+    for _rel, f, _m in _walk_vault(""):
+        try:
+            used += os.path.getsize(f)
+        except OSError:
+            pass
+    if used + len(raw) - (os.path.getsize(full) if existed else 0) > quota:
+        return {"ok": False, "error": f"Trezor je plný (strop {quota // (1024 * 1024)} MB)."}
+    try:
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        tmp = full + ".hub-tmp"
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(raw)
+        os.replace(tmp, full)
+    except OSError as exc:
+        return {"ok": False, "error": f"Uložit se nepodařilo: {exc}"}
+    return {"ok": True, "path": vault_rel(full), "overwritten": existed, "size": len(raw)}
 
 
 def vault_proposal(rel, text, vault):

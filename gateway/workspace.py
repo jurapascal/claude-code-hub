@@ -39,6 +39,7 @@ from . import config
 from . import safefs
 from . import poznamky
 from . import shared
+from . import slozky
 from .isolation import SCOPE_PREFIX
 
 HUB_HOME = os.environ.get("HUB_GW_HOME", "/home/hub")
@@ -554,6 +555,9 @@ def _hub_config(user, home):
         # přístup nemá, tomu se neukáže vůbec (a do sandboxu se nepřiváže).
         "company_vault": config.COMPANY_VAULT if company_level(user) != "none" else "",
         "company_level": company_level(user),
+        # Osobní a sdílené složky ve firemním trezoru (Lidé/, Sdílené/), které
+        # v prostoru má — hub podle nich pozná, kam se v nich zapisuje.
+        "company_links": slozky.visible_for(user) if company_level(user) != "none" else [],
         # Sdílené Obsidiany, kde je členem (svázané při startu), a kdo je
         # v týmu — z toho vybírá tools/sdilene.py.
         "shared_vaults": shared.vaults_for(user),
@@ -723,7 +727,33 @@ def ensure_company_vault():
     # se zakládá až po README — prázdný trezor se pozná podle toho, že v něm
     # nic není. Naplní ji `claude-hub-admin skills install`.
     os.makedirs(config.COMPANY_SKILLS, exist_ok=True)
+    # Lidé/<jméno> a Sdílené/<název> — odkazy na osobní a sdílené trezory.
+    # Bez nich firemní trezor funguje dál, jen v něm ty složky nejsou.
+    try:
+        slozky.sync(vault)
+        _gitignore_links(vault)
+    except (OSError, ValueError):
+        pass
     return vault
+
+
+def _gitignore_links(vault):
+    """Když je firemní trezor v gitu, odkazy do domovů do něj nepatří."""
+    if not os.path.isdir(os.path.join(vault, ".git")):
+        return
+    path = os.path.join(vault, ".gitignore")
+    if os.path.islink(path):
+        return
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        text = ""
+    lines = text.splitlines()
+    missing = [f"/{top}/" for top in slozky.ROOTS if f"/{top}/" not in lines]
+    if missing:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(("\n" if text and not text.endswith("\n") else "") + "\n".join(missing) + "\n")
 
 
 def company_skill_categories():
@@ -775,14 +805,25 @@ Vedle osobního trezoru je společný **firemní Obsidian** celého týmu:
 a know-how v něm hledej a čti, ale nic do něj nenavrhuj ani nenahrávej
 (`tools/firma.py` návrh odmítne). Když by uživatel chtěl něco do firemního
 Obsidianu zapsat, řekni mu, ať požádá admina o právo zápisu.
-{skills}{end}
+{skills}{links}{end}
+"""
+
+
+def _links_text():
+    return f"""
+**Složky {slozky.PEOPLE}/ a {slozky.SHARED}/.** `{slozky.PEOPLE}/<jméno>` je osobní Obsidian
+člověka — uživatel v ní vidí jen tu svou a je to **tentýž trezor jako jeho
+osobní**, zapisuj do ní rovnou jako do osobního. `{slozky.SHARED}/<název>` jsou
+sdílené Obsidiany, jejichž je členem (zápis přes `tools/sdilene.py`, viz níž).
+Ani do jedné se nenahrává přes `tools/firma.py`.
 """
 
 
 def _company_block(level="write"):
     if level == "read":
         return READ_ONLY_BLOCK.format(mark=FIRMA_MARK[0], vault=config.COMPANY_VAULT,
-                                      skills=_company_skills_text(), end=FIRMA_MARK[1])
+                                      skills=_company_skills_text(), links=_links_text(),
+                                      end=FIRMA_MARK[1])
     tool = os.path.join(REPO_DIR, "tools", "firma.py")
     return f"""{FIRMA_MARK[0]}
 ## Firemní Obsidian
@@ -790,7 +831,7 @@ def _company_block(level="write"):
 Vedle osobního trezoru tohohle uživatele je společný **firemní Obsidian**
 celého týmu: `{config.COMPANY_VAULT}`. Je jen ke čtení — firemní postupy,
 kontakty a know-how hledej a čti tam.
-{_company_skills_text()}
+{_company_skills_text()}{_links_text()}
 Zapisovat do něj přímo nejde, jde to jen nástrojem níž. Jak to funguje, závisí
 na tom, ve kterém tabu hubu běžíš — poznáš to podle proměnné `HUB_VAULT`:
 
@@ -930,6 +971,10 @@ def write_company(user, rel, text, overwrite=False, via=""):
     if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_PROPOSAL:
         raise ValueError("Poznámka chybí, nebo je moc velká.")
     rel = company_rel(rel)
+    if slozky.special(rel):
+        raise ValueError(f"{slozky.PEOPLE}/ a {slozky.SHARED}/ nejsou firemní poznámky: do své "
+                         "složky v Lidé/ se zapisuje rovnou (je to tvůj osobní Obsidian), do "
+                         "sdílené přes sdílený Obsidian (tools/sdilene.py).")
     vault = os.path.realpath(ensure_company_vault())
     target = os.path.join(vault, *rel.split("/"))
     if os.path.commonpath([os.path.realpath(os.path.dirname(target)), vault]) != vault:
@@ -962,6 +1007,26 @@ def write_company(user, rel, text, overwrite=False, via=""):
     except OSError:
         pass
     return {"ok": True, "path": rel, "overwritten": existed}
+
+
+def upload_company(user, rel, raw, overwrite=False):
+    """Soubor (jakýkoli) do firemního trezoru — nahrává ho člověk v hubu
+    (gateway/soubory.py). Stejná práva jako poznámka: zápis a viditelnost."""
+    from . import soubory
+    if company_level(user) != "write":
+        raise ValueError("Do firemního Obsidianu nemáš právo zapisovat — požádej admina.")
+    rel = soubory.clean_rel(rel)
+    if slozky.special(rel):
+        raise ValueError(f"Do své složky v {slozky.PEOPLE}/ nahrávej přímo v hubu (je to tvůj "
+                         f"osobní Obsidian), do {slozky.SHARED}/ jako do sdíleného Obsidianu.")
+    if not poznamky.allowed_path(user, rel):
+        raise ValueError("Do téhle složky nemáš přístup — vyber jinou.")
+    in_place = os.path.dirname(rel) in poznamky.masked_dirs()
+    result = soubory.write(ensure_company_vault(), rel, raw, overwrite,
+                           quota=soubory.COMPANY_QUOTA, in_place=in_place)
+    if result.get("ok"):
+        soubory.log(config.COMPANY_LOG, user, "firma", result)
+    return result
 
 
 # ── sdílené Obsidiany: pokyny pro Clauda a provedení návrhů ──────────────────
@@ -1042,6 +1107,11 @@ def apply_proposal(user, pid, overwrite=False):
         result = shared.delete(user, data.get("vault"))
     else:
         raise ValueError("Neznámý návrh.")
+    if kind in ("sdilene-zalozit", "sdilene-smazat") and result.get("ok"):
+        try:
+            slozky.sync()                # Sdílené/<název> ve firemním trezoru
+        except (OSError, ValueError):
+            pass
     if result.get("ok"):
         try:
             os.remove(os.path.join(os.path.realpath(home_for(user)), PENDING, str(pid) + ".json"))
@@ -1104,7 +1174,9 @@ def session_spec(user, isolation, mode):
     # přes bwrap je vynechat neumíme — tam se radši nepřiváže celý trezor.
     hidden = poznamky.hidden_for(user) if company else []
     masks = poznamky.mask_args(config.COMPANY_VAULT, hidden) if hidden and mode == "bwrap" else []
-    if hidden and mode != "bwrap":
+    # Cizí odkazy v Lidé/ a Sdílené/ vedou v sandboxu do prázdna — kvůli nim
+    # celý trezor schovávat nemusíme. Kvůli omezené poznámce ano.
+    if mode != "bwrap" and [h for h in hidden if not slozky.special(h)]:
         company = []
     extra_ro = [(kod, REPO_DIR)] + company + [v["path"] for v in shared.vaults_for(user)]
     unit = unit_name(user)

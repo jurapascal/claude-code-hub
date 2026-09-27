@@ -29,9 +29,16 @@ from . import core
 STATE_PATH = os.path.join(core.CLAUDE_DIR, "hub-restore.json")
 LAUNCHER = os.path.join(core.CLAUDE_DIR, "claude-hub.py")
 
-# Starší soubor nemá cenu obnovovat — když se hub nepustil hodinu, člověk už
-# dávno dělá něco jiného a taby z minula by ho jen zmátly.
+# Po aktualizaci: starší soubor nemá cenu obnovovat — když se hub nepustil
+# hodinu, člověk už dávno dělá něco jiného a taby z minula by ho jen zmátly.
 MAX_AGE = 3600
+# Po zavření appky (počítač) nebo uspání prostoru (server) se ale pokračuje
+# tam, kde člověk skončil, i druhý den nebo po víkendu.
+MAX_AGE_CLOSED = 14 * 24 * 3600
+REASONS = ("restart", "zavreni", "uspani")
+# Uložené taby z minula, které si stránka ještě nevzala (take) — průběžné
+# ukládání je do té doby nesmí přepsat prázdným stavem čerstvého startu.
+_TAKEN = not os.path.exists(STATE_PATH)
 
 
 def _resume_for(hub, session):
@@ -51,8 +58,12 @@ def _resume_for(hub, session):
     return session.resume or ""
 
 
-def snapshot(hub):
-    """Zapíše otevřené taby. Vrací, kolik jich bylo."""
+def snapshot(hub, reason="restart", quiet=False):
+    """Zapíše otevřené taby. Vrací, kolik jich bylo.
+
+    `reason`: restart (aktualizace), zavreni (zavřená appka na počítači),
+    uspani (brána zastavuje prostor) — podle toho jak starý stav se ještě
+    obnoví a co stránka řekne."""
     tabs = []
     for session in list(hub.sessions.values()):
         if session.exited:
@@ -74,7 +85,8 @@ def snapshot(hub):
             # Firemní tab (trezor firmy) má zůstat firemní i po restartu.
             "vault": getattr(session, "vault", "") or "",
         })
-    data = {"at": int(time.time()), "version": core.version(), "tabs": tabs}
+    data = {"at": int(time.time()), "version": core.version(), "tabs": tabs,
+            "duvod": reason if reason in REASONS else "restart"}
     try:
         tmp = STATE_PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
@@ -83,28 +95,48 @@ def snapshot(hub):
     except OSError as exc:
         core.log(f"restart: stav tabů se nepodařilo uložit: {exc}", "warn")
         return 0
-    core.log(f"restart: uloženo {len(tabs)} tabů")
+    if not quiet:
+        core.log(f"restart: uloženo {len(tabs)} tabů")
     return len(tabs)
 
 
+def keep_saving(hub, reason, every=60):
+    """Ukládá taby průběžně (vlákno). Zavření appky i uspání prostoru je uloží
+    samo; tohle je pro pád, zabití procesu (nedostatek paměti) a vypnutý
+    počítač — ať se i pak dá pokračovat. Nejvýš minuta zpátky."""
+    while True:
+        time.sleep(every)
+        if not _TAKEN:
+            continue
+        try:
+            snapshot(hub, reason, quiet=True)
+        except Exception:
+            pass
+
+
 def take():
-    """Přečte uložené taby a soubor smaže — obnovuje se jednou, ne pokaždé."""
+    """Přečte uložené taby a soubor smaže — obnovuje se jednou, ne pokaždé.
+    Vrací (taby, důvod)."""
+    global _TAKEN
+    _TAKEN = True
     try:
         with open(STATE_PATH, encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, ValueError):
-        return []
+        return [], ""
     try:
         os.remove(STATE_PATH)
     except OSError:
         pass
     if not isinstance(data, dict):
-        return []
-    if time.time() - int(data.get("at") or 0) > MAX_AGE:
+        return [], ""
+    reason = data.get("duvod") if data.get("duvod") in REASONS else "restart"
+    limit = MAX_AGE if reason == "restart" else MAX_AGE_CLOSED
+    if time.time() - int(data.get("at") or 0) > limit:
         core.log("restart: uložené taby jsou staré, neobnovuju")
-        return []
+        return [], ""
     tabs = data.get("tabs")
-    return tabs if isinstance(tabs, list) else []
+    return (tabs if isinstance(tabs, list) else []), reason
 
 
 def _spawn():
@@ -143,7 +175,7 @@ def relaunch(hub, delay=0.6):
         # Terminály stejně umírají s procesem; tohle je pošle spát řízeně,
         # ať po sobě Claude Code stihne zavřít přepisy.
         try:
-            hub.shutdown()
+            hub.shutdown(keep=False)
         except Exception:
             pass
         # os._exit, protože okno drží hlavní smyčku a obyčejný sys.exit by

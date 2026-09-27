@@ -257,6 +257,7 @@
   let io = null;
   let box = null;
   let notes = [];
+  let files = [];         // ostatní soubory trezoru (PDF, obrázky, tabulky…)
   let resolveNote = () => '';
   let resolveImage = () => '';
   let current = '';
@@ -296,24 +297,26 @@
     return b;
   }
 
-  function treeOf(list) {
-    const top = {path: '', dirs: new Map(), notes: []};
-    for (const n of list) {
+  function treeOf(list, other = []) {
+    const top = {path: '', dirs: new Map(), notes: [], files: []};
+    const place = (path) => {
       let at = top;
-      for (const part of n.path.split('/').slice(0, -1)) {
+      for (const part of path.split('/').slice(0, -1)) {
         if (!at.dirs.has(part)) {
           at.dirs.set(part, {name: part, path: (at.path ? at.path + '/' : '') + part,
-                             dirs: new Map(), notes: []});
+                             dirs: new Map(), notes: [], files: []});
         }
         at = at.dirs.get(part);
       }
-      at.notes.push(n.path);
-    }
+      return at;
+    };
+    for (const n of list) place(n.path).notes.push(n.path);
+    for (const f of other) place(f.path).files.push(f);
     return top;
   }
 
   function count(dir) {
-    let n = dir.notes.length;
+    let n = dir.notes.length + dir.files.length;
     for (const d of dir.dirs.values()) n += count(d);
     return n;
   }
@@ -325,6 +328,27 @@
       det.dataset.dir = d.path;
       const sum = node('summary');
       sum.appendChild(node('span', '', d.name));
+      const special = linkDir(d.path);
+      if (special) {
+        const who = special.kind === 'osobni' ? 'jen ty'
+          : (special.members || []).join(', ');
+        const tag = node('span', 'vault-badge', special.kind === 'osobni' ? '🔒 jen ty' : '👥 ' + (special.members || []).length);
+        tag.title = special.kind === 'osobni'
+          ? 'Tvůj osobní Obsidian — vidíš ho jen ty, ukládá se rovnou.'
+          : 'Sdílený Obsidian „' + (special.name || d.name) + '“ — vidí: ' + who + '. Členy mění ten, kdo ho založil (Sdílené Obsidiany).';
+        sum.appendChild(tag);
+      } else if (restricted(d.path)) {
+        const tag = node('span', 'vault-badge', '🔒');
+        tag.title = 'Složku vidí jen ' + whoText(d.path);
+        sum.appendChild(tag);
+      }
+      if (acl && acl.spravce && !special && !/^(Lidé|Sdílené)(\/|$)/.test(d.path)) {
+        const who = node('button', 'vault-dir-who', 'Vidí…');
+        who.type = 'button';
+        who.title = 'Kdo tuhle složku vidí';
+        who.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); openWho(d.path); };
+        sum.appendChild(who);
+      }
       sum.appendChild(node('span', 'vault-count', String(count(d))));
       det.appendChild(sum);
       const sub = node('div', 'vault-sub');
@@ -347,6 +371,19 @@
     for (const path of dir.notes.sort((a, b) => a.localeCompare(b, 'cs'))) {
       parent.appendChild(itemButton(path));
     }
+    for (const f of dir.files.sort((a, b) => a.path.localeCompare(b.path, 'cs'))) {
+      const b = node('button', 'vault-item vault-file', f.path.split('/').pop());
+      b.dataset.file = f.path;
+      b.title = f.path + ' · ' + fileSize(f.size) + ' — kliknutím stáhnout';
+      b.appendChild(node('small', '', fileSize(f.size)));
+      parent.appendChild(b);
+    }
+  }
+
+  function fileSize(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return Math.round(n / 1024) + ' kB';
+    return (n / 1024 / 1024).toFixed(1).replace('.', ',') + ' MB';
   }
 
   function renderList() {
@@ -356,7 +393,7 @@
     clearTimeout(searchTimer);
     const seq = ++searchSeq;
     if (!text) {
-      drawDir(treeOf(notes), list);
+      drawDir(treeOf(notes, files), list);
       return;
     }
     const words = fold(text).split(/\s+/).filter(Boolean);
@@ -421,6 +458,7 @@
     if (!box) return;
     if (remember && current && current !== note.path) back.push(current);
     current = note.path;
+    if (io.onPlace) io.onPlace(current);
     const out = render(note.text, {resolve: resolveNote, image: resolveImage, current});
 
     // Na telefonu se seznam a poznámka nevejdou vedle sebe: otevřená
@@ -481,9 +519,22 @@
   let noteMtime = 0;
   let graph = null;
 
-  // Firemní trezor jen ke čtení (brána: company_level = read) úpravy nenabízí.
-  const canEdit = () => !!(root.HubEditor && root.HubEditor.available) && !(io && io.readonly);
-  const proposes = () => !!(io && io.vault);
+  /* Ve firemním trezoru jsou Lidé/<já> (osobní trezor — zapisuje se rovnou)
+     a Sdílené/<název> (sdílený — přes kartu). Posílá je brána (gateway/slozky.py),
+     cesty v nich hub směruje sám (core.vault_route). */
+  let links = [];
+  const linkOf = (path) => links.find((l) => String(path || '').startsWith(l.path + '/')) || null;
+  const linkDir = (path) => links.find((l) => l.path === path) || null;
+
+  // Firemní trezor jen ke čtení (brána: company_level = read) úpravy nenabízí —
+  // kromě vlastní a sdílené složky, ty pod firemní právo nespadají.
+  const canEdit = (path = current) => !!(root.HubEditor && root.HubEditor.available) &&
+    !(io && io.readonly && !linkOf(path));
+  const proposes = (path = current) => {
+    if (!(io && io.vault)) return false;
+    const l = linkOf(path);
+    return !(l && l.kind === 'osobni');
+  };
 
   function setState(text, kind) {
     const el = q('.vault-state');
@@ -632,7 +683,8 @@
     if (dirty) await saveNow();
     let res;
     try {
-      res = await io.api('vault-rename', {path: was, to: name});
+      res = await io.api('vault-rename' + (io.vault ? '?vault=' + encodeURIComponent(io.vault) : ''),
+                         {path: was, to: name});
     } catch (err) {
       return io.toast('Přejmenovat se nepodařilo: ' + err.message);
     }
@@ -657,7 +709,8 @@
     dirty = false;
     let res;
     try {
-      res = await io.api('vault-delete', {path: was});
+      res = await io.api('vault-delete' + (io.vault ? '?vault=' + encodeURIComponent(io.vault) : ''),
+                         {path: was});
     } catch (err) {
       return io.toast('Smazat se nepodařilo: ' + err.message);
     }
@@ -675,6 +728,100 @@
     q('.vault-path').textContent = '';
     q('.vault-md').textContent = '';
     q('.vault-rename').hidden = q('.vault-del').hidden = true;
+  }
+
+  /* ── soubory: nahrání a stažení ──────────────────────────────────────────
+     Do osobního trezoru (i Lidé/<já> ve firemním) nahrává hub rovnou
+     (/api/vault-upload). Do firemních a sdílených složek brána
+     (/gw/firma/soubor) — jen z téhle stránky, s cookie brány, kterou Claude
+     v prostoru nemá. Práva, cestu i velikost ověřuje server znovu. */
+  const UPLOAD_MAX = 20 * 1024 * 1024;
+
+  function defaultFolder() {
+    const dir = current.includes('/') ? current.split('/').slice(0, -1).join('/') : '';
+    if (io && io.vault === 'firma' && io.readonly && !linkOf(dir + '/x')) {
+      const own = links.find((l) => l.kind === 'osobni');
+      return own ? own.path : dir;
+    }
+    return dir;
+  }
+
+  function download(path) {
+    const a = document.createElement('a');
+    a.href = io.fileUrl(path) + '&download=1';
+    a.download = path.split('/').pop();
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  // Kam soubor na cestě `rel` doopravdy jde: {hub: true} nebo {vault, cesta}.
+  function uploadTarget(rel) {
+    if (!io.vault) return {hub: true, path: rel};
+    if (io.vault !== 'firma') return {vault: io.vault, cesta: rel};
+    const l = linkOf(rel);
+    if (l && l.kind === 'osobni') return {hub: true, path: rel};
+    if (l && l.slug) return {vault: 'sdilene:' + l.slug, cesta: rel.slice(l.path.length + 1)};
+    return {vault: 'firma', cesta: rel};
+  }
+
+  async function sendFile(file, rel, overwrite) {
+    const t = uploadTarget(rel);
+    let res;
+    if (t.hub) {
+      res = await fetch(io.uploadUrl(t.path, overwrite), {method: 'POST', body: file,
+        headers: {'Content-Type': 'application/octet-stream'}});
+    } else {
+      res = await fetch('/gw/firma/soubor?vault=' + encodeURIComponent(t.vault) +
+                        '&cesta=' + encodeURIComponent(t.cesta) + (overwrite ? '&prepsat=1' : ''), {
+        method: 'POST', body: file, credentials: 'same-origin',
+        headers: {'Content-Type': 'application/octet-stream', 'X-Hub-Firma': '1'}});
+    }
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 409 || data.exists) return {exists: true};
+    if (!res.ok || !data.ok) throw new Error(data.error || 'Server odpověděl ' + res.status);
+    return data;
+  }
+
+  async function uploadFiles(list, folder) {
+    folder = String(folder || '').trim().replace(/^\/+|\/+$/g, '');
+    let done = 0;
+    const sent = [];
+    for (const file of list) {
+      if (file.size > UPLOAD_MAX) { io.toast(file.name + ': víc než 20 MB — nenahráno.'); continue; }
+      if (!file.size) { io.toast(file.name + ': prázdný soubor — nenahráno.'); continue; }
+      const rel = (folder ? folder + '/' : '') + file.name;
+      setState('nahrávám ' + file.name + '…');
+      try {
+        let out = await sendFile(file, rel, false);
+        if (out.exists) {
+          if (!confirm(`„${rel}“ už v trezoru je. Přepsat?`)) continue;
+          out = await sendFile(file, rel, true);
+        }
+        done++;
+        sent.push(rel);
+      } catch (err) {
+        io.toast(file.name + ': ' + err.message);
+      }
+    }
+    setState('');
+    if (!done || !box) return;
+    await reloadTree();
+    const missing = sent.filter((p) => !files.some((f) => f.path === p) && !notes.some((n) => n.path === p));
+    io.toast((done === 1 ? 'Nahrán 1 soubor' : `Nahráno souborů: ${done}`) +
+             (missing.length ? ' — ve složce s omezeným přístupem se ukáže po restartu prostoru.' : '.'));
+  }
+
+  async function reloadTree() {
+    try {
+      const tree = await io.api('vault-tree' + (io.vault ? '?vault=' + encodeURIComponent(io.vault) : ''));
+      if (!box) return;
+      notes = tree.notes || [];
+      files = tree.files || [];
+      links = tree.slozky || links;
+      resolveNote = indexOf(notes.map((n) => n.path), true);
+      renderList();
+    } catch (err) { /* seznam zůstane, jaký byl */ }
   }
 
   /* ── graf trezoru ─────────────────────────────────────────────────────── */
@@ -860,6 +1007,7 @@
 
   function close() {
     if (!box) return;
+    if (io && io.onPlace) io.onPlace(null);
     // Rozepsanou změnu v osobním trezoru ještě uložit — okno se zavírá i Escapem.
     if (dirty && editor && !proposes()) saveNow();
     if (graph) { graph.destroy(); graph = null; }
@@ -1015,7 +1163,7 @@
   function whoButton() {
     const b = q('.vault-who');
     if (!b) return;
-    b.hidden = !(acl && acl.spravce && current);
+    b.hidden = !(acl && acl.spravce && current) || /^(Lidé|Sdílené)\//.test(current);
     if (b.hidden) return;
     b.textContent = restricted(current) ? '🔒 Vidí: ' + whoText(current) : 'Vidí: všichni';
     b.classList.toggle('on', restricted(current));
@@ -1025,12 +1173,14 @@
     if (!acl || !acl.spravce || !path) return;
     const chosen = new Set(((acl.poznamky || {})[path] || []).map((p) => p.email));
     let only = chosen.size > 0;
+    const folder = !/\.md$/i.test(path);
+    const what = folder ? 'Složku' : 'Poznámku';
     const wrap = node('div', 'onb set-modal vault-access-modal firma');
     wrap.innerHTML = `
       <div class="onb-box acc-box">
         <div class="onb-head">
           <div>
-            <div class="onb-title">Kdo vidí poznámku</div>
+            <div class="onb-title who-title">Kdo vidí poznámku</div>
             <div class="onb-sub who-path"></div>
           </div>
           <span class="spacer"></span>
@@ -1050,7 +1200,8 @@
         </div>
       </div>`;
     document.body.appendChild(wrap);
-    wrap.querySelector('.who-path').textContent = path;
+    wrap.querySelector('.who-path').textContent = folder ? path + '/' : path;
+    wrap.querySelector('.who-title').textContent = folder ? 'Kdo vidí složku' : 'Kdo vidí poznámku';
     const shut = () => { wrap.remove(); document.removeEventListener('keydown', esc, true); };
     function esc(ev) { if (ev.key === 'Escape') { ev.stopPropagation(); shut(); } }
     document.addEventListener('keydown', esc, true);
@@ -1062,8 +1213,9 @@
         b.classList.toggle('on', (b.dataset.only === '1') === only);
       }
       wrap.querySelector('.who-hint').textContent = only
-        ? 'Poznámku uvidí jen zaškrtnutí a správci poznámek. Ostatní ji ve svém prostoru nebudou mít vůbec — ani Claude.'
-        : 'Poznámku vidí každý, kdo vidí firemní Obsidian.';
+        ? what + ' uvidí jen zaškrtnutí a správci poznámek. Ostatní ' + (folder ? 'ji i se vším, co v ní je (i s tím, co přibude),' : 'ji') +
+          ' ve svém prostoru nebudou mít vůbec — ani Claude.'
+        : what + ' vidí každý, kdo vidí firemní Obsidian' + (folder ? ' (omezené poznámky v ní dál jen vybraní).' : '.');
       list.hidden = !only;
     };
     for (const b of wrap.querySelectorAll('.who-mode .acc-opt')) {
@@ -1094,7 +1246,7 @@
     save.onclick = async () => {
       const emails = only ? [...chosen] : [];
       if (only && !emails.length &&
-          !confirm('Nikoho jsi nevybral — poznámku uvidí jen správci poznámek. Pokračovat?')) return;
+          !confirm('Nikoho jsi nevybral — ' + what.toLowerCase() + ' uvidí jen správci poznámek. Pokračovat?')) return;
       save.disabled = true;
       try {
         const out = await aclFetch('POST', {cesta: path, emaily: emails, jen: only});
@@ -1113,6 +1265,7 @@
   async function open(opts) {
     close();
     io = opts;
+    if (io.onPlace) io.onPlace(opts.path || '');
     // Firemní trezor je fialový jako všude jinde — třída přebije barvu
     // prostředí uvnitř celého okna, ať se osobní a firemní nespletou.
     box = node('div', 'onb set-modal vault-modal' +
@@ -1127,6 +1280,8 @@
           </div>
           <span class="spacer"></span>
           <button class="btn ghost vault-new" title="Nová poznámka" hidden>+ Nová</button>
+          <button class="btn ghost vault-upload" title="Nahrát soubory (PDF, obrázky, tabulky…) — jde i přetáhnout na seznam" hidden>Nahrát soubor</button>
+          <input class="vault-upload-input" type="file" multiple hidden>
           <button class="btn ghost vault-rename" title="Přejmenovat poznámku" hidden>Přejmenovat</button>
           <button class="btn ghost vault-del" title="Smazat poznámku" hidden>Smazat</button>
           <button class="btn ghost vault-graph-btn" title="Graf poznámek">Graf</button>
@@ -1187,8 +1342,34 @@
     if (window.matchMedia('(max-width: 520px)').matches) {
       q('.vault-bar').append(q('.vault-rename'), q('.vault-del'));
     }
-    q('.vault-new').hidden = !canEdit();
+    q('.vault-new').hidden = !(root.HubEditor && root.HubEditor.available) ||
+      !!(io && io.readonly && !links.length);
     q('.vault-new').onclick = newNote;
+    q('.vault-upload').hidden = !(io && io.uploadUrl);
+    q('.vault-upload').onclick = () => q('.vault-upload-input').click();
+    q('.vault-upload-input').onchange = (ev) => {
+      const picked = [...ev.target.files];
+      ev.target.value = '';
+      if (!picked.length) return;
+      const folder = prompt('Do které složky? (prázdné = hlavní složka trezoru)', defaultFolder());
+      if (folder === null) return;
+      uploadFiles(picked, folder);
+    };
+    // Přetažení souborů na seznam: do složky, na kterou se pustily.
+    const nav = q('.vault-nav');
+    nav.addEventListener('dragover', (ev) => {
+      if (!io.uploadUrl || ![...(ev.dataTransfer.types || [])].includes('Files')) return;
+      ev.preventDefault();
+      nav.classList.add('drop');
+    });
+    nav.addEventListener('dragleave', (ev) => { if (!nav.contains(ev.relatedTarget)) nav.classList.remove('drop'); });
+    nav.addEventListener('drop', (ev) => {
+      nav.classList.remove('drop');
+      if (!io.uploadUrl || !ev.dataTransfer.files.length) return;
+      ev.preventDefault();
+      const det = ev.target.closest('details[data-dir]');
+      uploadFiles([...ev.dataTransfer.files], det ? det.dataset.dir : defaultFolder());
+    });
     q('.vault-rename').onclick = renameNote;
     q('.vault-del').onclick = deleteNote;
     q('.vault-graph-btn').onclick = toggleGraph;
@@ -1203,6 +1384,7 @@
     q('.vault-search').addEventListener('input', renderList);
     const pick = (ev) => {
       const b = ev.target.closest('.vault-item');
+      if (b && b.dataset.file) return download(b.dataset.file);
       if (b) load(b.dataset.path);
     };
     q('.vault-list').addEventListener('click', pick);
@@ -1234,6 +1416,10 @@
     }
     if (!box) return;
     notes = tree.notes || [];
+    files = tree.files || [];
+    links = tree.slozky || [];
+    q('.vault-new').hidden = !(root.HubEditor && root.HubEditor.available) ||
+      !!(io && io.readonly && !links.length);
     resolveNote = indexOf(notes.map((n) => n.path), true);
     const imageOf = indexOf(tree.images || [], false);
     resolveImage = (name) => {

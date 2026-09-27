@@ -352,7 +352,17 @@ class Hub:
             if autosave:
                 core.autosave_tabs_closed([sid])
 
-    def shutdown(self):
+    def shutdown(self, keep=True):
+        """Zavře všechny taby. `keep` = nejdřív je uložit, ať se po dalším
+        otevření appky vrátí (restart.take) — kromě restartu po aktualizaci,
+        ten si je uložil sám."""
+        if keep and not core.on_gateway():
+            # V prostoru na serveru ukládá brána přes /api/prostor-snapshot
+            # (uspani), dřív než prostor zastaví — tady by Claude už nežil.
+            try:
+                restart.snapshot(self, "zavreni")
+            except Exception as exc:
+                core.log_error("uložení tabů při zavření", exc)
         sids = list(self.sessions)
         for sid in sids:
             self.close(sid, autosave=False)
@@ -516,6 +526,15 @@ class Handler(BaseHTTPRequestHandler):
         if not self._origin_ok():
             return self._send(403, b"Cizi puvod.")
         length = int(self.headers.get("Content-Length") or 0)
+        if parsed.path == "/api/vault-upload":
+            # Soubor do osobního trezoru: tělo je soubor sám, ne JSON.
+            # Velikost se hlídá dřív, než se cokoli přečte.
+            if length > core.VAULT_UPLOAD_MAX:
+                self.close_connection = True
+                return self._json({"ok": False, "error": "Soubor je větší než "
+                                   f"{core.VAULT_UPLOAD_MAX // (1024 * 1024)} MB."}, 413)
+            raw = self.rfile.read(length) if length > 0 else b""
+            return self._api("vault-upload", query, {"raw": raw})
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
         except Exception:
@@ -772,19 +791,37 @@ class Handler(BaseHTTPRequestHandler):
                                                             vault=which)})
         if name == "vault-graph":
             return self._json(core.vault_graph(which))
+        if name in ("vault-save", "vault-rename", "vault-delete"):
+            # Ve firemním trezoru je Lidé/<já> osobní trezor a Sdílené/<název>
+            # sdílený — zápis jde tam, kam cesta doopravdy vede (core.vault_route).
+            where, path, prefix = core.vault_route(payload.get("path", ""), which)
+        if name == "vault-upload":
+            # Jen osobní trezor — ve firemním Lidé/<já> (core.vault_route).
+            # Do firemních a sdílených složek nahrává brána (/gw/firma/soubor).
+            rel = query.get("path", [""])[0]
+            where, sub, prefix = core.vault_route(rel, which)
+            if where:
+                return self._json({"ok": False, "error": "Sem soubor nahrává brána."}, 400)
+            result = core.vault_upload(sub, (payload or {}).get("raw", b""),
+                                       query.get("prepsat", [""])[0] == "1")
+            return self._json(core.vault_prefixed(result, prefix),
+                              409 if result.get("exists") else 200)
         if name == "vault-save":
             # Osobní trezor hub zapíše rovnou. Do firemního a sdílených zapsat
             # neumí (jsou jen ke čtení) — vznikne návrh a kartu potvrdí člověk.
-            if which:
-                return self._json({**core.vault_proposal(payload.get("path", ""),
-                                                         payload.get("text", ""), which),
-                                   "proposal": True})
-            return self._json(core.vault_save(payload.get("path", ""), payload.get("text", ""),
-                                              mtime=payload.get("mtime")))
+            if where:
+                return self._json(core.vault_prefixed(
+                    {**core.vault_proposal(path, payload.get("text", ""), where),
+                     "proposal": True}, prefix))
+            return self._json(core.vault_prefixed(
+                core.vault_save(path, payload.get("text", ""), mtime=payload.get("mtime")), prefix))
         if name == "vault-rename":
-            return self._json(core.vault_rename(payload.get("path", ""), payload.get("to", ""), which))
+            to_where, to, _prefix = core.vault_route(payload.get("to", ""), which)
+            if to_where != where or _prefix != prefix:
+                return self._json({"ok": False, "error": "Přesouvat jde jen v rámci jedné složky Obsidianu."})
+            return self._json(core.vault_prefixed(core.vault_rename(path, to, where), prefix))
         if name == "vault-delete":
-            return self._json(core.vault_delete(payload.get("path", ""), which))
+            return self._json(core.vault_prefixed(core.vault_delete(path, where), prefix))
         if name == "firma":
             # Návrhy do firemního Obsidianu od Clauda (tools/firma.py). Hub je
             # ukáže a umí zahodit; nahrává brána po kliknutí (/gw/firma/publish).
@@ -792,9 +829,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": core.firma_discard(payload.get("id"))})
             return self._json({**core.firma_state(), "pending": core.firma_pending()})
         if name == "vault-file":
-            full = core.vault_path(query.get("path", [""])[0], core.VAULT_IMAGES, which)
+            # Obrázky se ukazují v náhledu; cokoli jiného (download=1) jen ke
+            # stažení — prohlížeč to pod adresou hubu nikdy neotevře jako stránku.
+            download = query.get("download", [""])[0] == "1"
+            full = core.vault_path(query.get("path", [""])[0],
+                                   None if download else core.VAULT_IMAGES, which)
             if not full:
                 return self._send(404, b"404")
+            if download:
+                with open(full, "rb") as fh:
+                    data = fh.read()
+                fname = os.path.basename(full)
+                ascii_name = re.sub(r'[^A-Za-z0-9._-]+', "_", fname) or "soubor"
+                return self._send(200, data, "application/octet-stream", {
+                    "Content-Disposition": f"attachment; filename=\"{ascii_name}\"; "
+                                           f"filename*=UTF-8''{urllib.parse.quote(fname)}",
+                    "Content-Security-Policy": "default-src 'none'; sandbox",
+                    "X-Content-Type-Options": "nosniff"})
             ctype = mimetypes.guess_type(full)[0] or "application/octet-stream"
             with open(full, "rb") as fh:
                 # SVG umí skripty: otevřený přímo jako stránka by běžel pod
@@ -922,10 +973,13 @@ class Handler(BaseHTTPRequestHandler):
             # znovu a Claude v nich pokračuje v konverzaci (/api/restore).
             if not core.on_gateway():
                 return self._json({"error": "Jen v prostoru na serveru."}, 400)
-            return self._json({"tabs": restart.snapshot(HUB)})
+            reason = "uspani" if (payload or {}).get("duvod") == "uspani" else "restart"
+            return self._json({"tabs": restart.snapshot(HUB, reason)})
         if name == "restore":
-            # Co bylo otevřené před restartem. Čte se jednou, pak je soubor pryč.
-            return self._json({"tabs": restart.take()})
+            # Co bylo otevřené před restartem, zavřením appky nebo uspáním
+            # prostoru. Čte se jednou, pak je soubor pryč.
+            tabs, reason = restart.take()
+            return self._json({"tabs": tabs, "duvod": reason})
         if name == "clockify":
             # Ruční stopky u projektu (hub/clockify.py). Běží mimo agenta —
             # člověk klikne Start, po Stopu je čas v Clockify.
@@ -1429,6 +1483,10 @@ def start():
     threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.2},
                      daemon=True).start()
     threading.Thread(target=watch_autosave, daemon=True).start()
+    # Taby průběžně na disk — po pádu nebo zabití se appka vrátí, kde byla.
+    threading.Thread(target=restart.keep_saving,
+                     args=(HUB, "uspani" if core.on_gateway() else "zavreni"),
+                     daemon=True).start()
     # Most na počítač: na počítači čeká na úkoly od Clauda ze serveru (když je
     # zapnutý), v prostoru na serveru napojí Claude Code jeho MCP server.
     pocitac.OPEN_TAB = open_ukol_tab
