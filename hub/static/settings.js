@@ -1147,35 +1147,6 @@
     return box;
   }
 
-  /* Služby — karta na službu, pod ní účty (hub/connect.py). Pro člověka, který
-     chce „napojit Freelo", ne registrovat MCP server: popisek účtu, Přihlásit,
-     a na serveru vložit adresu, kam přihlášení přesměrovalo. Víc účtů u jedné
-     služby je normální (firma, osobní). */
-  /* Sdílená napojení (jen na serveru): jedno napojení — třeba WordPress nebo
-     Ecomail s klíčem — založí jeden člověk a vybere, s kým ho sdílí. Klíče
-     a hesla jdou odsud rovnou bráně (/gw/mcp-sdilene) a do prostorů se nikdy
-     nedostanou; Claude Code v prostoru má jen most (tools/sdilene_mcp.py). */
-  const SHARED_TEMPLATES = {
-    wordpress: {
-      label: 'WordPress', kind: 'prikaz', name: 'WordPress',
-      command: 'npx -y @automattic/mcp-wordpress-remote@latest',
-      env: [['WP_API_URL', 'https://web.cz', false], ['WP_API_USERNAME', '', false],
-            ['WP_API_PASSWORD', '', true]],
-      help: 'Na webu musí být plugin WordPress MCP. Heslo je heslo aplikace ' +
-            '(Uživatelé → Profil → Hesla aplikací), ne heslo k účtu.',
-    },
-    adresa: {
-      label: 'Vlastní adresa (https)', kind: 'adresa', name: '',
-      headers: [['Authorization', 'Bearer …', true]],
-      help: 'Vzdálený MCP server. Klíč patří do hlavičky — třeba Authorization: Bearer <klíč>.',
-    },
-    prikaz: {
-      label: 'Vlastní příkaz', kind: 'prikaz', name: '', command: 'npx -y ',
-      env: [['API_KEY', '', true]],
-      help: 'MCP server spouštěný příkazem. Klíče do proměnných — brána ho pustí u sebe v sandboxu.',
-    },
-  };
-
   // Brána: sdílená napojení a sdílení účtů ze služeb (gateway/mcp_sdilene.py).
   async function gwShared(payload) {
     const r = await fetch('/gw/mcp-sdilene', payload === undefined ? {credentials: 'same-origin'} : {
@@ -1207,236 +1178,6 @@
     return box;
   }
 
-  function sdilenaNapojeni() {
-    const wrap = el('div', 'svc-shared');
-    wrap.appendChild(el('div', 'set-title svc-tech', 'Další sdílená napojení'));
-    wrap.appendChild(el('div', 'set-note',
-      'Účty výš sdílíš tlačítkem „Sdílet“ přímo u nich. Tady je WordPress a další ' +
-      'napojení, které si nastavíš jednou a nasdílíš. Klíče a hesla drží server — ' +
-      'nikdo z nich je neuvidí, ani jejich Claude.'));
-    const list = el('div', 'svc-list');
-    wrap.appendChild(list);
-    let people = [];
-
-    const gw = gwShared;
-    // Claude Code v prostoru si most zaregistruje (nebo odebere) hned.
-    const sync = () => io.api('connect', {action: 'shared-sync'}).catch(() => {});
-
-    const peoplePicker = (chosen) => peopleChecks(people, chosen);
-
-    async function test(n, out) {
-      out.textContent = 'Zkouším…';
-      out.className = 'set-dim';
-      try {
-        const r = await gw({akce: 'test', slug: n.slug});
-        out.textContent = 'Funguje — ' + r.tools + ' nástrojů.';
-        out.className = 'set-ok';
-      } catch (err) {
-        out.textContent = err.message;
-        out.className = 'set-warn';
-      }
-    }
-
-    function card(n) {
-      const c = el('div', 'svc-card');
-      const head = el('div', 'svc-head');
-      // Sdílené napojení z šablony WordPress (nebo pojmenované po službě).
-      const ico = svcIcon(/wordpress/i.test(n.name + ' ' + (n.command || '')) ? 'wordpress'
-                          : String(n.name || '').split(/\s/)[0]);
-      if (ico) head.appendChild(ico);
-      head.appendChild(el('strong', null, n.name));
-      head.appendChild(el('span', 'svc-note', n.is_owner
-        ? (n.members && n.members.length
-          ? 'tvoje · sdílíš s ' + n.members.map((m) => m.name || m.email).join(', ')
-          : 'tvoje · zatím s nikým nesdílené')
-        : 'nasdílel ' + (n.owner_name || n.owner)));
-      c.appendChild(head);
-      const meta = n.is_owner ? (n.kind === 'adresa' ? n.url : n.command) : '';
-      if (meta) c.appendChild(el('div', 'svc-note svc-meta', meta));
-      c.appendChild(el('div', 'svc-note', 'V Claude Code: ' + n.mcp_name +
-        ' — v nové konverzaci.'));
-      const out = el('span', 'set-dim');
-      const btns = el('div', 'svc-acc');
-      const tb = el('button', 'btn ghost', 'Vyzkoušet');
-      tb.onclick = () => test(n, out);
-      btns.appendChild(tb);
-      if (n.is_owner) {
-        const who = el('button', 'btn ghost', 'S kým sdílet');
-        const del = el('button', 'btn ghost', 'Smazat');
-        btns.append(who, del);
-        const form = el('div', 'svc-form');
-        form.hidden = true;
-        const picker = peoplePicker(new Set((n.members || []).map((m) => m.email)));
-        const save = el('button', 'btn', 'Uložit sdílení');
-        form.append(picker, save);
-        who.onclick = () => { form.hidden = !form.hidden; };
-        save.onclick = async () => {
-          save.disabled = true;
-          try {
-            await gw({akce: 'upravit', slug: n.slug, emaily: picker.value()});
-            io.toast('Sdílení „' + n.name + '“ uloženo.');
-            load();
-          } catch (err) {
-            io.toast(err.message);
-            save.disabled = false;
-          }
-        };
-        del.onclick = async () => {
-          if (!confirm('Smazat napojení „' + n.name + '“? Přijdou o něj i všichni, ' +
-                       's kým ho sdílíš.')) return;
-          try {
-            await gw({akce: 'smazat', slug: n.slug});
-            io.toast('Napojení „' + n.name + '“ smazáno.');
-            load();
-            sync();
-          } catch (err) {
-            io.toast(err.message);
-          }
-        };
-        btns.appendChild(out);
-        c.append(btns, form);
-      } else {
-        btns.appendChild(out);
-        c.appendChild(btns);
-      }
-      return c;
-    }
-
-    function pairRows(parent, rows, namePh) {
-      const box = el('div', 'svc-pairs');
-      const add = (name, value, secret) => {
-        const row = el('div', 'svc-pair');
-        const k = el('input');
-        k.placeholder = namePh;
-        k.value = name || '';
-        k.autocomplete = 'off';
-        const v = el('input');
-        v.type = secret ? 'password' : 'text';
-        v.placeholder = secret ? 'tajné — uvidí jen server' : 'hodnota';
-        v.value = secret ? '' : (value || '');
-        v.autocomplete = 'new-password';
-        const x = el('button', 'btn ghost', '×');
-        x.type = 'button';
-        x.onclick = () => row.remove();
-        row.append(k, v, x);
-        box.appendChild(row);
-      };
-      for (const [name, value, secret] of rows) add(name, value, secret);
-      const more = el('button', 'btn ghost svc-more', '+ další');
-      more.type = 'button';
-      more.onclick = () => add('', '', true);
-      parent.append(box, more);
-      box.value = () => {
-        const out = {};
-        for (const row of box.querySelectorAll('.svc-pair')) {
-          const [k, v] = row.querySelectorAll('input');
-          if (k.value.trim()) out[k.value.trim()] = v.value;
-        }
-        return out;
-      };
-      return box;
-    }
-
-    function newForm() {
-      const c = el('div', 'svc-card');
-      c.appendChild(el('div', 'svc-head')).appendChild(el('strong', null, 'Nové sdílené napojení'));
-      const form = el('div', 'svc-form');
-      c.appendChild(form);
-      const pick = el('select', 'set-input');
-      for (const [id, t] of Object.entries(SHARED_TEMPLATES)) {
-        if (!advanced() && id !== 'wordpress') continue;   // vlastní adresa/příkaz = technika
-        const o = el('option', null, t.label);
-        o.value = id;
-        pick.appendChild(o);
-      }
-      const body = el('div', 'svc-form');
-      form.append(pick, body);
-      let current = null;
-      function draw() {
-        const t = SHARED_TEMPLATES[pick.value];
-        body.textContent = '';
-        const input = (label, value, ph) => {
-          const row = el('label', 'mcp-field');
-          row.appendChild(el('span', null, label));
-          const i = el('input');
-          i.value = value || '';
-          i.placeholder = ph || '';
-          i.autocomplete = 'off';
-          row.appendChild(i);
-          body.appendChild(row);
-          return i;
-        };
-        body.appendChild(el('div', 'svc-note', t.help));
-        const name = input('Název', t.name, 'třeba Ecomail — firma');
-        const fields = {name};
-        if (t.kind === 'adresa') {
-          fields.url = input('Adresa MCP serveru', '', 'https://…/mcp');
-          body.appendChild(el('span', 'svc-note', 'Hlavičky s klíčem'));
-          fields.pairs = pairRows(body, t.headers, 'Hlavička');
-        } else {
-          fields.command = input('Příkaz', t.command, 'npx -y balíček');
-          body.appendChild(el('span', 'svc-note', 'Proměnné prostředí'));
-          fields.pairs = pairRows(body, t.env, 'PROMENNA');
-        }
-        body.appendChild(el('span', 'svc-note', 'S kým sdílet'));
-        fields.people = peoplePicker(new Set());
-        body.appendChild(fields.people);
-        current = {t, fields};
-      }
-      pick.onchange = draw;
-      draw();
-      const btns = el('div', 'svc-acc');
-      const save = el('button', 'btn', 'Založit a vyzkoušet');
-      const cancel = el('button', 'btn ghost', 'Zrušit');
-      const out = el('span', 'set-dim');
-      btns.append(save, cancel, out);
-      form.appendChild(btns);
-      cancel.onclick = () => load();
-      save.onclick = async () => {
-        const {t, fields} = current;
-        const payload = {akce: 'zalozit', kind: t.kind, name: fields.name.value,
-                         emaily: fields.people.value()};
-        if (t.kind === 'adresa') Object.assign(payload, {url: fields.url.value, headers: fields.pairs.value()});
-        else Object.assign(payload, {command: fields.command.value, env: fields.pairs.value()});
-        save.disabled = true;
-        out.textContent = 'Zakládám…';
-        try {
-          const r = await gw(payload);
-          await sync();
-          await test({slug: r.slug}, out);
-          setTimeout(load, out.className === 'set-ok' ? 1500 : 4000);
-        } catch (err) {
-          out.textContent = err.message;
-          out.className = 'set-warn';
-          save.disabled = false;
-        }
-      };
-      return c;
-    }
-
-    async function load() {
-      let data;
-      try {
-        data = await gw();
-      } catch (err) {
-        list.textContent = '';
-        list.appendChild(el('div', 'set-warn', 'Sdílená napojení se nenačetla: ' + err.message));
-        return;
-      }
-      people = data.people || [];
-      list.textContent = '';
-      // Účty ze služeb (druh „ucet") jsou v kartách služeb výš.
-      const items = (data.napojeni || []).filter((n) => n.kind !== 'ucet');
-      for (const n of items) list.appendChild(card(n));
-      if (!items.length) list.appendChild(el('div', 'svc-empty', 'Zatím žádné.'));
-      const add = el('button', 'btn ghost svc-add', '+ Nové sdílené napojení');
-      add.onclick = () => { add.replaceWith(newForm()); };
-      list.appendChild(add);
-    }
-    load();
-    return wrap;
-  }
-
   /* Ikonka služby, ať ji člověk pozná na první pohled (hub/static/sluzby/,
      oficiální ikony z webů služeb — nic se nenačítá zvenku). */
   const SVC_ICONS = ['freelo', 'canva', 'ecomail', 'clockify', 'google', 'wordpress'];
@@ -1449,6 +1190,10 @@
     return img;
   }
 
+  /* Služby — karta na službu, pod ní účty (hub/connect.py). Pro člověka, který
+     chce „napojit Freelo", ne registrovat MCP server: popisek účtu, Přihlásit,
+     a na serveru vložit adresu, kam přihlášení přesměrovalo. Víc účtů u jedné
+     služby je normální (firma, osobní). */
   function sluzby() {
     const wrap = el('div', 'svc-list');
     wrap.appendChild(el('div', 'set-dim', 'Načítám služby…'));
@@ -1845,7 +1590,6 @@
     const check = el('button', 'actionbtn', 'Zkontrolovat znovu');
     btns.appendChild(check);
     box.appendChild(sluzby());
-    if (state.config && state.config.gateway_user) box.appendChild(sdilenaNapojeni());
     // Technický přehled (všechny MCP servery, katalog) jen pro pokročilé.
     const tech = el('div');
     tech.hidden = !advanced();
