@@ -1157,7 +1157,15 @@ body { display: flex; flex-direction: column; }
 .vault-empty { color: var(--dim); font-size: 13px; padding: 4px 8px; }
 .vault-modal .vault-panel { padding: 16px 28px 28px; }
 .vault-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font-size: 12px; color: var(--dim); }
-.vault-path { font-family: ui-monospace, monospace; word-break: break-all; }
+.vault-path { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 4px; min-width: 0;
+  font-size: 13px; }
+.vault-crumb { font: inherit; border: none; background: none; padding: 2px 6px; border-radius: 6px;
+  color: var(--dim); cursor: pointer; }
+button.vault-crumb:hover { background: var(--bg-card); color: var(--fg-bright); }
+.vault-crumb.on { color: var(--fg-bright); font-weight: 600; cursor: default; }
+.vault-crumb-sep { color: var(--dim); opacity: .6; }
+.vault-list details.flash > summary { background: color-mix(in srgb, var(--accent) 18%, transparent);
+  transition: background .3s; }
 .vault-date { margin-left: auto; white-space: nowrap; }
 .vault-back { padding: 2px 10px; }
 .vault-props { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
@@ -1853,9 +1861,13 @@ select option { background-color: var(--bg-card); color: var(--fg-bright); }
   .vault-bar .btn { padding: 5px 10px; font-size: 11.5px; }
   .vault-back { order: 0; }
   .vault-path {
-    order: 1; flex: 1 1 120px; min-width: 0;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    order: 1; flex: 1 1 120px; min-width: 0; flex-wrap: nowrap;
+    white-space: nowrap; overflow: hidden;
   }
+  /* Na telefonu se vejde jen konec: kořen a složky se zkrátí, jméno zůstane. */
+  .vault-path .vault-crumb:not(.on) { flex: 0 1 auto; min-width: 0; max-width: 7em;
+    overflow: hidden; text-overflow: ellipsis; }
+  .vault-path .vault-crumb.on { overflow: hidden; text-overflow: ellipsis; }
   .vault-modes { order: 2; }
   .vault-bar .vault-rename { order: 3; }
   .vault-bar .vault-del { order: 4; }

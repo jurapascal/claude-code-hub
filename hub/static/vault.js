@@ -285,8 +285,11 @@
     return el;
   }
 
+  // Rozcestník Claudovy paměti česky (soubor se jmenuje dál MEMORY.md).
+  const noteLabel = (path) => (/(^|\/)memory\/MEMORY\.md$/i.test(path) ? 'Přehled paměti' : baseName(path));
+
   function itemButton(path, snippet) {
-    const b = node('button', 'vault-item' + (path === current ? ' on' : ''), baseName(path));
+    const b = node('button', 'vault-item' + (path === current ? ' on' : ''), noteLabel(path));
     b.dataset.path = path;
     b.title = path;
     if (restricted(path)) {
@@ -327,7 +330,7 @@
       const det = node('details');
       det.dataset.dir = d.path;
       const sum = node('summary');
-      sum.appendChild(node('span', '', d.name));
+      sum.appendChild(node('span', '', dirLabel(d.path, d.name)));
       const special = linkDir(d.path);
       if (special) {
         const who = special.kind === 'osobni' ? 'jen ty'
@@ -438,6 +441,81 @@
     if (item) item.scrollIntoView({block: 'nearest'});
   }
 
+  /* Drobečková navigace nad poznámkou: Moje poznámky › Domácnost › Nákupní
+     seznam. Bez .md a lomítek; kliknutí na složku ji otevře v seznamu. */
+  // Složky, které si zakládá Claude, česky (cesta zůstává, jen popisek).
+  const DIR_LABELS = {memory: 'Paměť Clauda', skills: 'Postupy', projects: 'Projekty',
+                      'hub-postup': 'Kde jsem skončil'};
+  const dirLabel = (dir, name) => (!dir.includes('/') || /^(Lidé|Sdílené)\/[^/]+\/[^/]+$/.test(dir)
+    ? DIR_LABELS[name] : '') || name;
+
+  // „upraveno dnes ve 20:24“, „včera v 9:05“, „3. 9. 2026“.
+  function kdyUpraveno(ts) {
+    const d = new Date(ts * 1000);
+    const now = new Date();
+    const hm = d.toLocaleTimeString('cs-CZ', {hour: 'numeric', minute: '2-digit'});
+    const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diff = Math.round((day(now) - day(d)) / 86400000);
+    if (diff === 0) return 'upraveno dnes ve ' + hm;
+    if (diff === 1) return 'upraveno včera v ' + hm;
+    return 'upraveno ' + d.toLocaleDateString('cs-CZ');
+  }
+
+  function rootLabel() {
+    if (io && io.vault === 'firma') return 'Firemní poznámky';
+    if (io && io.vault) return (io.title || 'Sdílené poznámky').replace(/^Sdílené poznámky — /, '');
+    return 'Moje poznámky';
+  }
+
+  function crumbLabel(dir, name) {
+    const l = linkDir(dir);
+    if (l && l.kind === 'osobni') return 'Moje složka';
+    if (l && l.kind === 'sdilene') return l.name || name;
+    return dirLabel(dir, name);
+  }
+
+  function setPath(path) {
+    const bar = q('.vault-path');
+    bar.textContent = '';
+    bar.title = path || '';
+    if (!path) return;
+    const parts = path.split('/');
+    const add = (label, dir, last) => {
+      if (bar.childElementCount) bar.appendChild(node('span', 'vault-crumb-sep', '›'));
+      const b = node(last ? 'span' : 'button', 'vault-crumb' + (last ? ' on' : ''), label);
+      if (!last) {
+        b.type = 'button';
+        b.title = dir ? 'Ukázat složku ' + dir.split('/').pop() : 'Ukázat všechny poznámky';
+        b.onclick = () => showFolder(dir);
+      }
+      bar.appendChild(b);
+    };
+    add(rootLabel(), '', false);
+    for (let i = 0; i < parts.length - 1; i++) {
+      const dir = parts.slice(0, i + 1).join('/');
+      add(crumbLabel(dir, parts[i]), dir, false);
+    }
+    add(noteLabel(path), path, true);
+  }
+
+  // Složku z drobečků otevřít v seznamu (na telefonu se vrátí na seznam).
+  function showFolder(dir) {
+    q('.vault-search').value = '';
+    if (dir) {
+      const parts = dir.split('/');
+      for (let i = 1; i <= parts.length; i++) openDirs.add(parts.slice(0, i).join('/'));
+    }
+    box.classList.remove('reading');
+    renderList();
+    const det = dir ? [...box.querySelectorAll('.vault-list details')].find((d) => d.dataset.dir === dir) : null;
+    const target = det || q('.vault-list');
+    target.scrollIntoView({block: 'nearest'});
+    if (det) {
+      det.classList.add('flash');
+      setTimeout(() => det.classList.remove('flash'), 1200);
+    }
+  }
+
   function scrollToHeading(heading) {
     const want = fold(heading).trim();
     const h = [...q('.vault-md').querySelectorAll('[data-heading]')]
@@ -465,9 +543,9 @@
     // poznámka seznam překryje a šipka zpět se vrací na něj.
     box.classList.add('reading');
 
-    q('.vault-path').textContent = note.path;
+    setPath(note.path);
     q('.vault-date').textContent = note.mtime
-      ? 'upraveno ' + new Date(note.mtime * 1000).toLocaleString('cs-CZ') : '';
+      ? kdyUpraveno(note.mtime) : '';
     // Na úzké obrazovce je šipka i cestou zpět na seznam, tak je vidět vždy.
     q('.vault-back').hidden = !back.length && !window.matchMedia('(max-width: 720px)').matches;
     const props = q('.vault-props');
@@ -643,7 +721,7 @@
     }
     noteMtime = res.mtime || noteMtime;
     setState('uloženo');
-    q('.vault-date').textContent = 'upraveno ' + new Date(noteMtime * 1000).toLocaleString('cs-CZ');
+    q('.vault-date').textContent = kdyUpraveno(noteMtime);
     if (res.created && !notes.some((n) => n.path === res.path)) {
       notes.push({path: res.path, mtime: noteMtime});
       resolveNote = indexOf(notes.map((n) => n.path), true);
@@ -743,7 +821,7 @@
     current = path;
     noteMtime = 0;
     dirty = true;
-    q('.vault-path').textContent = path;
+    setPath(path);
     q('.vault-date').textContent = '';
     q('.vault-props').textContent = '';
     q('.vault-backlinks').textContent = '';
@@ -807,7 +885,7 @@
     const next = back.pop() || (notes[0] && notes[0].path);
     if (next) return load(next, {remember: false});
     setMode('read');
-    q('.vault-path').textContent = '';
+    setPath('');
     q('.vault-md').textContent = '';
     q('.vault-rename').hidden = q('.vault-del').hidden = true;
   }
