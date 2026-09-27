@@ -1758,24 +1758,66 @@
   /* Diktování a předčítání česky (hub/hlas.py, hlas.js). Na počítači se
      instaluje odsud, na serveru ho připravuje správce pro všechny. */
   function hlas() {
-    const box = section('Hlas',
-      'Diktování (mikrofon v poli na psaní) a předčítání Claudových odpovědí — ' +
-      'česky. Přepis i hlas běží přímo na ' +
-      (state.config && state.config.gateway_user ? 'serveru' : 'tomhle počítači') +
-      '; nic neodchází ven.');
+    const box = section('Hlas', 'Mluv místo psaní a nech si odpovědi přečíst nahlas.');
     const status = el('div', 'set-status', 'Zjišťuju…');
     box.appendChild(status);
     const btns = el('div', 'onb-btns');
     box.appendChild(btns);
+    const ready = el('div', 'hlas-ready');
 
-    const row = el('label', 'onb-row');
-    const cb = el('input');
-    cb.type = 'checkbox';
-    cb.checked = !!(window.HubHlas && HubHlas.auto.get());
-    cb.onchange = () => { if (window.HubHlas) HubHlas.auto.set(cb.checked); };
-    row.appendChild(cb);
-    row.appendChild(el('span', null,
-      'Předčítat nové odpovědi samy (jen v tabu, na který se díváš; platí pro tohle zařízení)'));
+    // Dlaždice s ikonkou: nadpis a krátký popisek pod ním.
+    function tile(ico, title, sub, on) {
+      const t = el('button', 'onb-tile hlas-tile' + (on ? ' on' : ''));
+      t.innerHTML = '<svg class="hlas-ico"><use href="#' + ico + '"/></svg>';
+      const col = el('span');
+      col.append(el('span', 'onb-tile-t', title), el('span', 'onb-tile-s', sub));
+      t.appendChild(col);
+      return t;
+    }
+    function group(ico, title) {
+      const h = el('div', 'hlas-head');
+      h.innerHTML = '<svg class="ico"><use href="#' + ico + '"/></svg>';
+      h.appendChild(el('span', null, title));
+      ready.appendChild(h);
+      const tiles = el('div', 'onb-tiles');
+      ready.appendChild(tiles);
+      return tiles;
+    }
+
+    function drawReady(s) {
+      ready.textContent = '';
+      // Přesnost, nebo rychlost přepisu (hub/hlas.py, MODELY).
+      const prepis = group('i-mic', 'Diktování');
+      const moznosti = [
+        ['turbo', 'i-star', 'Přesně', 'méně chyb · asi 10 s'],
+        ['small', 'i-bolt', 'Rychle', 'asi 3 s · víc chyb'],
+      ];
+      for (const [id, ico, nazev, popis] of moznosti) {
+        const m = (s.models || {})[id] || {};
+        const t = tile(ico, nazev, m.installed ? popis : 'tady není', s.model === id);
+        t.disabled = !m.installed;
+        t.onclick = async () => {
+          await save({hlas_model: id});
+          s.model = id;
+          drawReady(s);
+          if (window.HubHlas) HubHlas.refresh();
+        };
+        prepis.appendChild(t);
+      }
+
+      const cteni = group('i-speak', 'Předčítání');
+      const auto = !!(window.HubHlas && HubHlas.auto.get());
+      const samo = tile('i-speak', 'Číst samo', auto ? 'zapnuto' : 'vypnuto', auto);
+      samo.title = 'Nové odpovědi se přečtou samy — jen v tabu, na který se díváš, na tomhle zařízení.';
+      samo.onclick = () => {
+        if (window.HubHlas) HubHlas.auto.set(!auto);
+        drawReady(s);
+      };
+      const zkus = tile('i-play', 'Vyzkoušet', 'přehraje ukázku', false);
+      zkus.onclick = () => window.HubHlas && HubHlas.speak(
+        'Ahoj, tady je hub. Tohle je český hlas, kterým ti budu číst odpovědi.', null, io.toast);
+      cteni.append(samo, zkus);
+    }
 
     let poll = null;
     async function nacti() {
@@ -1783,38 +1825,14 @@
       try { s = await io.api('hlas'); } catch (_) { s = {ready: false}; }
       btns.textContent = '';
       if (s.ready) {
-        status.className = 'set-status ok';
-        status.textContent = 'Hlas je připravený.';
-        if (!row.parentNode) box.appendChild(row);
-        // Přesnost, nebo rychlost přepisu (hub/hlas.py, MODELY).
-        const vyber = el('div', 'onb-list hlas-model');
-        const moznosti = [
-          ['turbo', 'Přesný přepis (doporučeno)', 'Česky zhruba dvakrát méně chyb; věta trvá asi 10 s.'],
-          ['small', 'Rychlý přepis', 'Asi 3 s na větu, ale plete víc slov.'],
-        ];
-        for (const [id, nazev, popis] of moznosti) {
-          const m = (s.models || {})[id] || {};
-          const r = el('label', 'onb-row');
-          const inp = el('input');
-          inp.type = 'radio';
-          inp.name = 'hlas-model';
-          inp.checked = s.model === id;
-          inp.disabled = !m.installed;
-          inp.onchange = () => save({hlas_model: id}).then(() => window.HubHlas && HubHlas.refresh());
-          r.appendChild(inp);
-          r.appendChild(el('span', null, nazev + ' — ' + popis +
-                           (m.installed ? '' : ' (na tomhle stroji není)')));
-          vyber.appendChild(r);
-        }
-        box.insertBefore(vyber, btns);
-        const test = el('button', 'actionbtn', 'Vyzkoušet předčítání');
-        test.onclick = () => window.HubHlas && HubHlas.speak(
-          'Ahoj, tady je hub. Tohle je český hlas, kterým ti budu číst odpovědi.', null, io.toast);
-        btns.appendChild(test);
+        status.hidden = true;
+        drawReady(s);
+        if (!ready.parentNode) box.appendChild(ready);
         if (window.HubHlas) HubHlas.refresh();
         return;
       }
-      if (row.parentNode) row.remove();
+      status.hidden = false;
+      if (ready.parentNode) ready.remove();
       const job = s.job || {};
       if (job.running || s.installing) {
         status.className = 'set-status';

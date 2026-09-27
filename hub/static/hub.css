@@ -2908,3 +2908,15 @@ body:not(.pokrocile) #btn-refresh,
 body:not(.pokrocile) #projects-count { display: none !important; }
 .svc-sharing { color: var(--accent); }
 .svc-share { margin: 4px 0 8px; }
+
+/* Nastavení → Hlas: skupiny dlaždic s ikonkou místo přepínačů a vět. */
+.hlas-head { display: flex; align-items: center; gap: 8px; margin: 14px 0 8px;
+  font-size: 13px; font-weight: 600; color: var(--fg-bright); }
+.hlas-head .ico { width: 16px; height: 16px; fill: currentColor; }
+.hlas-ready .hlas-head:first-child { margin-top: 4px; }
+.onb-tile.hlas-tile { flex: 1 1 10rem; flex-direction: row; align-items: center;
+  gap: 12px; text-align: left; }
+.hlas-tile:disabled { opacity: .45; cursor: default; }
+.hlas-ico { width: 26px; height: 26px; flex: none; fill: currentColor; opacity: .75; }
+.hlas-tile.on .hlas-ico { opacity: 1; }
+.hlas-tile.on .hlas-ico { fill: var(--accent); }
