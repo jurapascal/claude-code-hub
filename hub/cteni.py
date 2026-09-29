@@ -87,6 +87,11 @@ _ARGY = re.compile(r"<command-args>(.*?)</command-args>", re.S)
 _VLOZENO = re.compile(r"</?pasted_content\b[^>]*>")
 _OD_SESSION = re.compile(r"\s*<cross-session-message\b([^>]*)>(.*?)(?:</cross-session-message>|$)", re.S)
 _OZNAMENI = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
+# What a background agent hands back when it finishes. Claude Code queues it
+# like a typed message (`queue-operation` enqueue → dequeue → meta `user`), but
+# it is not from the person — its result reaches the agent card through the
+# <task-notification> that follows.
+_OD_AGENTA = re.compile(r"\s*(?:Another Claude session sent a message:\s*)?<agent-message\b")
 # Poznámka, kterou Claude Code předřadí výsledku agenta pro Clauda („control
 # tags below are neutralized…"). Člověku nic neříká, do karty nepatří.
 _POZNAMKA_HARNESS = re.compile(r"^\s*\[harness:[^\n]*\]\s*")
@@ -121,8 +126,8 @@ def _text_cloveka(obsah):
     if prikaz:
         argy = _ARGY.search(obsah)
         return (prikaz.group(1) + " " + (argy.group(1) if argy else "")).strip()
-    if _OD_SESSION.match(obsah):
-        return ""                     # zpráva od jiné session, ne od člověka
+    if _OD_SESSION.match(obsah) or _OD_AGENTA.match(obsah):
+        return ""                     # zpráva od jiné session / agenta, ne od člověka
     text = _VLOZENO.sub("", chats._NOISE.sub("", obsah)).strip()
     if text.startswith(("Caveat:", "[Request interrupted")):
         return ""
@@ -325,8 +330,8 @@ def _fronta(entry):
     dequeue  Claude dopracoval a zprávu si bere jako další zadání — přijde
              hned za tím jako obyčejné `user` se stejným otiskem
 
-    Frontou chodí i hlášky o doběhlých úlohách na pozadí a zprávy od jiných
-    session. Od člověka nejsou, bublinu ve frontě nedostanou — hláška
+    Frontou chodí i hlášky o doběhlých úlohách na pozadí, zprávy od jiných
+    session a to, co odevzdal agent (`<agent-message>`). Od člověka nejsou, bublinu ve frontě nedostanou — hláška
     o agentovi se ale rovnou propíše do jeho karty.
     """
     op = entry.get("operation")
