@@ -50,13 +50,6 @@ function markAdvanced() {
   const on = !!(STATE && STATE.config && STATE.config.dev_mode);
   window.HUB_ADVANCED = on;
   document.body.classList.toggle('pokrocile', on);
-  // Projekty (složky na disku) jsou vývojářská věc — v jednoduchém režimu je
-  // v panelu jen seznam rozhovorů.
-  const projTab = document.querySelector('.side-tab[data-view=projects]');
-  if (projTab) {
-    projTab.hidden = !on;
-    if (!on && $('chats-view') && $('chats-view').hidden) sidebarView('chats');
-  }
 }
 
 /* ── server calls ─────────────────────────────────────────────────────────── */
@@ -580,7 +573,7 @@ let firmaBusy = false;                 // nahrávání z firemního tabu běží
    rovnou — souhlas dal uživatel tím, že tab otevřel. Otevírá se ze dvou míst
    (lišta tabů i uvítání), tak ať obě dělají doopravdy totéž. */
 function openFirmaTab() {
-  return openTab({kind: 'project', path: STATE.home, title: 'Firemní rozhovor',
+  return openTab({kind: 'project', path: STATE.home, title: 'Firemní chat',
                   agent: 'claude', vault: 'firma'});
 }
 
@@ -1001,7 +994,7 @@ function sidebarView(view) {
   for (const b of document.querySelectorAll('.side-tab')) {
     b.classList.toggle('on', b.dataset.view === (onChats ? 'chats' : 'projects'));
   }
-  try { localStorage.setItem('hub-side-view', onChats ? 'chats' : 'projects'); } catch (_) {}
+  try { localStorage.setItem('hub-panel', onChats ? 'chats' : 'projects'); } catch (_) {}
   clearInterval(chatsTimer);
   chatsTimer = null;
   if (onChats) {
@@ -1042,7 +1035,7 @@ function renderChats() {
     const note = document.createElement('div');
     note.className = 'empty';
     note.textContent = words.length ? 'Nic takového jsem nenašel.'
-      : 'Zatím tu nejsou žádné rozhovory — začni tlačítkem Nový rozhovor.';
+      : 'Zatím tu nejsou žádné chaty — začni tlačítkem Nový chat.';
     box.appendChild(note);
     return;
   }
@@ -1148,8 +1141,8 @@ function initChats() {
   for (const b of document.querySelectorAll('.side-tab')) b.onclick = () => sidebarView(b.dataset.view);
   $('chats-search').addEventListener('input', () => { chatsShown = CHATS_PAGE; renderChats(); });
   let saved = 'projects';
-  try { saved = localStorage.getItem('hub-side-view') || 'projects'; } catch (_) {}
-  sidebarView(window.HUB_ADVANCED ? saved : 'chats');
+  try { saved = localStorage.getItem('hub-panel') || 'projects'; } catch (_) {}
+  sidebarView(saved);
 }
 
 function renderMemory() {
@@ -1158,7 +1151,7 @@ function renderMemory() {
   if (!mem.enabled) return;
   // Na počítači je to prostě Obsidian toho počítače. V prostoru na serveru
   // stojí vedle firemního, a tam dává smysl „osobní".
-  $('memory-head').textContent = 'MOJE POZNÁMKY';
+  $('memory-head').textContent = 'Moje poznámky';
   $('btn-brain-text').textContent = 'Otevřít moje poznámky';
   const c = mem.counts;
   $('memory-summary').innerHTML =
@@ -1496,7 +1489,7 @@ function renderWelcome() {
       // Firemní trezor má vlastní tlačítko i tady, ne jen v liště tabů — a
       // fialové, ať je hned vidět, že se v něm píše do firemního Obsidianu.
       if (firma) {
-        actions.push(['i-terminal', 'Firemní rozhovor', 'primary firma',
+        actions.push(['i-terminal', 'Firemní chat', 'primary firma',
           () => openFirmaTab()]);
       }
     }
@@ -1639,7 +1632,7 @@ function renderWelcomeOpen() {
   box.hidden = !tabs.length;
   if (!tabs.length) return;
   box.appendChild(Object.assign(document.createElement('div'),
-    {className: 'wcol-title', textContent: 'OTEVŘENÉ ROZHOVORY'}));
+    {className: 'wcol-title', textContent: 'OTEVŘENÉ CHATY'}));
   for (const t of tabs) {
     const b = document.createElement('button');
     b.className = 'wcol-item welcome-open-item';
@@ -1745,7 +1738,7 @@ function newTabLabel() {
   // na odznaku agenta a v popisku. Na počítači „PC", v prostoru „Server";
   // kde je firemní trezor, je potřeba rozlišit i nad čím Claude pojede.
   const firma = !!(STATE.firma && STATE.firma.vault);
-  return onServer() && firma ? 'Osobní rozhovor' : 'Rozhovor';
+  return onServer() && firma ? 'Osobní chat' : 'Chat';
 }
 
 function renderNewTabButtons() {
@@ -1766,7 +1759,7 @@ function renderNewTabButtons() {
     label.textContent = 'Nový ' + newTabLabel().toLowerCase();
     const kde = onServer() ? (firma ? ' nad tvými osobními poznámkami' : ' na serveru')
                            : ' na tomhle počítači';
-    btn.title = 'Nový rozhovor s Claudem' + kde +
+    btn.title = 'Nový chat s Claudem' + kde +
       (window.HUB_ADVANCED && agentList(true).length > 1 ? ' (pravé tlačítko = výběr agenta)' : '');
   }
 }
@@ -2536,7 +2529,7 @@ function newTabMenu(btn) {
                                     title: newTabLabel(), agent: a.id})});
   }
   if (STATE.firma && STATE.firma.vault) {
-    items.push({icon: 'i-terminal', label: 'Firemní rozhovor', color: 'var(--firma)',
+    items.push({icon: 'i-terminal', label: 'Firemní chat', color: 'var(--firma)',
                 run: () => openFirmaTab()});
   }
   if (cfg.shell !== false && STATE.config.dev_mode) {

@@ -72,7 +72,7 @@
 
 <header class="topbar">
   <!-- Jen na úzké obrazovce: postranní panel je tam šuplík, tohle je klika. -->
-  <button id="btn-drawer" class="iconbtn drawer-toggle" title="Projekty a rozhovory">
+  <button id="btn-drawer" class="iconbtn drawer-toggle" title="Projekty a chaty">
     <svg class="ico"><use href="#i-menu"/></svg></button>
   <div class="topbar-title">
     <!-- Logo a název = domů na úvodní stránku (i s otevřenými taby). -->
@@ -96,7 +96,7 @@
       <svg class="ico"><use href="#i-gear"/></svg></button>
     <!-- Jen na telefonu: všechno z lišty pod jednou ikonou. Čtyři ikony vedle
          sebe se na 320 px nevejdou a na to, co která dělá, se nedá sáhnout. -->
-    <button id="btn-new-top" class="iconbtn topbar-new" title="Nový rozhovor">
+    <button id="btn-new-top" class="iconbtn topbar-new" title="Nový chat">
       <svg class="ico"><use href="#i-compose"/></svg></button>
     <button id="btn-menu" class="iconbtn topbar-menu" title="Nabídka">
       <svg class="ico"><use href="#i-more"/></svg></button>
@@ -116,15 +116,15 @@
     <button id="btn-drawer-home" class="drawer-new drawer-home">
       <svg class="ico"><use href="#i-hub"/></svg> Domů</button>
     <button id="btn-drawer-new" class="drawer-new">
-      <svg class="ico"><use href="#i-compose"/></svg> Nový rozhovor</button>
+      <svg class="ico"><use href="#i-compose"/></svg> Nový chat</button>
     <div id="open-section" class="open-section" hidden>
-      <div class="section">OTEVŘENÉ</div>
+      <div class="section">Otevřené</div>
       <div id="open-tabs" class="open-tabs"></div>
     </div>
     <div class="section section-head">
       <span class="side-tabs">
-        <button class="side-tab" data-view="projects" hidden>PROJEKTY</button>
-        <button class="side-tab on" data-view="chats">ROZHOVORY</button>
+        <button class="side-tab on" data-view="projects">Projekty</button>
+        <button class="side-tab" data-view="chats">Chaty</button>
       </span>
       <span class="section-count" id="projects-count"></span>
       <span class="section-count" id="chats-count" hidden></span>
@@ -133,17 +133,17 @@
       <button id="btn-drawer-close" class="iconbtn drawer-close" title="Zavřít panel">
         <svg class="ico"><use href="#i-close"/></svg></button>
     </div>
-    <div id="projects-view" hidden>
+    <div id="projects-view">
       <div class="searchwrap">
         <svg class="ico search-ico"><use href="#i-search"/></svg>
         <input id="search" type="search" placeholder="Hledat projekt…" autocomplete="off">
       </div>
       <div id="projects" class="cards"></div>
     </div>
-    <div id="chats-view">
+    <div id="chats-view" hidden>
       <div class="searchwrap">
         <svg class="ico search-ico"><use href="#i-search"/></svg>
-        <input id="chats-search" type="search" placeholder="Hledat rozhovor…" autocomplete="off">
+        <input id="chats-search" type="search" placeholder="Hledat chat…" autocomplete="off">
       </div>
       <div id="chats" class="chats"></div>
     </div>
@@ -151,7 +151,7 @@
     <div id="memory-section" hidden>
       <!-- Popisky nese renderMemory: na počítači „PC Obsidian", v prostoru na
            serveru „osobní Obsidian" — proti firemnímu. -->
-      <div class="section" id="memory-head">MOJE POZNÁMKY</div>
+      <div class="section" id="memory-head">Moje poznámky</div>
       <button id="btn-brain" class="actionbtn">
         <svg class="ico"><use href="#i-book"/></svg> <span id="btn-brain-text">Otevřít moje poznámky</span>
       </button>
@@ -160,14 +160,14 @@
     </div>
 
     <div id="firma-section" hidden>
-      <div class="section">FIREMNÍ POZNÁMKY</div>
+      <div class="section">Firemní poznámky</div>
       <button id="btn-firma" class="actionbtn firma">
         <svg class="ico"><use href="#i-book"/></svg> Otevřít firemní poznámky
       </button>
     </div>
 
     <div id="shared-section" hidden>
-      <div class="section">SDÍLENÉ POZNÁMKY</div>
+      <div class="section">Sdílené poznámky</div>
       <div id="shared-list" class="chats"></div>
     </div>
 
@@ -177,15 +177,15 @@
 
   <main class="main">
     <div class="tabbar" id="tabbar">
-      <button id="btn-new-agent" class="tabplus" title="Nový rozhovor s Claudem">
-        <svg class="ico"><use href="#i-plus"/></svg><span>Nový rozhovor</span></button>
-      <button id="btn-new-firma" class="tabplus firma" title="Rozhovor s Claudem nad firemními poznámkami" hidden>
+      <button id="btn-new-agent" class="tabplus" title="Nový chat s Claudem">
+        <svg class="ico"><use href="#i-plus"/></svg><span>Nový chat</span></button>
+      <button id="btn-new-firma" class="tabplus firma" title="Chat s Claudem nad firemními poznámkami" hidden>
         <svg class="ico"><use href="#i-plus"/></svg><span>Firemní</span></button>
       <button id="btn-new-shell" class="tabplus" title="Otevřít terminál" hidden>
         <svg class="ico"><use href="#i-plus"/></svg><span>Terminál</span></button>
       <!-- Jen na telefonu: tři „+" vedle sebe zabraly celou lištu a na taby
            nezbylo místo. Tohle je jedno „+" a nabídka, co otevřít. -->
-      <button id="btn-new-menu" class="tabplus tabplus-one" title="Nový rozhovor">
+      <button id="btn-new-menu" class="tabplus tabplus-one" title="Nový chat">
         <svg class="ico"><use href="#i-plus"/></svg></button>
     </div>
     <div class="panes" id="panes">

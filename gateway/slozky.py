@@ -1,12 +1,13 @@
 """
 Osobní a sdílené složky ve firemním Obsidianu.
 
-Firemní trezor má dvě zvláštní složky vedle firemních poznámek:
+Firemní trezor má vedle firemních poznámek zvláštní složku
+`Sdílené/<název>` — sdílený Obsidian (gateway/shared.py). Vidí ho jen jeho
+členové; zápis jde přes kartu jako dřív.
 
-* `Lidé/<jméno>` — osobní Obsidian člověka (jeho trezor v domově prostoru).
-  Vidí ji jen on a zapisuje do ní rovnou, jako do osobního trezoru.
-* `Sdílené/<název>` — sdílený Obsidian (gateway/shared.py). Vidí ho jen jeho
-  členové; zápis jde přes kartu jako dřív.
+`Lidé/<jméno>` (osobní Obsidian člověka jako složka ve firemním) tu byla do
+2.41 — lidé pak měli osobní poznámky i mezi firemními. Osobní trezor je jen
+v „Moje poznámky"; `sync` staré odkazy z `Lidé/` uklidí.
 
 Uvnitř nejsou kopie, ale odkazy na skutečné trezory: data zůstávají, kde
 byla, a zálohy, git ani Obsidian na počítači je nezdvojí. Odkazy drží brána
@@ -52,27 +53,8 @@ def _unique(name, taken, fallback):
 def links():
     """Co má ve zvláštních složkách být: {rel: {kind, target, uids, owner, ...}}.
 
-    Pořadí podle id (účty) a zkratky (trezory), ať se jména při shodě
-    nepřehazují mezi lidmi."""
-    from .workspace import home_for, vault_dir
+    Pořadí podle zkratky trezoru, ať se jména při shodě nepřehazují."""
     out = {}
-    if shared.ACCOUNTS:
-        taken = set()
-        for r in sorted(shared.ACCOUNTS.list(), key=lambda r: r["id"]):
-            if r["disabled"]:
-                continue
-            try:
-                home = home_for(r)
-            except (OSError, ValueError, KeyError):
-                continue
-            if not os.path.isdir(home):
-                continue                     # ještě se nepřihlásil — domov není
-            local = (r["email"] or "").split("@")[0]
-            name = _unique(r.get("name") or local, taken, local)
-            taken.add(name.lower())
-            out[f"{PEOPLE}/{name}"] = {"kind": "osobni", "target": vault_dir(r, home),
-                                       "uids": [r["id"]], "owner": r["id"],
-                                       "name": r.get("name") or r["email"]}
     taken = set()
     registry = shared._load()
     for v in sorted(shared.all_vaults(), key=lambda v: v["slug"]):
@@ -106,6 +88,8 @@ def sync(vault=None):
             base = os.path.join(vault, top)
             if os.path.islink(base):
                 continue                     # podvržený odkaz — nesahat
+            if top == PEOPLE and not os.path.isdir(base):
+                continue                     # Lidé/ se už nezakládá
             os.makedirs(base, exist_ok=True)
             for name in os.listdir(base):
                 path = os.path.join(base, name)
@@ -123,6 +107,12 @@ def sync(vault=None):
                 path = os.path.join(vault, *rel.split("/"))
                 if not os.path.lexists(path):
                     os.symlink(info["target"], path)
+        people = os.path.join(vault, PEOPLE)
+        if not os.path.islink(people):
+            try:
+                os.rmdir(people)             # prázdná po starých odkazech
+            except OSError:
+                pass
 
 
 def hidden_for(user):

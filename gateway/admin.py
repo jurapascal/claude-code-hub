@@ -492,7 +492,7 @@ def cmd_remove(a, args):
     poznamky.forget_user(user["id"])
     mcp_sdilene.forget_user(user["id"])
     try:
-        slozky.sync()                    # pryč i jeho Lidé/<jméno>
+        slozky.sync()                    # pryč i ze sdílených trezorů
     except (OSError, ValueError):
         pass
     # Prostor smazaného účtu nemá komu běžet — a nikdo by ho už nezastavil.
@@ -589,7 +589,7 @@ def cmd_poznamky(a, args):
     for rel, people in notes.items():
         label = f"{rel}/ (složka)" if rel in folders else rel
         print(f"{label}\n    vidí: " + (", ".join(p["email"] for p in people) or "jen správci"))
-    print(f"{slozky.PEOPLE}/<jméno> vidí jen jeho vlastník, {slozky.SHARED}/<název> jen členové "
+    print(f"{slozky.SHARED}/<název> vidí jen členové "
           "sdíleného Obsidianu (claude-hub-admin sdilene).")
 
 

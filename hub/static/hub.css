@@ -129,33 +129,39 @@ body { display: flex; flex-direction: column; }
   overflow-y: auto;
   overflow-x: hidden;
 }
+/* Nadpisy v panelu jako v appce Claude: obyčejné malé písmo, ne verzálky. */
 .section {
-  color: var(--section);
-  font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
-  margin: 14px 12px 4px;
+  color: var(--dim);
+  font-size: 12px; font-weight: 600; letter-spacing: 0;
+  margin: 16px 14px 4px;
 }
 /* První sekce v panelu nemá nad sebou co odsazovat — hlavička appky stačí. */
 .sidebar > .section:first-child { margin-top: 12px; }
 .section-head { display: flex; align-items: baseline; justify-content: space-between; }
-/* Projekty | Konverzace — přepínač v hlavičce panelu. */
-.side-tabs { display: flex; gap: 12px; }
+/* Projekty | Chaty — přepínač v hlavičce panelu, pilulka jako „Chat | Cowork"
+   v appce Claude. */
+.side-tabs {
+  display: inline-flex; gap: 2px; padding: 2px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 9px;
+}
 .side-tab {
-  background: none; border: none; padding: 0 0 3px; cursor: pointer; font: inherit;
-  color: var(--dim); font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
-  border-bottom: 2px solid transparent;
+  background: none; border: none; padding: 4px 12px; cursor: pointer; font: inherit;
+  color: var(--dim); font-size: 12.5px; font-weight: 600; letter-spacing: 0;
+  border-radius: 7px;
 }
 .side-tab:hover { color: var(--fg-bright); }
-.side-tab.on { color: var(--fg-bright); border-bottom-color: var(--accent); }
+.side-tab.on { color: var(--fg-bright); background: var(--card-hover); }
+.section-head { align-items: center; }
 .chats { display: flex; flex-direction: column; }
 .chat-item {
   display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: left; cursor: pointer;
   margin: 1px 8px; padding: 7px 10px; border: 1px solid transparent; border-radius: var(--radius);
   background: none; color: inherit; font: inherit;
 }
-.chat-item:hover { background: var(--card-hover); border-color: var(--border); }
+.chat-item:hover { background: var(--card-hover); }
 .chat-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .chat-title {
-  color: var(--fg-bright); font-size: 12.5px;
+  color: var(--fg-bright); font-size: 13.5px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .chat-meta { color: var(--dim); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -185,11 +191,13 @@ body { display: flex; flex-direction: column; }
 
 .cards { display: flex; flex-direction: column; }
 
+/* Projekt je řádek jako chat v appce Claude — bez rámečku, podbarví se až
+   pod myší. */
 .card {
-  display: flex; align-items: center; gap: 8px;
-  margin: 3px 8px; padding: 8px 10px;
-  background: var(--bg-card);
-  border: 1px solid var(--border); border-radius: var(--radius);
+  display: flex; align-items: center; gap: 10px;
+  margin: 1px 8px; padding: 7px 10px;
+  background: none;
+  border: 1px solid transparent; border-radius: var(--radius);
   cursor: pointer; text-align: left;
   color: inherit; font: inherit;
   transition: background .14s ease, border-color .14s ease;
@@ -200,7 +208,7 @@ body { display: flex; flex-direction: column; }
 .card-col { min-width: 0; flex: 1; }
 .card-name {
   display: block;
-  color: var(--fg-bright); font-weight: 700; font-size: 13px;
+  color: var(--fg-bright); font-weight: 500; font-size: 13.5px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .card-meta {
@@ -2574,7 +2582,7 @@ select option { background-color: var(--bg-card); color: var(--fg-bright); }
   .drawer-new .ico { width: 20px; height: 20px; }
   .drawer-new:active, .drawer-new:hover { background: var(--bg-card); }
   .open-section { display: block; flex: none; }
-  .sidebar .section { font-size: 11px; margin: 16px 20px 6px; }
+  .sidebar .section { font-size: 13px; margin: 16px 20px 6px; }
   .sidebar .section-head { margin-top: 18px; }
   .open-tabs { display: flex; flex-direction: column; gap: 2px; padding: 0 10px; }
   .open-tab {
@@ -2971,3 +2979,17 @@ body:not(.pokrocile) #projects-count { display: none !important; }
 .cteni-uloha-detail { margin: 4px 0 6px; padding: 8px 10px; border-radius: 6px;
   background: var(--bg); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere;
   max-height: 12rem; overflow: auto; }
+
+/* Jednoduchý režim: projekt je jen jméno se složkou — větev, cesta a počet
+   změn jsou pro vývojáře. */
+body:not(.pokrocile) .card-meta,
+body:not(.pokrocile) .card-path,
+body:not(.pokrocile) .card-flag { display: none; }
+body:not(.pokrocile) .card .dot {
+  width: 16px; height: 16px; border-radius: 0; background: var(--dim);
+  -webkit-mask: var(--folder-ico) center / contain no-repeat;
+  mask: var(--folder-ico) center / contain no-repeat;
+}
+:root {
+  --folder-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linejoin='round'%3E%3Cpath d='M3 6.5A1.5 1.5 0 0 1 4.5 5h4.2l2 2.2h8.8A1.5 1.5 0 0 1 21 8.7v9.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z'/%3E%3C/svg%3E");
+}

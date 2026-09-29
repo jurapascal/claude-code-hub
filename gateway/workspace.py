@@ -727,7 +727,7 @@ def ensure_company_vault():
     # se zakládá až po README — prázdný trezor se pozná podle toho, že v něm
     # nic není. Naplní ji `claude-hub-admin skills install`.
     os.makedirs(config.COMPANY_SKILLS, exist_ok=True)
-    # Lidé/<jméno> a Sdílené/<název> — odkazy na osobní a sdílené trezory.
+    # Sdílené/<název> — odkazy na sdílené trezory (a úklid starých Lidé/).
     # Bez nich firemní trezor funguje dál, jen v něm ty složky nejsou.
     try:
         slozky.sync(vault)
@@ -811,11 +811,9 @@ Obsidianu zapsat, řekni mu, ať požádá admina o právo zápisu.
 
 def _links_text():
     return f"""
-**Složky {slozky.PEOPLE}/ a {slozky.SHARED}/.** `{slozky.PEOPLE}/<jméno>` je osobní Obsidian
-člověka — uživatel v ní vidí jen tu svou a je to **tentýž trezor jako jeho
-osobní**, zapisuj do ní rovnou jako do osobního. `{slozky.SHARED}/<název>` jsou
-sdílené Obsidiany, jejichž je členem (zápis přes `tools/sdilene.py`, viz níž).
-Ani do jedné se nenahrává přes `tools/firma.py`.
+**Složka {slozky.SHARED}/.** `{slozky.SHARED}/<název>` jsou sdílené Obsidiany, jejichž
+je uživatel členem (zápis přes `tools/sdilene.py`, viz níž), ne přes `tools/firma.py`.
+Osobní Obsidian uživatele ve firemním není — je jen jeho, zvlášť.
 """
 
 
@@ -972,9 +970,9 @@ def write_company(user, rel, text, overwrite=False, via=""):
         raise ValueError("Poznámka chybí, nebo je moc velká.")
     rel = company_rel(rel)
     if slozky.special(rel):
-        raise ValueError(f"{slozky.PEOPLE}/ a {slozky.SHARED}/ nejsou firemní poznámky: do své "
-                         "složky v Lidé/ se zapisuje rovnou (je to tvůj osobní Obsidian), do "
-                         "sdílené přes sdílený Obsidian (tools/sdilene.py).")
+        raise ValueError(f"{slozky.PEOPLE}/ a {slozky.SHARED}/ nejsou firemní poznámky: do "
+                         "osobního Obsidianu se zapisuje rovnou, do sdíleného přes "
+                         "sdílený Obsidian (tools/sdilene.py).")
     vault = os.path.realpath(ensure_company_vault())
     target = os.path.join(vault, *rel.split("/"))
     if os.path.commonpath([os.path.realpath(os.path.dirname(target)), vault]) != vault:
@@ -1017,8 +1015,8 @@ def upload_company(user, rel, raw, overwrite=False):
         raise ValueError("Do firemního Obsidianu nemáš právo zapisovat — požádej admina.")
     rel = soubory.clean_rel(rel)
     if slozky.special(rel):
-        raise ValueError(f"Do své složky v {slozky.PEOPLE}/ nahrávej přímo v hubu (je to tvůj "
-                         f"osobní Obsidian), do {slozky.SHARED}/ jako do sdíleného Obsidianu.")
+        raise ValueError(f"Do {slozky.SHARED}/ nahrávej jako do sdíleného Obsidianu, "
+                         "osobní poznámky do osobního Obsidianu.")
     if not poznamky.allowed_path(user, rel):
         raise ValueError("Do téhle složky nemáš přístup — vyber jinou.")
     in_place = os.path.dirname(rel) in poznamky.masked_dirs()
