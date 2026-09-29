@@ -602,10 +602,8 @@ function openFirmaTab() {
 
 function renderFirma() {
   const on = !!(STATE.firma && STATE.firma.vault);
-  $('btn-firma').hidden = !on;
   // Tlačítka v liště („osobní" a „firemní") řeší renderNewTabButtons.
   if (!on) return;
-  $('btn-firma').onclick = () => openVault('', 'firma');
   renderShared();
   if (!firmaTimer) {
     firmaTimer = setInterval(checkFirma, 3000);
