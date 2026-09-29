@@ -116,7 +116,9 @@
     for (const t of tabs) {
       const row = document.createElement('div');
       row.className = 'open-tab' + (t === active ? ' on' : '') +
-                      (t.classList.contains('exited') ? ' exited' : '');
+                      (t.classList.contains('exited') ? ' exited' : '') +
+                      (t.classList.contains('ceka') ? ' ceka' : '') +
+                      (t.classList.contains('hotovo') ? ' hotovo' : '');
       const dot = t.querySelector('.tab-agent');
       const d = document.createElement('span');
       d.className = 'open-dot';
@@ -217,7 +219,11 @@
   const newTop = $('btn-new-top');
   if (newTop) newTop.onclick = () => newTab(newTop);
   const drawerNew = $('btn-drawer-new');
-  if (drawerNew) drawerNew.onclick = () => { closeDrawer(); if (newTop) newTab(newTop); };
+  // Na počítači je „Nový chat" v panelu totéž co „+ Nový chat" v liště tabů.
+  if (drawerNew) drawerNew.onclick = () => {
+    closeDrawer();
+    if (matchMedia(NARROW).matches) { if (newTop) newTab(newTop); } else $('btn-new-agent').click();
+  };
   const drawerHome = $('btn-drawer-home');
   if (drawerHome) drawerHome.onclick = () => { if (window.hubHome) window.hubHome(); else closeDrawer(); };
   const drawerX = $('btn-drawer-x');

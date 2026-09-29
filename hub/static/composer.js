@@ -647,6 +647,7 @@
     // (motiv → způsob přihlášení) je na okamžik prázdno a čtení by problesklo.
     const ASK_HOLD_MS = 700;
     let askingNow = false;
+    let cekaHlaseno = false;   // co naposledy šlo do io.ceka (svítící tab)
     let askOffTimer = null;
     let normalPlaceholder = '';
     /* Bublina se ukáže, když je dole klidný prompt — jenže tím, že se ukáže,
@@ -1342,6 +1343,11 @@
         buttons.map(b => b.label).join('|'),
       ].join('\u0000');
       askingNow = !!rows.length;
+      // Claude čeká na odpověď — tab svítí, i když je člověk jinde (hub.js).
+      if (askingNow !== cekaHlaseno) {
+        cekaHlaseno = askingNow;
+        if (io.ceka) io.ceka(askingNow);
+      }
       if (sig === answerSig) return;
       answerSig = sig;
 
@@ -1890,6 +1896,9 @@
 
     const offRender = term.onRender(schedule);
     const offScroll = term.onScroll(schedule);
+    /* Tab na pozadí se nekreslí (onRender mlčí), ale dotaz v něm poznat
+       potřebujeme — ať jeho tab rozsvítí. Výpis se proto čte i bez kreslení. */
+    const offParsed = term.onWriteParsed(() => { if (!tab.pane.classList.contains('active')) schedule(); });
     // Jiná velikost okna = jiná výška řádku i jiný počet řádků, přeměřit.
     const offResize = term.onResize(() => { dirty = true; schedule(); });
     // Roste s textem a mizí s přepnutím tabu — obojí musí hlášky poznat.
@@ -2057,6 +2066,7 @@
         levelWatch.disconnect();
         offRender.dispose();
         offScroll.dispose();
+        offParsed.dispose();
         offResize.dispose();
         sizes.disconnect();
         if (pending) clearTimeout(pending);

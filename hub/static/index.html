@@ -113,19 +113,29 @@
       <button id="btn-drawer-x" class="iconbtn" title="Zavřít panel">
         <svg class="ico"><use href="#i-close"/></svg></button>
     </div>
-    <button id="btn-drawer-home" class="drawer-new drawer-home">
-      <svg class="ico"><use href="#i-hub"/></svg> Domů</button>
-    <button id="btn-drawer-new" class="drawer-new">
-      <svg class="ico"><use href="#i-compose"/></svg> Nový chat</button>
+    <!-- Hlavní nabídka jako v appce Claude: nový chat, přepnutí seznamu mezi
+         chaty a projekty, poznámky. Domů jen na telefonu (na počítači vede
+         domů logo v liště). -->
+    <nav class="side-nav">
+      <button id="btn-drawer-new" class="nav-item nav-new">
+        <span class="nav-ico nav-plus"><svg class="ico"><use href="#i-plus"/></svg></span> Nový chat</button>
+      <button id="btn-drawer-home" class="nav-item drawer-home">
+        <span class="nav-ico"><svg class="ico"><use href="#i-hub"/></svg></span> Domů</button>
+      <button class="nav-item side-tab" data-view="chats">
+        <span class="nav-ico"><svg class="ico"><use href="#i-compose"/></svg></span> Chaty</button>
+      <button class="nav-item side-tab" data-view="projects">
+        <span class="nav-ico"><svg class="ico"><use href="#i-folder"/></svg></span> Projekty</button>
+      <button id="btn-brain" class="nav-item" hidden>
+        <span class="nav-ico"><svg class="ico"><use href="#i-book"/></svg></span> <span id="btn-brain-text">Moje poznámky</span></button>
+      <button id="btn-firma" class="nav-item firma" hidden>
+        <span class="nav-ico"><svg class="ico"><use href="#i-book"/></svg></span> Firemní poznámky</button>
+    </nav>
     <div id="open-section" class="open-section" hidden>
       <div class="section">Otevřené</div>
       <div id="open-tabs" class="open-tabs"></div>
     </div>
     <div class="section section-head">
-      <span class="side-tabs">
-        <button class="side-tab on" data-view="projects">Projekty</button>
-        <button class="side-tab" data-view="chats">Chaty</button>
-      </span>
+      <span id="list-head">Nedávné</span>
       <span class="section-count" id="projects-count"></span>
       <span class="section-count" id="chats-count" hidden></span>
       <!-- Jen na telefonu: šuplík překrývá horní lištu i kliku, kterou se
@@ -133,14 +143,14 @@
       <button id="btn-drawer-close" class="iconbtn drawer-close" title="Zavřít panel">
         <svg class="ico"><use href="#i-close"/></svg></button>
     </div>
-    <div id="projects-view">
+    <div id="projects-view" hidden>
       <div class="searchwrap">
         <svg class="ico search-ico"><use href="#i-search"/></svg>
         <input id="search" type="search" placeholder="Hledat projekt…" autocomplete="off">
       </div>
       <div id="projects" class="cards"></div>
     </div>
-    <div id="chats-view" hidden>
+    <div id="chats-view">
       <div class="searchwrap">
         <svg class="ico search-ico"><use href="#i-search"/></svg>
         <input id="chats-search" type="search" placeholder="Hledat chat…" autocomplete="off">
@@ -149,21 +159,8 @@
     </div>
 
     <div id="memory-section" hidden>
-      <!-- Popisky nese renderMemory: na počítači „PC Obsidian", v prostoru na
-           serveru „osobní Obsidian" — proti firemnímu. -->
-      <div class="section" id="memory-head">Moje poznámky</div>
-      <button id="btn-brain" class="actionbtn">
-        <svg class="ico"><use href="#i-book"/></svg> <span id="btn-brain-text">Otevřít moje poznámky</span>
-      </button>
       <div id="memory-summary" class="mem-summary"></div>
       <div id="memory" class="cards"></div>
-    </div>
-
-    <div id="firma-section" hidden>
-      <div class="section">Firemní poznámky</div>
-      <button id="btn-firma" class="actionbtn firma">
-        <svg class="ico"><use href="#i-book"/></svg> Otevřít firemní poznámky
-      </button>
     </div>
 
     <div id="shared-section" hidden>
@@ -270,6 +267,7 @@
 <script src="/editor.js"></script>
 <script src="/graph.js"></script>
 <script src="/vault.js"></script>
+<script src="/claudici.js"></script>
 <script src="/cteni.js"></script>
 <script src="/hub.js"></script>
 <script src="/mobile.js"></script>

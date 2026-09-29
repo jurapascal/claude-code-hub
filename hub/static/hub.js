@@ -579,7 +579,7 @@ function openFirmaTab() {
 
 function renderFirma() {
   const on = !!(STATE.firma && STATE.firma.vault);
-  $('firma-section').hidden = !on;
+  $('btn-firma').hidden = !on;
   // Tlačítka v liště („osobní" a „firemní") řeší renderNewTabButtons.
   if (!on) return;
   $('btn-firma').onclick = () => openVault('', 'firma');
@@ -991,6 +991,7 @@ function sidebarView(view) {
   $('chats-view').hidden = !onChats;
   $('projects-count').hidden = onChats;
   $('chats-count').hidden = !onChats;
+  $('list-head').textContent = onChats ? 'Nedávné' : 'Projekty';
   for (const b of document.querySelectorAll('.side-tab')) {
     b.classList.toggle('on', b.dataset.view === (onChats ? 'chats' : 'projects'));
   }
@@ -1148,11 +1149,8 @@ function initChats() {
 function renderMemory() {
   const mem = STATE.memory;
   $('memory-section').hidden = !mem.enabled;
+  $('btn-brain').hidden = !mem.enabled;
   if (!mem.enabled) return;
-  // Na počítači je to prostě Obsidian toho počítače. V prostoru na serveru
-  // stojí vedle firemního, a tam dává smysl „osobní".
-  $('memory-head').textContent = 'Moje poznámky';
-  $('btn-brain-text').textContent = 'Otevřít moje poznámky';
   const c = mem.counts;
   $('memory-summary').innerHTML =
     `<span class="learnings">${icon('i-bulb')} ${c.learnings || 0}</span>
@@ -1243,12 +1241,24 @@ function renderActions() {
 }
 
 function renderFooter() {
-  const now = new Date();
-  const date = `${now.getDate()}.${now.getMonth() + 1}.${now.getFullYear()}`;
   const foot = $('footer');
   foot.textContent = '';
-  foot.appendChild(document.createTextNode(
-    [STATE.user, date].filter(Boolean).join('  ·  ') + '  ·  '));
+  // Jako v appce Claude: kolečko s iniciálou a jméno — klik vede do Účtu.
+  // V prostoru na serveru běží hub pod účtem `hub` — jméno je z brány.
+  const gw = (STATE.config && STATE.config.gateway_user) || null;
+  const name = String((gw && (gw.name || gw.email)) || STATE.user || '').trim();
+  const me = document.createElement('button');
+  me.className = 'footer-me';
+  me.title = 'Účet a nastavení';
+  const avatar = document.createElement('span');
+  avatar.className = 'footer-avatar';
+  avatar.textContent = (name.charAt(0) || '?').toUpperCase();
+  const who = document.createElement('span');
+  who.className = 'footer-name';
+  who.textContent = name || 'Účet';
+  me.append(avatar, who);
+  me.onclick = () => HubSettings.open({...hubIO(), state: STATE, tab: 'ucet'});
+  foot.appendChild(me);
   // Verze vede rovnou na Aktualizace: ty se hned zeptají GitHubu, co je
   // nejnovější, a mají odkaz na seznam vydání.
   const ver = document.createElement('button');
@@ -1298,7 +1308,7 @@ function renderBranding() {
   const app = STATE.app || {};
   const name = app.name || 'Claude';
   // Titulek = název okna appky (Chrome v režimu appky, záložka prohlížeče).
-  document.title = app.name ? app.name : 'Claude ' + placeName();
+  document.title = titulekOkna(app.name ? app.name : 'Claude ' + placeName());
   const home = $('btn-home');
   if (home) {
     home.querySelector('strong').textContent = name;
@@ -1336,7 +1346,7 @@ function renderPlace() {
   if (!badge) return;
   const u = STATE.config.gateway_user;
   const app = STATE.app || {};
-  document.title = app.name ? app.name : 'Claude ' + placeName();
+  document.title = titulekOkna(app.name ? app.name : 'Claude ' + placeName());
   const big = $('welcome-place');
   if (big) big.textContent = placeName();
   renderBranding();
@@ -1632,12 +1642,15 @@ function renderWelcomeOpen() {
   box.hidden = !tabs.length;
   if (!tabs.length) return;
   box.appendChild(Object.assign(document.createElement('div'),
-    {className: 'wcol-title', textContent: 'OTEVŘENÉ CHATY'}));
+    {className: 'wcol-title', textContent: 'Otevřené chaty'}));
   for (const t of tabs) {
     const b = document.createElement('button');
     b.className = 'wcol-item welcome-open-item';
     b.innerHTML = '<span class="open-dot"></span><span class="wcol-name"></span>' +
-                  '<span class="wcol-note">pokračovat ›</span>';
+                  (t.ceka ? '<span class="wcol-note ceka">čeká na tebe ›</span>'
+                   : t.hotovo ? '<span class="wcol-note hotovo">hotovo ›</span>'
+                   : '<span class="wcol-note">pokračovat ›</span>');
+    b.classList.toggle('ceka', !!t.ceka);
     b.querySelector('.wcol-name').textContent = t.title;
     const dot = t.el && t.el.querySelector('.tab-agent');
     const color = dot && dot.style.getPropertyValue('--agent-color');
@@ -1676,9 +1689,9 @@ function renderWelcomeCols() {
     return col;
   };
 
-  const a = column('NAPOSLEDY', recent, p => kdy(p.mtime));
+  const a = column('Naposledy', recent, p => kdy(p.mtime));
   // Neuložené změny v gitu — řeč programátorů.
-  const b = window.HUB_ADVANCED ? column('ROZDĚLANÉ', dirty, p => p.dirty + ' změn') : null;
+  const b = window.HUB_ADVANCED ? column('Rozdělané', dirty, p => p.dirty + ' změn') : null;
   if (a) wrap.appendChild(a);
   if (b) wrap.appendChild(b);
 }
@@ -1950,11 +1963,17 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
       // Co Claude zrovna dělá — čtení (cteni.js) z toho kreslí řádek práce.
       prace: (stav) => {
         // Podle tohohle aktualizace prostoru počká, až Claude doběhne.
+        const pracoval = tab.pracuje;
         tab.pracuje = !!(stav && stav.on);
+        // Doběhl v tabu, na který se zrovna nekouká — ať je to na tabu vidět.
+        if (pracoval && !tab.pracuje && tab !== ACTIVE) { tab.hotovo = true; oznacTab(tab); }
+        if (window.HubClaudici && tab.cteni && tab.cteni.hriste) tab.cteni.hriste.prace(tab.pracuje);
         if (tab.cteni) tab.cteni.prace(stav);
       },
       // Odeslaná zpráva — čtení ji ukáže hned, i s tím, jestli ji Claude už vidí.
       odeslano: (zprava, stav) => { if (tab.cteni) tab.cteni.odeslano(zprava, stav); },
+      // Claude se ptá (karta s volbami) — tab svítí, dokud se neodpoví.
+      ceka: (on) => { tab.ceka = !!on; oznacTab(tab); },
       // Claude v tabu spadl (wrapper to napsal do terminálu).
       upozorni: (text) => { if (tab.cteni) tab.cteni.upozorni(text); else toast(text); },
       agents: (ready) => agentList(!!ready),
@@ -2097,6 +2116,7 @@ function measure(tab) {
 
 function activate(tab) {
   ACTIVE = tab;
+  if (tab && tab.hotovo) { tab.hotovo = false; oznacTab(tab); }
   if (placeReady) writePlace({tab: tab ? tabKey(tab) : null});
   for (const t of TABS) {
     t.el.classList.toggle('active', t === tab);
@@ -2120,6 +2140,26 @@ function activate(tab) {
       if (tab.composer) tab.composer.focus();
     }
   }
+}
+
+/* Tab, který na mě čeká. Claude se ptá (karta s volbami v composer.js) →
+   tab svítí, dokud se neodpoví — i když je člověk v jiném tabu nebo na Domů.
+   Doběhl, zatímco se kouká jinam → tab má zelenou tečku, dokud se na něj
+   nepřepne. Počet čekajících je i v titulku okna. */
+function oznacTab(tab) {
+  if (!tab.el) return;
+  tab.el.classList.toggle('ceka', !!tab.ceka);
+  tab.el.classList.toggle('hotovo', !!tab.hotovo && !tab.ceka);
+  if (tab.cteni && tab.cteni.hriste) tab.cteni.hriste.ceka(!!tab.ceka);
+  document.body.classList.toggle('neco-ceka', TABS.some(t => t.ceka));
+  document.title = titulekOkna(document.title);
+  if (!ACTIVE) renderWelcomeOpen();
+}
+
+function titulekOkna(title) {
+  const base = String(title || '').replace(/^\(\d+\) /, '');
+  const n = TABS.filter(t => t.ceka).length;
+  return n ? `(${n}) ${base}` : base;
 }
 
 /* Úvodní stránka i s otevřenými taby — taby běží dál, klik na tab vrátí zpátky. */
@@ -2222,6 +2262,8 @@ function closeTab(tab, {remote = false} = {}) {
   tab.el.remove();
   tab.pane.remove();
   TABS = TABS.filter(t => t !== tab);
+  document.body.classList.toggle('neco-ceka', TABS.some(t => t.ceka));
+  document.title = titulekOkna(document.title);
   if (ACTIVE === tab) ACTIVE = null;
   const next = TABS[TABS.length - 1];
   if (next) activate(next);

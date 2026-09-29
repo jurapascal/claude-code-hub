@@ -162,7 +162,8 @@
   /* Proud bloků. Stejný pro živý tab i pro okno se starou konverzací.
      `imageUrl` převede cestu k obrázku z hub-images na adresu, ze které ho
      stránka smí načíst (/api/image). */
-  function flow(mount, imageUrl, {historie = false, openLink = null, notice = null, zive = null} = {}) {
+  function flow(mount, imageUrl, {historie = false, openLink = null, notice = null, zive = null,
+                                  udalost = null} = {}) {
     /* Odkaz v Markdownu je <a> bez href (vault.js) — sám nikam nevede,
        otevřít ho musí hub. V okně appky by holý odkaz stejně nic neudělal. */
     mount.addEventListener('click', (ev) => {
@@ -474,6 +475,8 @@
       agenti.set(b.id, k);
       kresliAgenta(k);
       hlidej();
+      // Na hřiště (claudici.js) — pomocník vyskočí z hlavního Claudíka.
+      if (udalost) udalost({co: 'agent', id: b.id, typ: b.type, barva: barvaAgenta(b.type)});
     }
 
     function doplnAgenta(k, info) {
@@ -486,6 +489,7 @@
 
     /* Hotovo podle hlášky o doběhlé úloze (`task`) nebo podle výsledku. */
     function dobehl(k, stav, vysledek) {
+      if (udalost && k.stav === 'bezi' && stav !== 'bezi') udalost({co: 'konec', id: k.id, stav});
       k.stav = stav;
       if (vysledek) k.vysledek = vysledek;
       if (!k.ms && k.start && k.posledni) k.ms = Math.max(0, k.posledni - k.start);
@@ -657,6 +661,8 @@
         return;
       }
       if (b.kind === 'tool') {
+        // Zpráva do jiného chatu — na hřišti odletí obálka.
+        if (udalost && b.name === 'SendMessage') udalost({co: 'dopis', smer: 'ven'});
         const box = udelejNastroj(b);
         box.classList.add('ceka');
         if (b.id) tools.set(b.id, box);
@@ -664,6 +670,7 @@
         return;
       }
       if (b.kind === 'peer') {
+        if (udalost) udalost({co: 'dopis', smer: 'dovnitr'});
         // Jméno odesílatele je technický název sezení — ukáže se jen pokročilým.
         const box = udelejNastroj({name: 'peer',
                                    title: b.from && pokrocile() ? 'zpráva od ' + b.from
@@ -839,6 +846,8 @@
     root.append(scroll, dolu);
     tab.pane.appendChild(root);
     tab.pane.classList.add('cteni-on');
+    // Claudíci nad polem na psaní (claudici.js) — bez souboru se jede dál.
+    const hriste = global.HubClaudici ? global.HubClaudici.hriste(root, claudik) : null;
 
     /* Předčítá se jen to, co přibude naživo — ne historie při otevření tabu. */
     let nacteno = false;
@@ -846,6 +855,14 @@
       openLink: io.openLink, notice: io.notice,
       zive: () => nacteno && !!global.HubHlas && global.HubHlas.auto.get() &&
                   (!io.aktivni || io.aktivni()),
+      /* Historie při otevření tabu se na hřišti nepřehrává: kdo tehdy ještě
+         běžel, prostě tam stojí, a co doběhlo, se ani neukáže. */
+      udalost: (e) => {
+        if (!hriste) return;
+        if (e.co === 'agent') hriste.pridej(e.id, e.typ, e.barva, !nacteno);
+        else if (e.co === 'konec') hriste.hotovo(e.id, e.stav, !nacteno);
+        else if (e.co === 'dopis' && nacteno) hriste.dopis(e.smer);
+      },
     });
     const data = zdroj(io, () => 'id=' + encodeURIComponent(tab.id || ''));
     let timer = null, prazdnych = 0, zivy = true, ceka = false;
@@ -941,6 +958,7 @@
     start();
 
     return {
+      hriste,
       release() {
         zivy = false;
         clearTimeout(timer);
@@ -948,6 +966,7 @@
         clearTimeout(bgTimer);
         proud.stav(null);
         proud.zavri();
+        if (hriste) hriste.release();
         root.remove();
         tab.pane.classList.remove('cteni-on');
       },
@@ -1090,6 +1109,6 @@
     return {close: zavrit};
   }
 
-  global.HubCteni = {install, open};
+  global.HubCteni = {install, open, claudik};
 
 })(typeof window !== 'undefined' ? window : globalThis);
