@@ -1438,6 +1438,7 @@
             <div class="onb-title">Obsidian</div>
             <div class="onb-sub">načítám…</div>
           </div>
+          <div class="vault-trezory" hidden></div>
           <span class="spacer"></span>
           <button class="btn ghost vault-new" title="Nová poznámka" hidden>+ Nová</button>
           <button class="btn ghost vault-upload" title="Nahrát soubory (PDF, obrázky, tabulky…) — jde i přetáhnout na seznam" hidden>Nahrát soubor</button>
@@ -1486,6 +1487,35 @@
     box.addEventListener('pointerdown', (ev) => { downOutside = ev.target === box; });
     box.addEventListener('click', (ev) => { if (ev.target === box && downOutside) close(); });
     q('.vault-close').onclick = close;
+    /* Přepínač Moje / Firemní / Sdílené — poznámky jsou jen tady, ne
+       v panelu vlevo. S jediným trezorem se neukazuje. */
+    const trezory = (io.trezory || []);
+    const prepinac = q('.vault-trezory');
+    if (trezory.length > 1 && io.prepni) {
+      prepinac.hidden = false;
+      for (const t of trezory) {
+        const b = node('button', 'vault-trezor' + (t.id === (io.vault || '') ? ' on' : '') +
+                                 (t.id === 'firma' ? ' firma' : ''), t.name);
+        b.title = t.shared ? 'Sdílené poznámky' : t.name;
+        b.onclick = () => { if (t.id !== (io.vault || '')) io.prepni(t.id); };
+        prepinac.appendChild(b);
+      }
+    }
+    if (io.sdilenyMenu || io.novySdileny) {
+      prepinac.hidden = false;
+      if (io.sdilenyMenu) {
+        const m = node('button', 'vault-trezor ghost', '⋯');
+        m.title = 'Kdo tyhle poznámky vidí, odejít, smazat';
+        m.onclick = () => { const r = m.getBoundingClientRect(); io.sdilenyMenu(r.left, r.bottom); };
+        prepinac.appendChild(m);
+      }
+      if (io.novySdileny) {
+        const n = node('button', 'vault-trezor ghost', '+ Sdílené');
+        n.title = 'Založit poznámky jen pro vybrané lidi';
+        n.onclick = io.novySdileny;
+        prepinac.appendChild(n);
+      }
+    }
     /* Šipka zpět: nejdřív se vrací po odkazech, kterými se člověk proklikal,
        a když už žádné nejsou, vrátí na telefonu seznam poznámek. Na počítači
        je seznam pořád vedle, tam tedy jen mizí. */

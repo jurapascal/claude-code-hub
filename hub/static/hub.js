@@ -553,10 +553,33 @@ function openVault(path, vault, title) {
       .catch(() => toast('Obsidian se nepodařilo otevřít.')),
     // Změněné přístupy k firemním poznámkám se načtou restartem prostoru.
     restartSpace,
+    // Přepínač trezorů nahoře v Obsidianu — poznámky nejsou v panelu vlevo.
+    trezory: vaultList(),
+    // Sdílené poznámky: založit nové a u otevřených členové / odejít.
+    novySdileny: onServer() ? () => sharedCreate() : null,
+    sdilenyMenu: shared ? (x, y) => {
+      const v = sharedVaults.find((s) => 'sdilene:' + s.slug === vault);
+      if (v) sharedMenu(v, x, y, false);
+    } : null,
+    prepni: (v) => {
+      const s = (sharedVaults || []).find((x) => 'sdilene:' + x.slug === v);
+      openVault('', v, s ? s.name : '');
+    },
     // Kde člověk v Obsidianu je — po dalším otevření appky se sem vrátí.
     onPlace: (p) => writePlace({vault: p === null ? null
       : {vault: firma || shared ? vault : '', path: p || '', title: title || ''}}),
   });
+}
+
+/* Které Obsidiany člověk má: osobní, firemní (když má přístup) a sdílené. */
+let sharedVaults = [];
+function vaultList() {
+  const out = [{id: '', name: 'Moje poznámky'}];
+  if (STATE.firma && STATE.firma.vault) out.push({id: 'firma', name: 'Firemní'});
+  for (const v of sharedVaults) {
+    if (!v.needs_restart) out.push({id: 'sdilene:' + v.slug, name: v.name, shared: true});
+  }
+  return out;
 }
 
 /* ── firemní Obsidian ─────────────────────────────────────────────────────────
@@ -612,6 +635,7 @@ async function renderShared() {
   }
   box.hidden = false;
   sharedPeople = data.people || [];
+  sharedVaults = data.vaults || [];
   const list = $('shared-list');
   list.textContent = '';
   const vaults = data.vaults || [];
@@ -639,16 +663,7 @@ async function renderShared() {
     more.onclick = (ev) => {
       ev.stopPropagation();
       const r = more.getBoundingClientRect();
-      const items = [{icon: 'i-book', label: 'Otevřít', run: () => openVault('', 'sdilene:' + v.slug, v.name)}];
-      if (v.is_owner) {
-        items.push({icon: 'i-user', label: 'Kdo je vidí…', run: () => sharedMembers(v)});
-        items.push({icon: 'i-close', label: 'Smazat…', run: () => sharedAction(v, 'smazat',
-          `Smazat sdílené poznámky „${v.name}“? Zmizí všem členům (soubory zůstanou stranou na serveru).`)});
-      } else {
-        items.push({icon: 'i-close', label: 'Odejít…', run: () => sharedAction(v, 'odejit',
-          `Odejít ze sdílených poznámek „${v.name}“? Přestaneš je vidět.`)});
-      }
-      showMenu(r.left, r.bottom, items);
+      sharedMenu(v, r.left, r.bottom, true);
     };
     const item = document.createElement('button');
     item.className = 'shared-item' + (v.needs_restart ? ' pending' : '');
@@ -664,6 +679,21 @@ async function renderShared() {
     row.append(item, more);
     list.appendChild(row);
   }
+}
+
+/* Nabídka sdílených poznámek: v Obsidianu (přepínač nahoře) i jinde. */
+function sharedMenu(v, x, y, withOpen) {
+  const items = withOpen
+    ? [{icon: 'i-book', label: 'Otevřít', run: () => openVault('', 'sdilene:' + v.slug, v.name)}] : [];
+  if (v.is_owner) {
+    items.push({icon: 'i-user', label: 'Kdo je vidí…', run: () => sharedMembers(v)});
+    items.push({icon: 'i-close', label: 'Smazat…', run: () => sharedAction(v, 'smazat',
+      `Smazat sdílené poznámky „${v.name}“? Zmizí všem členům (soubory zůstanou stranou na serveru).`)});
+  } else {
+    items.push({icon: 'i-close', label: 'Odejít…', run: () => sharedAction(v, 'odejit',
+      `Odejít ze sdílených poznámek „${v.name}“? Přestaneš je vidět.`)});
+  }
+  showMenu(x, y, items);
 }
 
 /* Sdílené poznámky naklikáním (brána POST /gw/sdilene, gateway/shared.py).
@@ -991,7 +1021,7 @@ function sidebarView(view) {
   $('chats-view').hidden = !onChats;
   $('projects-count').hidden = onChats;
   $('chats-count').hidden = !onChats;
-  $('list-head').textContent = onChats ? 'Nedávné' : 'Projekty';
+  $('list-head').textContent = onChats ? 'Chaty' : 'Projekty';
   for (const b of document.querySelectorAll('.side-tab')) {
     b.classList.toggle('on', b.dataset.view === (onChats ? 'chats' : 'projects'));
   }
@@ -1141,9 +1171,8 @@ function resumeChat(c, prompt) {
 function initChats() {
   for (const b of document.querySelectorAll('.side-tab')) b.onclick = () => sidebarView(b.dataset.view);
   $('chats-search').addEventListener('input', () => { chatsShown = CHATS_PAGE; renderChats(); });
-  let saved = 'projects';
-  try { saved = localStorage.getItem('hub-panel') || 'projects'; } catch (_) {}
-  sidebarView(saved);
+  // V panelu jsou jen chaty — projekty mají vlastní stránku (showProjekty).
+  sidebarView('chats');
 }
 
 function renderMemory() {
@@ -1781,6 +1810,7 @@ async function reload() {
   STATE = await api('state');
   markAdvanced();
   renderProjects($('search').value);
+  if (!$('projekty-page').hidden) renderProjekty();
   renderMemory();
   renderFirma();
   renderActions();
@@ -2116,6 +2146,7 @@ function measure(tab) {
 
 function activate(tab) {
   ACTIVE = tab;
+  showProjekty(false);
   if (tab && tab.hotovo) { tab.hotovo = false; oznacTab(tab); }
   if (placeReady) writePlace({tab: tab ? tabKey(tab) : null});
   for (const t of TABS) {
@@ -2160,6 +2191,82 @@ function titulekOkna(title) {
   const base = String(title || '').replace(/^\(\d+\) /, '');
   const n = TABS.filter(t => t.ceka).length;
   return n ? `(${n}) ${base}` : base;
+}
+
+/* ── Projekty jako stránka ──────────────────────────────────────────────────
+   Jako claude.ai/projects: mřížka karet (jméno, popis, kdy naposledy),
+   hledání, řazení a přidání složky. V panelu vlevo jsou jen chaty. */
+let ppSort = 'recent';
+try { ppSort = localStorage.getItem('hub-pp-sort') || 'recent'; } catch (_) {}
+
+function showProjekty(on) {
+  const page = $('projekty-page');
+  if (!page) return;
+  page.hidden = !on;
+  $('nav-projekty').classList.toggle('on', !!on);
+  if (!on) return;
+  if (ACTIVE) activate(null);        // taby běží dál, jen se na ně nekouká
+  page.hidden = false;
+  $('nav-projekty').classList.add('on');
+  $('welcome').hidden = true;
+  renderProjekty();
+  if (window.HubMobile) HubMobile.closeDrawer();
+  if (!document.body.classList.contains('is-touch')) $('pp-q').focus();
+}
+
+function renderProjekty() {
+  const grid = $('pp-grid');
+  const needle = foldText($('pp-q').value.trim());
+  const showArchived = !!STATE.config.show_archived;
+  let list = STATE.projects.filter(p => (showArchived || !p.archived) &&
+    (!needle || foldText((p.label || '') + ' ' + p.name + ' ' + (p.brief || '')).includes(needle)));
+  list = ppSort === 'name'
+    ? list.sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name, 'cs'))
+    : list.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
+  $('pp-sort').textContent = ppSort === 'name' ? 'Podle jména' : 'Naposledy upravené';
+  grid.textContent = '';
+  if (!list.length) {
+    grid.appendChild(Object.assign(document.createElement('div'),
+      {className: 'pp-empty', textContent: needle ? 'Nic nenalezeno.' : 'Zatím žádné projekty — přidej složku tlačítkem nahoře.'}));
+    return;
+  }
+  for (const p of list) {
+    const card = document.createElement('div');
+    card.className = 'pp-card' + (p.archived ? ' archived' : '');
+    card.tabIndex = 0;
+    card.innerHTML = '<div class="pp-top"><span class="pp-ico"></span><span class="pp-name"></span>' +
+      '<button class="pp-more" title="Možnosti">⋯</button></div>' +
+      '<div class="pp-desc"></div><div class="pp-foot"><span class="pp-when"></span><span class="pp-tags"></span></div>';
+    const ico = card.querySelector('.pp-ico');
+    if (p.image) {
+      const img = document.createElement('img');
+      img.src = imageUrl(p.image);
+      img.alt = '';
+      ico.appendChild(img);
+    } else {
+      ico.innerHTML = icon('i-folder');
+    }
+    card.querySelector('.pp-name').textContent = p.label || p.name;
+    // Popis projektu (brief), jinak nic — cesta a větev jsou pro vývojáře.
+    const desc = (p.brief || '').replace(/^#.*$/gm, '').replace(/[*_`>#-]/g, ' ').replace(/\s+/g, ' ').trim();
+    card.querySelector('.pp-desc').textContent = desc.slice(0, 160) || (devMode() ? shortPath(p.path) : '');
+    card.querySelector('.pp-when').textContent = p.mtime ? 'Upraveno ' + kdy(p.mtime) : '';
+    const tags = card.querySelector('.pp-tags');
+    if (devMode()) {
+      if (p.branch) tags.appendChild(Object.assign(document.createElement('span'), {className: 'pp-tag', textContent: p.branch}));
+      if (p.dirty) tags.appendChild(Object.assign(document.createElement('span'), {className: 'pp-tag dirty', textContent: p.dirty + ' změn'}));
+    }
+    const open = () => openTab({kind: 'project', path: p.path, title: p.label || p.name, agent: agentFor(p.path)});
+    card.onclick = (ev) => { if (!ev.target.closest('.pp-more')) open(); };
+    card.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); open(); } };
+    card.oncontextmenu = (ev) => { ev.preventDefault(); projectMenu(ev, p); };
+    card.querySelector('.pp-more').onclick = (ev) => {
+      ev.stopPropagation();
+      const r = ev.currentTarget.getBoundingClientRect();
+      projectMenu({clientX: r.left, clientY: r.bottom, preventDefault() {}}, p);
+    };
+    grid.appendChild(card);
+  }
 }
 
 /* Úvodní stránka i s otevřenými taby — taby běží dál, klik na tab vrátí zpátky. */
@@ -3021,7 +3128,17 @@ async function main() {
   $('btn-new-agent').oncontextmenu = (ev) => { ev.preventDefault(); newAgentMenu(ev); };
   $('btn-new-firma').onclick = () => openFirmaTab();
   $('btn-new-menu').onclick = (ev) => newTabMenu(ev.currentTarget);
-  $('btn-brain').onclick = () => (vaultPreview() ? openVault() : openExternal('', 'brain'));
+  // Poznámky se otevírají v hubu (i s přepínačem firemní / sdílené); aplikace
+  // Obsidian na počítači je uvnitř pod „Otevřít v Obsidianu".
+  $('btn-brain').onclick = () => (window.HubVault ? openVault() : openExternal('', 'brain'));
+  $('nav-projekty').onclick = () => showProjekty(true);
+  $('pp-q').oninput = renderProjekty;
+  $('pp-sort').onclick = () => {
+    ppSort = ppSort === 'name' ? 'recent' : 'name';
+    try { localStorage.setItem('hub-pp-sort', ppSort); } catch (_) {}
+    renderProjekty();
+  };
+  $('pp-new').onclick = () => openPicker('');
   $('modal-close').onclick = closePicker;
   $('modal-cancel').onclick = closePicker;
   $('modal-open').onclick = () => {
