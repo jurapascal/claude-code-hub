@@ -1379,7 +1379,7 @@ function renderPlace() {
   renderBranding();
   // Barva celé appky se odvozuje odsud: počítač jantarově, prostor modře.
   document.documentElement.dataset.place = u ? 'server' : 'pc';
-  badge.textContent = u ? 'SERVER' : 'POČÍTAČ';
+  badge.textContent = u ? 'Server' : 'Počítač';
   badge.setAttribute('aria-label', 'Claude ' + placeName());
   badge.classList.toggle('on-server', !!u);
   /* Přepnout jde jen z appky: okno v prohlížeči se na počítač vrátit nemá kam.

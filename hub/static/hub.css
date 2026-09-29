@@ -3228,3 +3228,82 @@ body.neco-ceka .drawer-toggle::after {
 .tab-visi:hover { animation-play-state: paused; }
 @keyframes tv-houpe { 0%, 100% { transform: rotate(-9deg); } 50% { transform: rotate(9deg); } }
 @media (prefers-reduced-motion: reduce) { .tab-visi, .tab-visi * { animation: none !important; } }
+
+/* ══ Jednotný styl ══════════════════════════════════════════════════════════
+   Jedna vrstva nad vším výš, ať appka působí jako jeden celek (vzor je appka
+   Claude): jedno písmo i v tlačítkách, nadpisy sekcí malým písmem místo
+   VERZÁLEK, dvě velikosti zaoblení, dva druhy tlačítek (plné / obrysové
+   neutrální) a pozdrav patkovým písmem na počítači i na telefonu. */
+:root {
+  --radius: 10px;
+  --radius-lg: 14px;
+  --font-serif: "Tiempos Headline", Georgia, "Noto Serif", "DejaVu Serif", serif;
+  --label: 12px;
+}
+/* Tlačítka a pole písmo nedědí — bez tohohle měla půlka appky Arial. */
+button, input, select, textarea { font-family: inherit; }
+
+/* Nadpisy sekcí: všude stejně, jako „Chaty" v panelu. */
+.section, .barlabel, .wcol-title, .group-head, .set-section, .onb-label {
+  color: var(--dim); font-size: var(--label); font-weight: 600;
+  letter-spacing: 0; text-transform: none;
+}
+
+/* Tlačítka: plné (primary) a obrysové (ghost / actionbtn) — obrys neutrální,
+   barva prostředí jen u hlavní akce. */
+.btn { border-radius: var(--radius); font-weight: 600; font-size: 13px; padding: 8px 14px; }
+.btn.primary { color: #fff; }
+.actionbtn {
+  border-color: var(--border); color: var(--fg-bright); background: var(--bg-card);
+  border-radius: var(--radius); font-weight: 600; justify-content: center;
+}
+.actionbtn:hover { background: var(--card-hover); color: var(--fg-bright); }
+.actionbtn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.actionbtn.primary:hover { filter: brightness(1.08); background: var(--accent); color: #fff; }
+
+/* Pole na psaní a vyhledávání: stejná výška i zaoblení. */
+#search, #chats-search, .vault-search, .set-panel input[type=text], .set-panel input[type=password],
+.set-panel input[type=email], .set-panel select { border-radius: var(--radius); }
+#chats-search, #search { padding-top: 8px; padding-bottom: 8px; background: var(--bg-card); }
+
+/* Odznak Počítač / Server: malá pilulka, bez verzálek. */
+.topbar-badge {
+  font-size: 11px; font-weight: 700; letter-spacing: 0;
+  border-radius: 999px; padding: 3px 9px;
+}
+
+/* Lišta tabů: „+ Nový chat" jako tichý odkaz, barvu nese jen plus. */
+.tabplus { color: var(--dim); }
+.tabplus .ico { color: var(--accent); }
+.tabplus:hover { color: var(--fg-bright); }
+.tab { font-size: 12.5px; }
+
+/* Rychlé akce vpravo: řádky jako nabídka v panelu. */
+.actionbar { padding: 14px 10px; }
+.barlabel { margin: 4px 4px 8px; }
+.barbtn { border-radius: var(--radius); }
+
+/* Úvod na počítači jako na telefonu: pozdrav patkovým písmem, bez nadpisu
+   s názvem appky (ten je v liště). */
+.welcome-big { display: none; }
+.welcome-greet {
+  font: 400 36px/1.2 var(--font-serif); color: var(--fg-bright); margin: 6px 0 22px;
+}
+.welcome-actions .btn { border-radius: var(--radius-lg); padding: 10px 18px; font-size: 14px; }
+.wcol-item { border-radius: var(--radius); font-size: 13.5px; }
+.wst-tile { border-radius: var(--radius-lg); }
+.welcome-open-item { border-radius: var(--radius); }
+
+/* Karty a okna: jedno velké zaoblení. */
+.onb-box, .set-modal .onb-box, .pp-card, .modal-box { border-radius: var(--radius-lg); }
+.toast { border-radius: var(--radius); }
+
+@media (max-width: 820px) {
+  .welcome-greet { font-size: 28px; margin: 4px 0 14px; }
+}
+.barbtn { font-size: 13px; font-weight: 500; background: none; border-color: transparent; padding: 8px 10px; }
+.barbtn:hover { background: var(--card-hover); color: var(--fg-bright); border-color: transparent; }
+.barbtn .ico { color: var(--dim); }
+/* Start/Stop stopek je tlačítko, ne položka nabídky. */
+.barbtn.clk-start { justify-content: center; border-color: var(--border); background: var(--bg-card); font-weight: 600; }
+.barbtn.clk-start:hover { border-color: var(--accent); }
