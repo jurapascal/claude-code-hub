@@ -2185,6 +2185,37 @@ function oznacTab(tab) {
   document.body.classList.toggle('neco-ceka', TABS.some(t => t.ceka));
   document.title = titulekOkna(document.title);
   if (!ACTIVE) renderWelcomeOpen();
+  kresliVisici();
+}
+
+/* Claudík visící z tabu, který čeká na odpověď. Lišta s taby roluje, takže
+   by ho oříznula — visí proto v <body> a jen se pod tab zarovnává. Klik na
+   něj tab otevře. */
+let visTimer = null;
+function kresliVisici() {
+  for (const t of TABS) {
+    const on = !!(t.ceka && t.el && t.el.isConnected && window.HubCteni && HubCteni.claudik);
+    if (!on) { if (t.visi) { t.visi.remove(); t.visi = null; } continue; }
+    if (!t.visi) {
+      t.visi = document.createElement('button');
+      t.visi.className = 'tab-visi';
+      t.visi.title = 'Claude čeká na tvou odpověď';
+      t.visi.innerHTML = '<span class="tv-ruce"></span>' + HubCteni.claudik('') +
+                         '<span class="tv-otaznik">?</span>';
+      t.visi.onclick = () => activate(t);
+      document.body.appendChild(t.visi);
+    }
+    const r = t.el.getBoundingClientRect();
+    const bar = $('tabbar').getBoundingClientRect();
+    // Tab odrolovaný mimo lištu (nebo lišta schovaná na telefonu) — nevisí.
+    const vidno = r.width > 0 && r.right > bar.left + 20 && r.left < bar.right - 20;
+    t.visi.hidden = !vidno;
+    t.visi.style.left = Math.round(r.left + Math.min(r.width / 2, 60)) + 'px';
+    t.visi.style.top = Math.round(r.bottom - 2) + 'px';
+  }
+  const nekdo = TABS.some(t => t.visi);
+  if (nekdo && !visTimer) visTimer = setInterval(kresliVisici, 400);
+  if (!nekdo && visTimer) { clearInterval(visTimer); visTimer = null; }
 }
 
 function titulekOkna(title) {
@@ -2369,6 +2400,7 @@ function closeTab(tab, {remote = false} = {}) {
   tab.el.remove();
   tab.pane.remove();
   TABS = TABS.filter(t => t !== tab);
+  if (tab.visi) { tab.visi.remove(); tab.visi = null; }
   document.body.classList.toggle('neco-ceka', TABS.some(t => t.ceka));
   document.title = titulekOkna(document.title);
   if (ACTIVE === tab) ACTIVE = null;

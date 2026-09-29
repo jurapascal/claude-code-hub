@@ -3036,7 +3036,6 @@ body:not(.pokrocile) .chat-item { padding: 7px 10px; }
   box-shadow: 0 0 0 2px var(--accent), 0 0 14px 2px color-mix(in srgb, var(--accent) 55%, transparent);
   animation: ceka-pulz 1.3s ease-in-out infinite;
 }
-.tab.ceka .tab-title::before { content: "✋ "; }
 .tab.hotovo .tab-title::after {
   content: ""; display: inline-block; width: 7px; height: 7px; margin-left: 6px;
   border-radius: 50%; background: var(--green); vertical-align: 1px;
@@ -3204,3 +3203,28 @@ body.neco-ceka .drawer-toggle::after {
   .pp-card { min-height: 0; }
   .pp-search input { font-size: 16px; }   /* iPhone jinak přiblíží */
 }
+
+/* Claudík visí z tabu, který čeká na odpověď (hub.js kresliVisici): drží se
+   rukama spodní hrany tabu, houpe se a vedle má otazník. */
+.tab-visi {
+  position: fixed; z-index: 60; width: 46px; height: 46px; margin-left: -23px; padding: 0;
+  background: none; border: none; cursor: pointer; color: var(--accent);
+  transform-origin: 50% 0; animation: tv-houpe 1.8s ease-in-out infinite;
+}
+.tab-visi[hidden] { display: none; }
+.tab-visi .claudik { position: absolute; left: 1px; top: 12px; width: 44px; height: 32px; overflow: visible; }
+.tab-visi .claudik .cl-oko { animation: claudik-mrk 2.4s infinite; transform-origin: center 7px; transform-box: fill-box; }
+/* Ruce nahoru ke hraně tabu. */
+.tv-ruce::before, .tv-ruce::after {
+  content: ""; position: absolute; top: 0; width: 4px; height: 19px; background: currentColor; border-radius: 1px;
+}
+.tv-ruce::before { left: 9px; transform: rotate(-12deg); transform-origin: top; }
+.tv-ruce::after { right: 9px; transform: rotate(12deg); transform-origin: top; }
+.tv-otaznik {
+  position: absolute; left: 42px; top: 10px; min-width: 18px; height: 18px; border-radius: 9px;
+  background: var(--accent); color: #fff; font-size: 12px; font-weight: 800; line-height: 18px;
+  text-align: center; animation: ceka-pulz 1.3s ease-in-out infinite;
+}
+.tab-visi:hover { animation-play-state: paused; }
+@keyframes tv-houpe { 0%, 100% { transform: rotate(-9deg); } 50% { transform: rotate(9deg); } }
+@media (prefers-reduced-motion: reduce) { .tab-visi, .tab-visi * { animation: none !important; } }
