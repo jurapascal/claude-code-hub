@@ -3328,3 +3328,61 @@ button, input, select, textarea { font-family: inherit; }
   padding-right: 22px;
 }
 .cteni { overflow: hidden; }
+
+/* ── Průběh (hub.js renderPrehled) ─────────────────────────────────────────
+   Panel vpravo jako v appce Claude: úkol, postup / kroky, Claudíci, úlohy
+   na pozadí a soubory. S průběhem je panel širší. */
+body.ma-prehled { --bar-w: 280px; }
+.prehled { display: flex; flex-direction: column; gap: 14px; margin-bottom: 18px; }
+.pr-sekce { display: flex; flex-direction: column; gap: 1px; }
+.pr-hlava {
+  display: flex; align-items: baseline; gap: 8px; margin: 0 4px 4px;
+  color: var(--dim); font-size: var(--label, 12px); font-weight: 600;
+}
+.pr-pocet { margin-left: auto; color: var(--section); font-weight: 500; }
+.pr-radek {
+  display: flex; align-items: flex-start; gap: 9px; width: 100%;
+  padding: 5px 6px; border-radius: 8px; border: none; background: none; text-align: left;
+  color: var(--fg); font: inherit; font-size: 12.5px; line-height: 1.4;
+}
+button.pr-radek { cursor: pointer; }
+button.pr-radek:hover { background: var(--card-hover); color: var(--fg-bright); }
+.pr-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.pr-radek.hotovo .pr-text { color: var(--dim); }
+.pr-radek.bezi .pr-text { color: var(--fg-bright); font-weight: 600; }
+.pr-zadani .pr-text { color: var(--fg-bright); -webkit-line-clamp: 3; }
+.pr-druh { flex: none; color: var(--section); font-size: 11px; }
+.pr-soubor .ico { flex: none; width: 14px; height: 14px; margin-top: 2px; color: var(--dim); }
+/* Stav: prázdné kolečko (na řadě), točící se (běží), fajfka (hotovo),
+   křížek (chyba), pulzující (čeká na tebe). */
+.pr-ico {
+  flex: none; width: 15px; height: 15px; margin-top: 1px; border-radius: 50%;
+  border: 1.6px solid var(--border); position: relative;
+}
+.pr-ico.bezi { border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-top-color: var(--accent); animation: pr-toc .8s linear infinite; }
+.pr-ico.hotovo { background: var(--green); border-color: var(--green); }
+.pr-ico.hotovo::after {
+  content: ""; position: absolute; left: 4.2px; top: 1.6px; width: 3.5px; height: 7px;
+  border: solid #fff; border-width: 0 1.8px 1.8px 0; transform: rotate(45deg);
+}
+.pr-ico.chyba, .pr-ico.stop { background: var(--red); border-color: var(--red); }
+.pr-ico.chyba::after, .pr-ico.stop::after {
+  content: "×"; position: absolute; inset: 0; color: #fff; font-size: 12px; line-height: 11px; text-align: center;
+}
+.pr-ico.ceka { background: var(--accent); border-color: var(--accent); animation: ceka-pulz 1.3s ease-in-out infinite; }
+.pr-agent .pr-ico.bezi { border-top-color: var(--ag); }
+.pr-agent .pr-ico.hotovo { background: var(--ag); border-color: var(--ag); }
+@keyframes pr-toc { to { transform: rotate(360deg); } }
+.pr-ceka {
+  padding: 9px 10px; border-radius: var(--radius); cursor: pointer; text-align: left;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--fg-bright); font: inherit; font-size: 12.5px; font-weight: 600;
+}
+.prehled-modal .onb-box { width: min(420px, 94vw); height: auto; max-height: 86vh; display: flex; flex-direction: column; }
+.prehled-telo { padding: 14px 16px 20px; overflow-y: auto; color: var(--dim); }
+.prehled-telo .pr-radek { font-size: 14.5px; padding: 7px 6px; }
+@media (prefers-reduced-motion: reduce) { .pr-ico.bezi, .pr-ico.ceka { animation: none; } }
+.prehled-telo { display: flex; flex-direction: column; gap: 14px; }

@@ -254,6 +254,27 @@ def _radku(text):
     return str(text or "").count("\n") + 1 if text else 0
 
 
+def _do_prehledu(name, vstup):
+    """Co z volání nástroje patří do panelu Průběh (cteni.js): Claudův seznam
+    úkolů (TodoWrite, TaskCreate/TaskUpdate) a upravené soubory."""
+    v = vstup if isinstance(vstup, dict) else {}
+    if name == "TodoWrite" and isinstance(v.get("todos"), list):
+        return {"todos": [{"text": str(t.get("content") or "")[:200],
+                           "ted": str(t.get("activeForm") or "")[:200],
+                           "stav": str(t.get("status") or "pending")}
+                          for t in v["todos"][:50] if isinstance(t, dict)]}
+    if name == "TaskCreate":
+        return {"ukol": {"text": str(v.get("subject") or v.get("description") or "")[:200],
+                         "ted": str(v.get("activeForm") or "")[:200]}}
+    if name == "TaskUpdate":
+        return {"ukol_zmena": {"id": str(v.get("taskId") or ""),
+                               "stav": str(v.get("status") or ""),
+                               "text": str(v.get("subject") or "")[:200]}}
+    if name in ("Edit", "Write", "NotebookEdit") and v.get("file_path"):
+        return {"soubor": str(v.get("file_path") or v.get("notebook_path"))[:500]}
+    return {}
+
+
 def _popis(name, vstup):
     """(nadpis, doplněk, rozbalený text) pro jedno volání nástroje.
 
@@ -485,10 +506,12 @@ def _bloky_zpravy(entry):
                                 "ts": str(entry.get("timestamp") or "")})
                 elif cast.get("type") == "tool_use":
                     nadpis, meta, detail = _popis(cast.get("name"), cast.get("input"))
-                    out.append({"kind": "tool", "id": str(cast.get("id") or ""),
-                                "name": str(cast.get("name") or ""),
-                                "title": nadpis, "meta": meta,
-                                "detail": _zkrat(detail)})
+                    blok = {"kind": "tool", "id": str(cast.get("id") or ""),
+                            "name": str(cast.get("name") or ""),
+                            "title": nadpis, "meta": meta,
+                            "detail": _zkrat(detail)}
+                    blok.update(_do_prehledu(cast.get("name"), cast.get("input")))
+                    out.append(blok)
                 # thinking se nečte: ve čtení má být to, co Claude napsal,
                 # ne to, co si přitom myslel.
         return out

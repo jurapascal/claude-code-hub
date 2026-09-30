@@ -163,7 +163,7 @@
      `imageUrl` převede cestu k obrázku z hub-images na adresu, ze které ho
      stránka smí načíst (/api/image). */
   function flow(mount, imageUrl, {historie = false, openLink = null, notice = null, zive = null,
-                                  udalost = null} = {}) {
+                                  udalost = null, naPrehled = null} = {}) {
     /* Odkaz v Markdownu je <a> bez href (vault.js) — sám nikam nevede,
        otevřít ho musí hub. V okně appky by holý odkaz stejně nic neudělal. */
     mount.addEventListener('click', (ev) => {
@@ -192,6 +192,35 @@
     ulohy.hidden = true;
     let ulohyData = [];
     const cekajici = [];              // ze serveru: {key, row}
+
+    /* Přehled pro panel Průběh (hub.js renderPrehled) — jako v appce Claude:
+       zadání, Claudův seznam úkolů, pomocníci, úlohy na pozadí a soubory. */
+    const pr = {zadani: [], todos: null, tasks: [], soubory: [], kroky: [], pracuje: false};
+    let prTimer = null;
+    function zmenaPrehledu() {
+      if (!naPrehled || prTimer) return;
+      prTimer = setTimeout(() => { prTimer = null; naPrehled(); }, 150);
+    }
+    function prehled() {
+      const bezi = pr.pracuje;
+      return {
+        zadani: pr.zadani.slice(-6).map((z, i, a) => ({
+          text: z.text, stav: i === a.length - 1 && bezi ? 'bezi' : 'hotovo'})),
+        todos: pr.todos || (pr.tasks.length ? pr.tasks : null),
+        // Kroky práce od poslední zprávy — když Claude seznam úkolů nevede
+        // (na tomhle účtu TodoWrite / TaskCreate nemá), jsou to jeho úkoly.
+        kroky: pr.kroky.slice(-8),
+        kroku: pr.kroky.length,
+        agenti: [...agenti.values()].map((k) => ({
+          jmeno: jmenoAgenta(k.typ), ukol: k.q('.ag-ukol').textContent,
+          stav: k.stav, barva: barvaAgenta(k.typ), box: k.box})),
+        ulohy: ulohyData.filter((u) => u.name !== 'Agent').map((u) => ({
+          text: u.title || u.name, druh: u.name === 'Monitor' ? 'hlídá'
+            : u.name === 'ScheduleWakeup' ? 'ozve se' : 'příkaz'})),
+        soubory: pr.soubory.slice(-8).reverse(),
+        pracuje: bezi,
+      };
+    }
     const mistni = [];                // odeslané odsud, v přepisu ještě nejsou
 
     function naKonec() {
@@ -432,6 +461,7 @@
       q('.ag-cisla').textContent = cisla.join(' · ');
       tikAgenta(k);
       if (k.skupina) hlavaSkupiny(k.skupina);
+      zmenaPrehledu();
     }
 
     function tikAgenta(k) {
@@ -559,6 +589,7 @@
       const otevrene = new Set([...ulohy.querySelectorAll('details[open]')].map((d) => d.dataset.id));
       ulohyData = res.tasks || [];
       kresliUlohy();
+      zmenaPrehledu();
       // Rozbalený detail zůstane rozbalený i po překreslení.
       [...ulohy.querySelectorAll('details')].forEach((d, i) => {
         const u = ulohyData.filter((x) => x.name !== 'Agent')[i];
@@ -621,6 +652,11 @@
         potvrd(b);
         /* Připomínka od hubu (restart.py) není zpráva člověka — jeden tichý
            řádek, podrobnosti po klepnutí. */
+        if (!/^\[hub\] /.test(b.text || '') && b.text) {
+          pr.zadani.push({text: b.text.trim().split('\n')[0].slice(0, 140)});
+          pr.kroky = [];
+          zmenaPrehledu();
+        }
         if (/^\[hub\] /.test(b.text || '')) {
           const text = b.text.slice(6);
           const ulohy = (text.match(/^- /gm) || []).length;
@@ -675,6 +711,33 @@
         return;
       }
       if (b.kind === 'tool') {
+        if (b.todos) { pr.todos = b.todos; zmenaPrehledu(); }
+        if (b.name !== 'TodoWrite' && !/^Task(Create|Update|List|Get)$/.test(b.name || '')) {
+          pr.kroky.push({id: b.id, text: b.title || b.name, znak: ZNAK[b.name] || '•', stav: 'bezi'});
+          if (pr.kroky.length > 200) pr.kroky.shift();
+          zmenaPrehledu();
+        }
+        if (b.ukol) {
+          pr.tasks.push({id: String(pr.tasks.length + 1), text: b.ukol.text, ted: b.ukol.ted, stav: 'pending'});
+          zmenaPrehledu();
+        }
+        if (b.ukol_zmena) {
+          const t = pr.tasks.find((x) => x.id === b.ukol_zmena.id);
+          if (t) {
+            if (b.ukol_zmena.stav === 'deleted') pr.tasks.splice(pr.tasks.indexOf(t), 1);
+            else {
+              if (b.ukol_zmena.stav) t.stav = b.ukol_zmena.stav;
+              if (b.ukol_zmena.text) t.text = b.ukol_zmena.text;
+            }
+            zmenaPrehledu();
+          }
+        }
+        if (b.soubor) {
+          const i = pr.soubory.indexOf(b.soubor);
+          if (i >= 0) pr.soubory.splice(i, 1);
+          pr.soubory.push(b.soubor);
+          zmenaPrehledu();
+        }
         // Zpráva do jiného chatu — na hřišti odletí obálka.
         if (udalost && b.name === 'SendMessage') udalost({co: 'dopis', smer: 'ven'});
         const box = udelejNastroj(b);
@@ -736,6 +799,8 @@
           hlidej();
           return;
         }
+        const krok = b.id && pr.kroky.find((x) => x.id === b.id);
+        if (krok) { krok.stav = b.ok ? 'hotovo' : 'chyba'; zmenaPrehledu(); }
         // Výsledek patří k nástroji, u kterého se schovává. Když jeho řádek
         // není (načetl se jen konec přepisu), nekreslí se nic — samotný
         // výpis bez toho, co ho vyvolalo, neříká nic.
@@ -762,6 +827,7 @@
     let odKdy = 0, tikaniPrace = null;
     function stav(st) {
       mount.classList.toggle('pracuje', !!(st && st.on));
+      if (pr.pracuje !== !!(st && st.on)) { pr.pracuje = !!(st && st.on); zmenaPrehledu(); }
       if (!st || !st.on) {
         if (prace) { prace.remove(); prace = null; }
         clearInterval(tikaniPrace);
@@ -812,6 +878,7 @@
       stav,
       odeslano,
       prubeh,
+      prehled,
       ulohy: ulohyZe,
       maUlohy: () => ulohyData.length > 0,
       agentu: () => agenti.size,
@@ -869,6 +936,7 @@
       openLink: io.openLink, notice: io.notice,
       zive: () => nacteno && !!global.HubHlas && global.HubHlas.auto.get() &&
                   (!io.aktivni || io.aktivni()),
+      naPrehled: () => { if (io.prehled) io.prehled(); },
       /* Historie při otevření tabu se na hřišti nepřehrává: kdo tehdy ještě
          běžel, prostě tam stojí, a co doběhlo, se ani neukáže. */
       udalost: (e) => {
@@ -973,6 +1041,7 @@
 
     return {
       hriste,
+      prehled: () => proud.prehled(),
       release() {
         zivy = false;
         clearTimeout(timer);

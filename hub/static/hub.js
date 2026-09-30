@@ -1241,12 +1241,139 @@ function syncActionbar(tab) {
 /* Jen viditelnost, nic nenačítá — tohle volá i `clockify-drawn`, takže kdyby
    sáhlo zpátky na panel(), točilo by se to pořád dokola. */
 function showActionbar(tab) {
+  const prehled = renderPrehled(tab);
   const acts = showsActions(tab);
   $('actions').hidden = !acts;
   $('actionbar').querySelector('.barlabel').hidden = !acts;
   const clock = !$('clockify').hidden;
   $('clockify-label').hidden = !clock;
-  $('actionbar').hidden = !(acts || clock);
+  $('actionbar').hidden = !(acts || clock || prehled);
+}
+
+/* ── Průběh ─────────────────────────────────────────────────────────────────
+   Panel vpravo jako v appce Claude (Cowork): na čem Claude v tomhle chatu
+   dělá. Nahoře Claudův seznam úkolů, a když ho nevede, kroky práce od
+   poslední zprávy; pod tím pomocníci, úlohy na pozadí a upravené soubory.
+   Data sbírá čtení (cteni.js prehled), tady se jen kreslí — vpravo na
+   počítači, na telefonu v okně z nabídky ⋯. */
+function prehledHtml(tab, box) {
+  const p = tab && tab.cteni && tab.cteni.prehled ? tab.cteni.prehled() : null;
+  box.textContent = '';
+  if (!p) return false;
+  const mk = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  };
+  const stavIco = (stav) => mk('span', 'pr-ico ' + stav);
+  const sekce = (nadpis, pocet) => {
+    const s = mk('div', 'pr-sekce');
+    const h = mk('div', 'pr-hlava', nadpis);
+    if (pocet) h.appendChild(mk('span', 'pr-pocet', pocet));
+    s.appendChild(h);
+    box.appendChild(s);
+    return s;
+  };
+  let neco = false;
+
+  if (tab.ceka) {
+    const c = mk('button', 'pr-ceka', 'Claude čeká na tvou odpověď');
+    c.onclick = () => activate(tab);
+    box.appendChild(c);
+    neco = true;
+  }
+  const zadani = p.zadani[p.zadani.length - 1];
+  if (zadani) {
+    const s = sekce('Úkol');
+    const r = mk('div', 'pr-radek pr-zadani');
+    r.append(stavIco(tab.ceka ? 'ceka' : zadani.stav), mk('span', 'pr-text', zadani.text));
+    s.appendChild(r);
+    neco = true;
+  }
+  if (p.todos && p.todos.length) {
+    const hotovo = p.todos.filter((t) => t.stav === 'completed').length;
+    const s = sekce('Postup', hotovo + ' z ' + p.todos.length);
+    for (const t of p.todos) {
+      const stav = t.stav === 'completed' ? 'hotovo' : t.stav === 'in_progress' ? 'bezi' : 'ceka-na-radu';
+      const r = mk('div', 'pr-radek ' + stav);
+      r.append(stavIco(stav), mk('span', 'pr-text', stav === 'bezi' && t.ted ? t.ted : t.text));
+      s.appendChild(r);
+    }
+    neco = true;
+  } else if (p.kroky.length) {
+    const s = sekce('Kroky', p.kroku > p.kroky.length ? p.kroku + '' : '');
+    for (const k of p.kroky) {
+      const stav = k.stav === 'bezi' && !p.pracuje ? 'hotovo' : k.stav;
+      const r = mk('div', 'pr-radek ' + stav);
+      r.append(stavIco(stav), mk('span', 'pr-text', k.text));
+      r.title = k.text;
+      s.appendChild(r);
+    }
+    neco = true;
+  }
+  if (p.agenti.length) {
+    const bezi = p.agenti.filter((a) => a.stav === 'bezi').length;
+    const s = sekce(window.HUB_ADVANCED ? 'Agenti' : 'Claudíci', bezi ? bezi + ' pracuje' : '');
+    for (const a of p.agenti.slice(-8)) {
+      const r = mk('button', 'pr-radek pr-agent ' + a.stav);
+      r.style.setProperty('--ag', a.barva);
+      r.append(stavIco(a.stav), mk('span', 'pr-text', a.ukol || a.jmeno));
+      r.title = a.jmeno + (a.ukol ? ' — ' + a.ukol : '');
+      r.onclick = () => a.box.scrollIntoView({behavior: 'smooth', block: 'center'});
+      s.appendChild(r);
+    }
+    neco = true;
+  }
+  if (p.ulohy.length) {
+    const s = sekce('Na pozadí');
+    for (const u of p.ulohy) {
+      const r = mk('div', 'pr-radek bezi');
+      r.append(stavIco('bezi'), mk('span', 'pr-text', u.text), mk('span', 'pr-druh', u.druh));
+      s.appendChild(r);
+    }
+    neco = true;
+  }
+  if (p.soubory.length) {
+    const s = sekce('Soubory');
+    for (const f of p.soubory) {
+      const r = mk('button', 'pr-radek pr-soubor');
+      r.innerHTML = icon('i-note');
+      r.appendChild(mk('span', 'pr-text', f.split(/[\\/]/).pop()));
+      r.title = f + ' — otevřít složku';
+      r.onclick = () => openExternal(f.replace(/[\\/][^\\/]*$/, ''));
+      s.appendChild(r);
+    }
+    neco = true;
+  }
+  return neco;
+}
+
+function renderPrehled(tab) {
+  const box = $('prehled');
+  if (!box) return false;
+  const neco = prehledHtml(tab, box);
+  box.hidden = !neco;
+  document.body.classList.toggle('ma-prehled', neco);
+  return neco;
+}
+
+/* Telefon: panel vpravo není, Průběh je v okně z nabídky ⋯. */
+function openPrehled(tab) {
+  const wrap = document.createElement('div');
+  wrap.className = 'onb set-modal prehled-modal';
+  wrap.innerHTML = '<div class="onb-box"><div class="onb-head"><div><div class="onb-title">Průběh</div>' +
+    '<div class="onb-sub"></div></div><span class="spacer"></span>' +
+    '<button class="set-x" title="Zavřít">×</button></div><div class="prehled-telo"></div></div>';
+  wrap.querySelector('.onb-sub').textContent = tab.title || '';
+  const telo = wrap.querySelector('.prehled-telo');
+  const kresli = () => { if (!prehledHtml(tab, telo)) telo.textContent = 'Zatím se tu nic neděje.'; };
+  kresli();
+  const t = setInterval(kresli, 1500);
+  const zavri = () => { clearInterval(t); wrap.remove(); };
+  wrap.querySelector('.set-x').onclick = zavri;
+  wrap.onclick = (ev) => { if (ev.target === wrap) zavri(); };
+  document.body.appendChild(wrap);
 }
 
 document.addEventListener('clockify-drawn', () => showActionbar(ACTIVE));
@@ -1968,7 +2095,9 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
   if (kind === 'project' && window.HubCteni &&
       (agent || STATE.default_agent || 'claude') === 'claude') {
     tab.cteni = HubCteni.install(tab, {api, notice: toast, imageUrl, openLink,
-                                       aktivni: () => ACTIVE === tab});
+                                       aktivni: () => ACTIVE === tab,
+                                       // Panel Průběh vpravo (renderPrehled).
+                                       prehled: () => { if (ACTIVE === tab) showActionbar(tab); }});
   }
   if (kind === 'project' || kind.startsWith('slash:')) {
     tab.composer = HubComposer.install(tab, {
@@ -2180,6 +2309,7 @@ function oznacTab(tab) {
   tab.el.classList.toggle('ceka', !!tab.ceka);
   tab.el.classList.toggle('hotovo', !!tab.hotovo && !tab.ceka);
   if (tab.cteni && tab.cteni.hriste) tab.cteni.hriste.ceka(!!tab.ceka);
+  if (tab === ACTIVE) showActionbar(tab);
   document.body.classList.toggle('neco-ceka', TABS.some(t => t.ceka));
   document.title = titulekOkna(document.title);
   if (!ACTIVE) renderWelcomeOpen();
@@ -2734,20 +2864,20 @@ function topbarMenu(btn) {
   /* Bez fajfky a bez zvýraznění: „Projekty" tu nejsou zapnutá volba, ale
      místo, kam se jde. Modrá s fajfkou vypadala, jako by na ně bylo právě
      kliknuto. */
-  const items = [
-    {icon: 'i-folder', label: 'Projekty', run: () => open('projects')},
-    {icon: 'i-note', label: 'Konverzace', run: () => open('chats')},
-  ];
-  // Obsidiany jen tam, kde nějaké jsou — prázdná položka neřekne nic.
-  const mem = STATE.memory || {};
-  if (mem.enabled) {
-    items.push({icon: 'i-book', label: 'Otevřít moje poznámky',
-                color: 'var(--accent)',
-                run: () => (vaultPreview() ? openVault() : openExternal('', 'brain'))});
+  const items = [];
+  // Průběh chatu, na který se zrovna kouká (na počítači je vpravo).
+  if (ACTIVE && ACTIVE.cteni && ACTIVE.cteni.prehled) {
+    items.push({icon: 'i-status', label: 'Průběh', color: 'var(--accent)', run: () => openPrehled(ACTIVE)});
   }
-  if (STATE.firma && STATE.firma.vault) {
-    items.push({icon: 'i-book', label: 'Otevřít firemní poznámky', color: 'var(--firma)',
-                run: () => openVault('', 'firma')});
+  items.push(
+    {icon: 'i-note', label: 'Chaty', run: () => open('chats')},
+    {icon: 'i-folder', label: 'Projekty', run: () => showProjekty(true)},
+  );
+  // Poznámky jen v Obsidianu (přepínač osobní / firemní je uvnitř).
+  const mem = STATE.memory || {};
+  if (mem.enabled || (STATE.firma && STATE.firma.vault)) {
+    items.push({icon: 'i-book', label: 'Obsidian',
+                run: () => (window.HubVault ? openVault() : openExternal('', 'brain'))});
   }
   items.push(
     {icon: 'i-gear', label: 'Nastavení',
