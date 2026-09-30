@@ -764,7 +764,7 @@
       const poslat = jinyModel || stupen < 0 || e !== effort;
       // Výchozí pro nové chaty (settings.json) se tím měnit nemá — hub ho vrátí.
       if (poslat && io.autoKeep) io.autoKeep().catch(() => {});
-      if (jinyModel || stupen < 0) {
+      if (jinyModel) {
         autoPrikazy.add('/model ' + m);
         doruc('/model ' + m);
         model = m;           // jen tenhle tab — io.model by to dal i novým
@@ -822,7 +822,7 @@
     let pryc = false;                // bublina zavřená s tabem
     const konec = () => tab.exited || pryc;
     const spi = (ms) => new Promise((res) => setTimeout(res, ms));
-    const PO_PRIKAZU_MS = 12000;
+    const PO_PRIKAZU_MS = 8000;
     async function dokud(podminka) {
       while (!podminka()) await spi(250);
     }
@@ -868,13 +868,13 @@
           if (fronta.length && /^\/[a-z]/i.test(poslano)) {
             const od = Date.now();
             let klidOd = 0;
-            await spi(800);
+            await spi(150);
             await dokud(() => {
               if (konec() || Date.now() - od > PO_PRIKAZU_MS) return true;
               const klid = idleNow && !spinner && Date.now() - (tab.lastOut || 0) > 300;
               if (!klid) { klidOd = 0; return false; }
               klidOd = klidOd || Date.now();
-              return Date.now() - klidOd >= 900;      // klid musí chvíli vydržet
+              return Date.now() - klidOd >= 350;      // klid musí chvíli vydržet
             });
           }
         }
@@ -935,6 +935,15 @@
         await spi(180);
         let enter = toPty('\r');
         if (!AG.full || !zacatek) return;           // cizí TUI neumíme přečíst
+        /* /model a /effort Claude Code zpracuje hned — pole se vyprázdní za
+           zlomek vteřiny. Stačí se ptát často, ne čekat 1,2 s jako u zprávy. */
+        if (/^\/(model|effort)\b/i.test(body)) {
+          const do_ = Date.now() + 4000;
+          while (Date.now() < do_ && !konec()) {
+            await spi(120);
+            if (!vPoli(zacatek, vlozit) && enter) return;
+          }
+        }
         // Kontroly s rostoucím odstupem: jedna mohla trefit chvíli, kdy Claude
         // Code zrovna překresloval a prompt na obrazovce nebyl.
         for (const za of [1200, 1800, 2500, 4000, 6000, 9000]) {
@@ -1084,9 +1093,14 @@
       const buf = term.buffer.active;
       for (let i = 0, n = Math.min(buf.length, 60); i < n; i++) {
         const row = buf.getLine(i);
-        const m = row && row.translateToString(true).match(BANNER_RE);
+        const line = row ? row.translateToString(true) : '';
+        const m = line.match(BANNER_RE);
         if (m) {
           banner = m[1] + ' ' + m[2];
+          // „Sonnet 5.5 with low effort" — s čím tab nastartoval. Bez toho by
+          // automatika první zprávu vždycky začínala přepnutím /effort.
+          const ef = line.match(/with (low|medium|high|xhigh|max) effort/i);
+          if (ef && !effort) effort = ef[1].toLowerCase();
           syncModel();
           return;
         }
