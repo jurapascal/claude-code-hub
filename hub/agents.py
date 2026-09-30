@@ -16,7 +16,9 @@ Klíč, který už v katalogu je, se doplní (merge), takže se dá přepsat jen
 nebo instalační příkaz, ne celý záznam.
 """
 
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -45,8 +47,10 @@ CATALOG = {
         },
         "auth": {"cmd": "claude", "slash": "/login",
                  "note": "Spustí se Claude Code, přihlášení je přes /login."},
-        "models": [["Opus 5.5", "opus"], ["Sonnet 5", "sonnet"],
+        # Záloha, když se binárka Claude Code nedá přečíst (claude_models).
+        "models": [["Opus 5.5", "opus"], ["Sonnet 5.5", "sonnet"],
                    ["Haiku 4.5", "haiku"], ["Fable 5.1", "fable"]],
+        "models_from_bin": True,
         "model_arg": "--model {model}",
         "model_cmd": "/model {model}",
         # Bypass mezi režimy (Shift+Tab), ale nestartuje se v něm — zapne ho
@@ -349,7 +353,7 @@ def detect(extra=None, with_version=True):
             "version": _version(path, spec) if (path and with_version) else "",
             "install": install_cmd(spec),
             "auth": spec.get("auth") or {},
-            "models": models_for(spec),
+            "models": models_for(spec, path),
             "needs_model": bool(spec.get("needs_model")),
             "slash": spec.get("slash") or [],
             "skills": bool(spec.get("skills")),
@@ -394,13 +398,110 @@ def ollama_state():
     return {"installed": True, "running": running, "models": ollama_models()}
 
 
-def models_for(spec):
+# ── Modely Claude Code ──────────────────────────────────────────────────────
+# Seznam modelů napevno v hubu zastarával s každým vydáním Anthropicu (v nabídce
+# pořád „Sonnet 5", když alias už dávno jel na 5.5). Claude Code ale zná všechny
+# modely, na které umí přepnout — má jejich id přímo v sobě. Nová verze Claude
+# Code s novým modelem ho tak přinese do nabídky sama, bez vydání hubu.
+MODEL_FAMILIES = ("opus", "sonnet", "haiku", "fable")
+_MODEL_RE = re.compile(rb"claude-(opus|sonnet|haiku|fable)-(\d{1,2})(?:-(\d))?(?![0-9a-z])")
+_BIN_MODELS = {}
+_MODELS_CACHE = os.path.join(os.path.expanduser("~"), ".claude", "hub-models.json")
+MIN_MAJOR = 4          # tři-krát-cokoli už Claude Code nepustí
+
+
+def _scan_models(real):
+    """Id modelů v binárce Claude Code → {(rodina, major, minor): počet}."""
+    found = {}
+    tail = b""
+    with open(real, "rb") as fh:
+        while True:
+            chunk = fh.read(16 * 1024 * 1024)
+            if not chunk:
+                break
+            data = tail + chunk
+            for m in _MODEL_RE.finditer(data):
+                if m.end() > len(data) - 40 and len(chunk) == 16 * 1024 * 1024:
+                    continue          # může pokračovat v dalším kusu
+                fam = m.group(1).decode()
+                major = int(m.group(2))
+                minor = int(m.group(3)) if m.group(3) else 0
+                key = (fam, major, minor)
+                found[key] = found.get(key, 0) + 1
+            tail = data[-40:]
+    return found
+
+
+def _label(fam, major, minor):
+    return f"{fam.capitalize()} {major}" + (f".{minor}" if minor else "")
+
+
+def claude_models(path):
+    """Nabídka modelů podle toho, co zná nainstalovaný Claude Code.
+
+    Nejnovější model každé rodiny se vybírá aliasem (`opus`…), starší plným
+    id; třetí položka je skupina ("" = hlavní, "old" = starší). Prohledání
+    binárky (stovky MB) stojí vteřinu, tak se výsledek pamatuje podle mtime
+    — i na disku, ať se neopakuje po každém startu hubu.
+    """
+    try:
+        real = os.path.realpath(path)
+        st = os.stat(real)
+    except (OSError, TypeError):
+        return []
+    stamp = f"{real}|{int(st.st_mtime)}|{st.st_size}"
+    if _BIN_MODELS.get("stamp") == stamp:
+        return [list(m) for m in _BIN_MODELS["models"]]
+    try:
+        with open(_MODELS_CACHE, encoding="utf-8") as fh:
+            saved = json.load(fh)
+        if saved.get("stamp") == stamp and isinstance(saved.get("models"), list):
+            _BIN_MODELS.update(saved)
+            return [list(m) for m in saved["models"]]
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        found = _scan_models(real)
+    except OSError:
+        return []
+    main, old = [], []
+    for fam in MODEL_FAMILIES:
+        # Jedna zmínka bývá text v nápovědě nebo changelogu, ne model.
+        verze = sorted({(ma, mi) for (f, ma, mi), n in found.items()
+                        if f == fam and ma >= MIN_MAJOR and n >= 2}, reverse=True)
+        for i, (ma, mi) in enumerate(verze):
+            if i == 0:
+                main.append([_label(fam, ma, mi), fam, ""])
+            else:
+                # `claude-opus-4` samotné není id; Claude Code zná `-4-0`.
+                ident = f"claude-{fam}-{ma}-{mi}" if (mi or ma == 4) else f"claude-{fam}-{ma}"
+                old.append([_label(fam, ma, mi), ident, "old"])
+    models = main + old
+    if not main:
+        return []
+    _BIN_MODELS.update({"stamp": stamp, "models": models})
+    try:
+        tmp = _MODELS_CACHE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"stamp": stamp, "models": models}, fh)
+        os.replace(tmp, _MODELS_CACHE)
+    except OSError:
+        pass
+    return [list(m) for m in models]
+
+
+def models_for(spec, path=""):
     """Nabídka modelů pro chip v bublině.
 
-    Statický seznam u Claudea (ten známe), lokální modely u všeho, co umí
-    Ollamu, a prázdno tam, kde si nabídku drží agent sám — tam chip zavolá
-    jeho vlastní `/model` a vybírá se v jeho TUI.
+    U Claudea z nainstalovaného Claude Code (claude_models), jinak statický
+    seznam z katalogu; lokální modely u všeho, co umí Ollamu, a prázdno tam,
+    kde si nabídku drží agent sám — tam chip zavolá jeho vlastní `/model`
+    a vybírá se v jeho TUI.
     """
+    if spec.get("models_from_bin") and path:
+        found = claude_models(path)
+        if found:
+            return found
     models = spec.get("models")
     if isinstance(models, list):
         return [list(m) for m in models]

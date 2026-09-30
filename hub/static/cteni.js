@@ -650,6 +650,8 @@
         }
         if (b.key) zFronty(b.key);           // z fronty rovnou do konverzace
         potvrd(b);
+        // /model, /effort — co se nastavilo, řekne tichý řádek z výpisu.
+        if (b.tichy) return;
         /* Připomínka od hubu (restart.py) není zpráva člověka — jeden tichý
            řádek, podrobnosti po klepnutí. */
         if (!/^\[hub\] /.test(b.text || '') && b.text) {
@@ -686,6 +688,16 @@
           cekajici.length = 0;
         } else {
           zFronty(b.key);
+        }
+        return;
+      }
+      if (b.kind === 'out' && b.tichy) {
+        // Přepnutí modelu nebo úsilí — dva po sobě se slijí do jednoho řádku.
+        const posledni = mount.lastElementChild;
+        if (posledni && posledni.classList.contains('cteni-nastaveni')) {
+          posledni.textContent += ' · ' + b.text;
+        } else {
+          mount.appendChild(el('div', 'cteni-nastaveni', b.text));
         }
         return;
       }

@@ -2109,6 +2109,9 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
       skills: () => STATE.skills || [],
       // Čím Claude v tabu doopravdy odpověděl (z přepisu konverzace na serveru).
       tabModel: (id) => api('tab-model?id=' + encodeURIComponent(id)),
+      // Druhý názor na model a effort ke zprávě (hub/automodel.py, Haiku).
+      autoModel: (text) => api('auto-model', {text}),
+      autoKeep: (extend) => api('auto-model-keep', {extend: !!extend}),
       /* Model ze settings.json — s ním Claude Code v tomhle tabu nastartoval.
          Přepnutí si Claude Code do settings.json uloží taky, ale my ho víme
          hned, tak si ho tu rovnou přepíšeme: další tab pak ukáže to samé. */

@@ -101,15 +101,28 @@ _VYPIS = re.compile(r"<local-command-(stdout|stderr)>(.*?)</local-command-\1>", 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 
 
+# Přepnutí modelu a effortu (i automatické z bubliny) — do čtení jako tichý
+# řádek, ne jako zpráva a výpis v rámečku.
+_TICHE_PRIKAZY = ("/model", "/effort")
+_NASTAVENO = re.compile(r"^Set (model|effort level) to\s+`?([^`(\n]+?)`?(?:\s+and saved|\s*\(|:|$)", re.I)
+
+
 def _vypisy(text):
     """Bloky `out` z výpisů slash příkazů — co Claude Code odpověděl mimo
     konverzaci („Login successful", chyba přihlášení…)."""
     out = []
     for m in _VYPIS.finditer(text if isinstance(text, str) else ""):
         obsah = _ANSI.sub("", m.group(2)).strip()
-        if obsah:
-            out.append({"kind": "out", "text": _zkrat(obsah, MAX_RESULT),
-                        "err": m.group(1) == "stderr"})
+        if not obsah:
+            continue
+        nastaveno = _NASTAVENO.match(obsah)
+        if nastaveno and m.group(1) == "stdout":
+            co = "Model" if nastaveno.group(1).lower() == "model" else "Úsilí"
+            out.append({"kind": "out", "text": f"{co}: {nastaveno.group(2).strip()}",
+                        "tichy": True})
+            continue
+        out.append({"kind": "out", "text": _zkrat(obsah, MAX_RESULT),
+                    "err": m.group(1) == "stderr"})
     return out
 
 
@@ -150,6 +163,8 @@ def _zprava_cloveka(obsah):
         return None
     blok = {"kind": "me", "text": _zkrat(text, MAX_TEXT), "images": cesty,
             "key": _klic(text, cesty)}
+    if not cesty and text.strip().split(" ", 1)[0] in _TICHE_PRIKAZY:
+        blok["tichy"] = True             # potvrdí se, ale bublina se nekreslí
     if vlozene:
         blok["inline"] = vlozene
     return blok

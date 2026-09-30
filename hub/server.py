@@ -32,7 +32,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import (account, chats, clockify, connect, core, cteni, pocitac, predplatne,
+from . import (account, automodel, chats, clockify, connect, core, cteni, pocitac, predplatne,
                pty_backend, qr, remote, restart, setup, stats, vzhled)
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -705,6 +705,14 @@ class Handler(BaseHTTPRequestHandler):
             out = cteni.read(path, start, tail=not start)
             out["src"] = here
             return self._json(out)
+        if name == "auto-model":
+            # Druhý názor na model a effort ke zprávě (hub/automodel.py).
+            text = payload.get("text") if isinstance(payload, dict) else ""
+            return self._json(automodel.classify(text))
+        if name == "auto-model-keep":
+            # Automatické přepnutí jen pro tab — výchozí v settings.json se vrátí.
+            extend = bool(payload.get("extend")) if isinstance(payload, dict) else False
+            return self._json(automodel.keep_default(extend))
         if name == "tab-model":
             try:
                 session = HUB.sessions.get(int((query.get("id") or ["0"])[0]))

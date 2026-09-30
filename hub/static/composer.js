@@ -119,7 +119,7 @@
   // ukáže jeho skutečné číslo (modelMenu → labelFor).
   const MODELS = [
     ['Opus 5.5', 'opus'],
-    ['Sonnet 5', 'sonnet'],
+    ['Sonnet 5.5', 'sonnet'],
     ['Haiku 4.5', 'haiku'],
     ['Fable 5.1', 'fable'],
   ];
@@ -679,6 +679,106 @@
     // Je tam od startu, takže chip nemusí čekat na první odpověď.
     let banner = '';
     let picked = false;      // model se v tomhle tabu přepínal z nabídky
+
+    /* ── automatická volba modelu a effortu ─────────────────────────────────
+       Ke každé zprávě se odhadne, kolik je to práce, a podle toho se před ní
+       pošle `/model` a `/effort` — na „díky" nemusí jet Opus na plný výkon,
+       na návrh systému zas nestačí Sonnet na nízký. Rozhoduje:
+
+       1. Haiku (hub/automodel.py) — přesnější, ale ~5 s. Ptá se proto už při
+          psaní, když se člověk na chvíli zastaví; při odeslání je hotovo.
+       2. Pravidla tady — okamžitě, když Haiku ještě neodpověděl.
+
+       Stupně jdou po sobě; dolů se jde až o dva stupně, ať se u krátkého
+       „a ještě tohle" uprostřed velké práce model nepřehazuje (každé
+       přepnutí zahodí cache konverzace). Nahoru hned. Ruční volba modelu
+       nebo effortu automatiku vypne, v nabídce se dá zase zapnout. */
+    const STUPNE = [['haiku', 'low'], ['sonnet', 'low'], ['sonnet', 'medium'],
+                    ['opus', 'high'], ['opus', 'xhigh']];
+    const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+    const AUTO_KEY = 'hub.auto:' + AG.id;
+    let auto = AG.full && localStorage.getItem(AUTO_KEY) !== '0';
+    let effort = '';         // effort, který jsme naposledy poslali
+    let stupen = -1;         // stupeň, na kterém tab jede (-1 = nevíme)
+    let pracuje = false;     // Claude zrovna pracuje (sledujPraci)
+    let spinner = false;     // na obrazovce se točí (i hooky, i po /model)
+    const nazory = new Map();   // text zprávy → odpověď Haiku
+    let nazorTimer = null;
+    const autoPrikazy = new Set();   // co z fronty poslala automatika
+
+    function stupenPravidly(text) {
+      const t = text.toLowerCase();
+      const slov = t.split(/\s+/).filter(Boolean).length;
+      const odrazek = (text.match(/^\s*(?:[-*•]|\d+[.)])\s/gm) || []).length;
+      if (/\b(architektur|navrhni systém|refaktor|přepiš celý|audit|bezpečnost|migrac|celou apl|celý projekt|od nuly|nový projekt)/.test(t) ||
+          slov > 180 || odrazek >= 5) return 4;
+      if (/\b(debug|nefunguje|nejde|padá|spadl|chyba|error|traceback|proč|implementuj|postav|vytvoř|naprogramuj|přidej funkci|optimaliz|napoj|integrac|produkc|ostr)/.test(t) ||
+          slov > 60 || odrazek >= 2) return 3;
+      if (/\b(přidej|uprav|změň|oprav|udělej|napiš|předělej|css|styl|text|e-?mail|stránk)/.test(t) || slov > 20) return 2;
+      if (/^(díky|dík|děkuju|ok|jo|ano|ne|super|dobře|hotovo|čau|ahoj)\b[\s!.]*$/.test(t)) return 0;
+      return 1;
+    }
+
+    function stupenZ(nazor) {
+      if (!nazor || !nazor.model) return -1;
+      const i = STUPNE.findIndex(([m, e]) => m === nazor.model && e === nazor.effort);
+      if (i >= 0) return i;
+      if (nazor.model === 'haiku') return 0;
+      if (nazor.model === 'sonnet') return nazor.effort === 'low' ? 1 : 2;
+      return nazor.effort === 'xhigh' || nazor.effort === 'max' ? 4 : 3;
+    }
+
+    // Při psaní: po chvíli klidu se zeptat Haiku, ať je názor hotový dřív než Enter.
+    function nazorPriPsani() {
+      clearTimeout(nazorTimer);
+      if (!auto || !io.autoModel) return;
+      const text = input.value.trim();
+      if (text.length < 25 || text.startsWith('/') || nazory.has(text)) return;
+      nazorTimer = setTimeout(() => {
+        if (input.value.trim() !== text || nazory.has(text)) return;
+        nazory.set(text, null);                    // ptá se — neptat znovu
+        io.autoModel(text).then((r) => {
+          if (r && r.model) nazory.set(text, r); else nazory.delete(text);
+        }).catch(() => nazory.delete(text));
+        if (nazory.size > 50) nazory.delete(nazory.keys().next().value);
+      }, 1200);
+    }
+
+    /* Před odesláním: přepnout model a effort, když je potřeba. Jen když
+       Claude nepracuje — zpráva poslaná během práce čeká ve frontě a přepnutí
+       by se zapsalo doprostřed rozdělaného kroku. */
+    function autoPredOdeslanim(text) {
+      if (!auto || !AG.full || pracuje || codePrompt || !text.trim() || text.trim().startsWith('/')) return;
+      // Tab se ještě rozjíždí: zpráva počká na prompt (submit → cekaZprava),
+      // `/model` poslaný teď by se ztratil ve startu. Přepne se u další zprávy.
+      if (tab.cteni && (!tab.id || !everIdle)) return;
+      let cil = stupenZ(nazory.get(text.trim()));
+      if (cil < 0) cil = stupenPravidly(text);
+      if (stupen >= 0 && cil < stupen && stupen - cil < 2) cil = stupen;
+      const [m, e] = STUPNE[cil];
+      // Po vlastním přepnutí víme, na čem tab jede; jinak podle toho, co ukazuje
+      // chip (hlavička ze startu může být stará, proto až jako druhá možnost).
+      const ted = stupen >= 0 ? STUPNE[stupen][0]
+        : (family(shownModel()) || model || '').toLowerCase();
+      const jinyModel = ted !== m;
+      const poslat = jinyModel || stupen < 0 || e !== effort;
+      // Výchozí pro nové chaty (settings.json) se tím měnit nemá — hub ho vrátí.
+      if (poslat && io.autoKeep) io.autoKeep().catch(() => {});
+      if (jinyModel || stupen < 0) {
+        autoPrikazy.add('/model ' + m);
+        doruc('/model ' + m);
+        model = m;           // jen tenhle tab — io.model by to dal i novým
+        actual = '';
+      }
+      // `/model` si nastaví svůj výchozí effort — proto po něm vždycky znovu.
+      if (jinyModel || e !== effort) {
+        autoPrikazy.add('/effort ' + e);
+        doruc('/effort ' + e);
+      }
+      effort = e;
+      stupen = cil;
+      syncModel();
+    }
     const bornAt = Date.now();
 
     /* ── odesílání ────────────────────────────────────────────────────────── */
@@ -722,6 +822,7 @@
     let pryc = false;                // bublina zavřená s tabem
     const konec = () => tab.exited || pryc;
     const spi = (ms) => new Promise((res) => setTimeout(res, ms));
+    const PO_PRIKAZU_MS = 12000;
     async function dokud(podminka) {
       while (!podminka()) await spi(250);
     }
@@ -754,8 +855,26 @@
           await naSpojeni();
           await dokud(() => konec() || (tab.id && online()));
           if (konec()) break;
-          await posliJednu(fronta[0]);
+          const poslano = fronta[0];
+          await posliJednu(poslano);
           fronta.shift();
+          // Automatický /model nebo /effort doběhl — vrácení výchozího odložit.
+          if (autoPrikazy.delete(poslano) && io.autoKeep) io.autoKeep(true).catch(() => {});
+          /* Po slash příkazu (/model, /effort) Claude Code chvíli zpracovává
+             a co se mezitím napíše, zůstane stát v poli nebo se ztratí. Další
+             kus fronty proto počká, až je zase klid (nejdéle pár vteřin). */
+          if (fronta.length && /^\/[a-z]/i.test(poslano)) {
+            const od = Date.now();
+            let klidOd = 0;
+            await spi(800);
+            await dokud(() => {
+              if (konec() || Date.now() - od > PO_PRIKAZU_MS) return true;
+              const klid = idleNow && !spinner && Date.now() - (tab.lastOut || 0) > 300;
+              if (!klid) { klidOd = 0; return false; }
+              klidOd = klidOd || Date.now();
+              return Date.now() - klidOd >= 900;      // klid musí chvíli vydržet
+            });
+          }
         }
       } finally {
         pumpuje = false;
@@ -835,6 +954,7 @@
       const text = files ? input.value.trim() : input.value;
       const body = files ? (text ? files + ' ' + text : files) : text;
       if (!body.trim()) return;
+      autoPredOdeslanim(input.value);
       submit(body, {text: input.value.trim(), atts: atts.slice()});
       input.value = '';
       atts.length = 0;
@@ -916,7 +1036,8 @@
     }
 
     function syncModel() {
-      modelChip.textContent = AG.models.length ? shownModel()
+      modelChip.textContent = AG.models.length
+        ? (auto ? 'Auto · ' + shownModel() + (effort ? ' · ' + effort : '') : shownModel() + (effort ? ' · ' + effort : ''))
         : (AG.modelCmd || '').replace('{model}', '').trim();
     }
 
@@ -968,11 +1089,14 @@
         return;
       }
       const now = shownModel();
-      io.menu(x, y, AG.models.map(([label, key]) => ({
+      const vyber = (seznam) => seznam.map(([label, key]) => ({
         icon: 'i-star',
-        label: AG.full ? labelFor(label, key) : label + '  (nový tab)',
-        on: sameFamily(now, key),
+        label: AG.full ? (key.startsWith('claude-') ? label : labelFor(label, key)) : label + '  (nový tab)',
+        on: !auto && (key.startsWith('claude-') ? now === label : sameFamily(now, key)),
         run: () => {
+          auto = false;
+          try { localStorage.setItem(AUTO_KEY, '0'); } catch (err) { /* soukromé okno */ }
+          stupen = -1;
           if (AG.full) {
             submit('/model ' + key);
             model = key;
@@ -985,7 +1109,37 @@
           }
           try { localStorage.setItem(MODEL_KEY, key); } catch (err) { /* soukromé okno */ }
         },
-      })), {above: true});
+      }));
+      const hlavni = AG.models.filter((m) => !m[2]);
+      const starsi = AG.models.filter((m) => m[2] === 'old');
+      const items = [];
+      if (AG.full) {
+        items.push({icon: 'i-bolt', label: 'Automaticky podle úkolu', on: auto, run: () => {
+          auto = true;
+          try { localStorage.setItem(AUTO_KEY, '1'); } catch (err) { /* soukromé okno */ }
+          syncModel();
+        }});
+      }
+      items.push(...vyber(hlavni));
+      if (starsi.length) {
+        items.push({icon: 'i-more', label: 'Starší modely…',
+                    run: () => setTimeout(() => io.menu(x, y, vyber(starsi), {above: true}), 0)});
+      }
+      if (AG.full) {
+        items.push({icon: 'i-gear', label: 'Effort' + (effort ? ' (' + effort + ')' : '') + '…',
+                    run: () => setTimeout(() => io.menu(x, y, EFFORTS.map((e) => ({
+                      icon: 'i-dot', label: e, on: !auto && e === effort,
+                      run: () => {
+                        auto = false;
+                        try { localStorage.setItem(AUTO_KEY, '0'); } catch (err) { /* soukromé okno */ }
+                        stupen = -1;
+                        submit('/effort ' + e);
+                        effort = e;
+                        syncModel();
+                      },
+                    })), {above: true}), 0)});
+      }
+      io.menu(x, y, items, {above: true});
     }
 
     /* Agenta v běžícím tabu přepnout nejde — je to jiný program, ne přepínač.
@@ -1878,10 +2032,16 @@
           const sek = /(\d+)\s*s\b/.exec(zavorka);
           const tok = /↓\s*([\d.,]+\s*k?)\s*tokens/i.exec(zavorka);
           stav = {on: true, sloveso: spin ? spin[1] : '',
+                  hook: /…\s*\d+\/\d+\s*·/.test(zavorka),
                   sekund: sek ? Number(sek[1]) : null,
                   tokeny: tok ? tok[1].replace(/\s/g, '') : ''};
         }
       }
+      /* Po odpovědi ještě běží hooky (Stop: „Auto-saving… 0/3 · 7s") — spinner
+         je stejný, ale Claude už nepracuje. Automatika pak smí přepnout: slash
+         příkazy se zařadí do fronty před zprávu a proběhnou, až hooky doběhnou. */
+      pracuje = !!stav.on && !stav.hook;
+      spinner = !!stav.on;
       const sig = JSON.stringify(stav);
       if (sig === pracSig) return;
       pracSig = sig;
@@ -1954,6 +2114,7 @@
     });
 
     input.addEventListener('input', autogrow);
+    input.addEventListener('input', nazorPriPsani);
     input.addEventListener('paste', (ev) => {
       const cd = ev.clipboardData;
       const files = cd && cd.files;

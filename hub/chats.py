@@ -69,6 +69,9 @@ def prompt_text(entry):
     text = " ".join(text.split())
     if not text or text.startswith(("Caveat:", "[Request interrupted")):
         return ""
+    # Přepnutí modelu (i automatické z bubliny) chat nepojmenovává.
+    if text.split(" ", 1)[0] in ("/model", "/effort"):
+        return ""
     return text[:200]
 
 
