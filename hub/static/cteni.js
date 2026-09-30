@@ -323,9 +323,15 @@
       paleta({x: ev.clientX, y: ev.clientY}, d && d.barva, (b) => dulPridej(k, text, b),
              d ? () => dulOdeber(k) : null);
     }
+    /* Stejná věta napsaná dvakrát jsou dvě zprávy, každá s vlastní poznámkou:
+       první má starý klíč (uložené poznámky se nerozbijí), další #2, #3… */
+    const dulPocty = new Map();
     function pripojPoznamku(row, text) {
-      const k = dulId(text);
-      if (!k) return;
+      const zaklad = dulId(text);
+      if (!zaklad) return;
+      const poradi = (dulPocty.get(zaklad) || 0) + 1;
+      dulPocty.set(zaklad, poradi);
+      const k = poradi > 1 ? zaklad + '#' + poradi : zaklad;
       dulNacti();
       row.addEventListener('contextmenu', (ev) => {
         // Odkazy a vybraný text nech prohlížeči — menu až na prázdné místo zprávy.
@@ -479,10 +485,12 @@
       nastavMistni(m, stav === 'start' ? 'start' : 'odesila');
       naKonec();
     }
+    /* Jeden blok z přepisu potvrdí jednu odeslanou zprávu — tu nejstarší, která
+       sedí. Dvě stejné věty po sobě jsou dvě zprávy: kdyby první blok smazal
+       obě, druhá by zmizela z konverzace, než ji Claude vůbec přečte. */
     function potvrd(b) {
-      for (const m of mistni.slice()) {
-        if (sedi(m, b)) potvrdMistni(m);
-      }
+      const m = mistni.find((x) => sedi(x, b));
+      if (m) potvrdMistni(m);
     }
     function zFronty(key) {
       const i = cekajici.findIndex((c) => c.key === key);
@@ -770,11 +778,18 @@
         return;
       }
       if (b.kind === 'me') {
+        /* Stejná věta dvakrát za sebou: zařazení druhé do fronty se v přepisu
+           často zapíše dřív než zadání první. Zadání pak vypadá jako „to, co
+           jsem čekal z fronty" a druhou větu by smazalo. Když k němu ale máme
+           vlastní odeslanou bublinu a ve frontě čeká totéž, je to ta první
+           (přímo odeslaná) — fronta se nechá být, druhá dorazí sama. */
+        const dvojice = !b.mid && !zFrontyDalsi && !!b.key &&
+          cekajici.some((c) => c.key === b.key) && mistni.some((m) => sedi(m, b));
         if (!b.mid) {
           if (zFrontyDalsi) zFrontyDalsi = false;
-          else if (cekajici.length) ztracene(b.key);
+          else if (cekajici.length && !dvojice) ztracene(b.key);
         }
-        if (b.key) zFronty(b.key);           // z fronty rovnou do konverzace
+        if (b.key && !dvojice) zFronty(b.key);           // z fronty rovnou do konverzace
         potvrd(b);
         // /model, /effort — co se nastavilo, řekne tichý řádek z výpisu.
         if (b.tichy) return;
