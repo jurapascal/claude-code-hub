@@ -573,6 +573,16 @@ prepare_playwright_profile() {
 register_playwright_mcp() {
     # --browser chromium = bundlovaný Chromium z ~/.cache/ms-playwright;
     # výchozí kanál "chrome" by chtěl systémový Google Chrome.
+    # Přes tools/playwright_bridge.py: Chromium sdílený s oknem v appce
+    # (hub/prohlizec.py). Bez něj jede Playwright MCP po staru.
+    local bridge="$CLAUDE_DIR/tools/playwright_bridge.py"
+    if [ -f "$bridge" ]; then
+        claude mcp remove playwright -s user >/dev/null 2>&1 || true
+        if claude mcp add playwright -s user -- "${PY:-python3}" "$bridge" >/dev/null 2>&1; then
+            ok "playwright MCP zaregistrován přes vestavěný prohlížeč, profil ${D}$PW_PROFILE${R}"
+            return 0
+        fi
+    fi
     if ! claude mcp add playwright -s user -- \
             npx @playwright/mcp@latest --browser chromium \
             --user-data-dir "$PW_PROFILE" >/dev/null 2>&1; then
@@ -599,7 +609,7 @@ PW_PINNED=false
 if command -v claude >/dev/null 2>&1; then
     if PW_CURRENT="$(claude mcp get playwright 2>/dev/null)"; then
         PW_REGISTERED=true
-        case "$PW_CURRENT" in *--user-data-dir*) PW_PINNED=true ;; esac
+        case "$PW_CURRENT" in *--user-data-dir*|*playwright_bridge*) PW_PINNED=true ;; esac
     fi
 fi
 

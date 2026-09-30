@@ -3428,3 +3428,83 @@ button.pr-radek:hover { background: var(--card-hover); color: var(--fg-bright); 
 .dul-barva { width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
 .dul-barva.on { border-color: var(--fg-bright); }
 .dul-odeber { flex: 1 0 100%; border: none; background: none; color: var(--red); cursor: pointer; font: inherit; font-size: 12px; text-align: left; padding: 2px 0 0; }
+
+/* ── Prohlížeč v appce (prohlizec.js) ─────────────────────────────────────
+   Plovoucí okno s prohlížečem, který používá Claude: jde přesunout za
+   záhlaví, zvětšit za roh, minimalizovat do lišty a zavřít. */
+.br-okno {
+  position: fixed; z-index: 60; display: flex; flex-direction: column;
+  min-width: 360px; min-height: 260px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .45), 0 0 0 1px rgba(255, 255, 255, .03);
+  overflow: hidden;
+}
+.br-okno[hidden], .br-pilulka[hidden] { display: none; }
+.br-okno.br-cela { left: 8px !important; top: 8px !important; width: calc(100vw - 16px) !important; height: calc(100vh - 16px) !important; }
+.br-hlava {
+  display: flex; align-items: center; gap: 4px; flex: none; height: 38px; padding: 0 6px 0 12px;
+  background: var(--bg-card); border-bottom: 1px solid var(--border);
+  cursor: grab; user-select: none; touch-action: none;
+}
+.br-hlava:active { cursor: grabbing; }
+.br-nazev { display: inline-flex; align-items: center; gap: 8px; color: var(--fg-bright); font-size: 13px; }
+.br-nazev .ico { width: 15px; height: 15px; color: var(--accent); }
+.br-spacer { flex: 1; }
+.br-btn {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 28px; height: 28px; border: none; border-radius: 7px; cursor: pointer;
+  background: none; color: var(--dim);
+}
+.br-btn:hover { background: var(--card-hover); color: var(--fg-bright); }
+.br-btn .ico { width: 15px; height: 15px; }
+.br-otoc .ico { transform: rotate(180deg); }
+.br-taby {
+  display: flex; gap: 2px; flex: none; padding: 4px 6px 0; overflow-x: auto;
+  background: var(--bg-card); scrollbar-width: none;
+}
+.br-taby::-webkit-scrollbar { display: none; }
+.br-tab {
+  flex: 0 1 160px; min-width: 60px; max-width: 200px; padding: 5px 10px;
+  border: none; border-radius: 8px 8px 0 0; background: none; cursor: pointer;
+  color: var(--dim); font: inherit; font-size: 12px; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.br-tab:hover { color: var(--fg-bright); }
+.br-tab.on { background: var(--bg); color: var(--fg-bright); }
+.br-tab-plus { flex: none; min-width: 0; width: 28px; padding: 5px 0; text-align: center; font-size: 15px; overflow: visible; text-overflow: clip; }
+.br-lista { display: flex; align-items: center; gap: 2px; flex: none; padding: 5px 6px; border-bottom: 1px solid var(--border); }
+.br-url {
+  flex: 1; min-width: 0; height: 28px; margin-left: 4px; padding: 0 12px;
+  background: var(--bg-card); color: var(--fg-bright); border: 1px solid transparent;
+  border-radius: 14px; font: inherit; font-size: 12.5px;
+}
+.br-url:focus { outline: none; border-color: var(--accent); }
+.br-scena { position: relative; flex: 1; min-height: 0; background: #fff; }
+.br-platno { width: 100%; height: 100%; display: block; object-fit: contain; background: #fff; outline: none; cursor: default; touch-action: none; }
+.br-stav {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  padding: 24px; text-align: center; background: var(--bg); color: var(--dim); font-size: 13px;
+}
+.br-stav[hidden] { display: none; }
+.br-roh {
+  position: absolute; right: 0; bottom: 0; width: 20px; height: 20px; cursor: nwse-resize; touch-action: none;
+  background: linear-gradient(135deg, transparent 52%, var(--dim) 52%, var(--dim) 60%, transparent 60%, transparent 72%, var(--dim) 72%, var(--dim) 80%, transparent 80%);
+  opacity: .7;
+}
+.br-okno.br-cela .br-roh { display: none; }
+.br-pilulka {
+  position: fixed; z-index: 60; right: 18px; bottom: 18px; display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 16px; border: 1px solid var(--border); border-radius: 999px; cursor: pointer;
+  background: var(--bg-card); color: var(--fg-bright); font: inherit; font-size: 13px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .4);
+}
+.br-pilulka .ico { width: 15px; height: 15px; color: var(--accent); }
+.br-pilulka:hover { background: var(--card-hover); }
+.br-pilulka.br-mrk { border-color: var(--accent); animation: ceka-pulz 1.3s ease-in-out 3; }
+@media (max-width: 820px) {
+  .br-okno { left: 6px !important; top: auto !important; bottom: 6px; width: calc(100vw - 12px) !important; height: min(70vh, 560px) !important; }
+  .br-okno.br-cela { top: 6px !important; height: calc(100vh - 12px) !important; }
+  .br-hlava { cursor: default; }
+  .br-roh { display: none; }
+  .br-pilulka { bottom: calc(76px + env(safe-area-inset-bottom)); right: 12px; }
+}

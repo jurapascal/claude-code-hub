@@ -2991,6 +2991,7 @@ function connect() {
     WS.send(JSON.stringify({t: 'hello'}));
   };
   WS.onmessage = (ev) => handle(JSON.parse(ev.data));
+  WS.addEventListener('open', () => document.dispatchEvent(new Event('hub-ws-open')));
   WS.onclose = () => setTimeout(connect, 1000);
 }
 
@@ -2998,6 +2999,7 @@ function connect() {
 window.addEventListener('focus', () => claimSize(ACTIVE));
 
 function handle(msg) {
+  if (msg.t && msg.t.startsWith('br-')) { if (window.HubProhlizec) HubProhlizec.naZpravu(msg); return; }
   if (msg.t === 'out') {
     const tab = TABS.find(t => t.id === msg.id);
     if (tab) {
@@ -3368,6 +3370,7 @@ async function main() {
     ev.returnValue = '';             // vyžadují starší prohlížeče
   });
 
+  if (window.HubProhlizec) HubProhlizec.install({send});
   connect();
   checkForUpdate();
   checkServerUpdate();

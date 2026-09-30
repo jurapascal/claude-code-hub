@@ -866,6 +866,8 @@
         }
         // Zpráva do jiného chatu — na hřišti odletí obálka.
         if (udalost && b.name === 'SendMessage') udalost({co: 'dopis', smer: 'ven'});
+        // Nástroj Playwright = Claude chce prohlížeč: okno v appce vyskočí (prohlizec.js).
+        if (udalost && /^mcp__playwright__/.test(b.name || '')) udalost({co: 'nastroj', name: b.name});
         const box = udelejNastroj(b);
         box.classList.add('ceka');
         if (b.id) tools.set(b.id, box);
@@ -1067,6 +1069,10 @@
       /* Historie při otevření tabu se na hřišti nepřehrává: kdo tehdy ještě
          běžel, prostě tam stojí, a co doběhlo, se ani neukáže. */
       udalost: (e) => {
+        // Prohlížeč v appce — jen živé nástroje, ne historie při otevření tabu.
+        if (e.co === 'nastroj' && nacteno) {
+          document.dispatchEvent(new CustomEvent('hub-tool', {detail: {name: e.name}}));
+        }
         if (!hriste) return;
         if (e.co === 'agent') hriste.pridej(e.id, e.typ, e.barva, !nacteno);
         else if (e.co === 'konec') hriste.hotovo(e.id, e.stav, !nacteno);

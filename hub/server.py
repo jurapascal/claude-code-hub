@@ -33,7 +33,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (account, automodel, chats, clockify, connect, core, cteni, pocitac, predplatne,
-               pty_backend, qr, remote, restart, setup, stats, vzhled)
+               prohlizec, pty_backend, qr, remote, restart, setup, stats, vzhled)
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -1358,6 +1358,7 @@ class Handler(BaseHTTPRequestHandler):
                 HUB.last_empty_at = time.time()
             for session in list(HUB.sessions.values()):
                 session.detach(conn)
+            prohlizec.odpoj(conn)
             conn.close()
 
     def _ws_loop(self, conn):
@@ -1428,6 +1429,9 @@ class Handler(BaseHTTPRequestHandler):
             session.attach(conn)
             # Tentýž hub může mít otevřený i jiné okno (appka + prohlížeč).
             HUB.broadcast({"t": "tab-opened", **session.info()}, skip=conn)
+        elif kind == "br":
+            # Prohlížeč v appce (hub/prohlizec.py): obraz ven, myš a klávesy dovnitř.
+            prohlizec.zprava(conn, msg, server=bool(core.CONFIG.get("server_mode")))
         elif kind == "attach" and session:
             session.attach(conn)
         elif kind == "in" and session:
@@ -1502,6 +1506,7 @@ def start():
     threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.2},
                      daemon=True).start()
     threading.Thread(target=watch_autosave, daemon=True).start()
+    threading.Thread(target=prohlizec.migruj, args=(core.log,), daemon=True).start()
     # Taby průběžně na disk — po pádu nebo zabití se appka vrátí, kde byla.
     threading.Thread(target=restart.keep_saving,
                      args=(HUB, "uspani" if core.on_gateway() else "zavreni"),

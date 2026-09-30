@@ -59,13 +59,15 @@ def endpoint():
     return f"http://{HOST}:{port()}"
 
 
-def povoleno():
-    """Na sdíleném serveru je okno vypnuté, dokud to správce nepovolí."""
+def povoleno(server=False):
+    """Na sdíleném serveru (prostor brány) je okno vypnuté, dokud to správce
+    nepovolí: všechny prostory tam běží pod jedním systémovým účtem a sdílejí
+    loopback, takže ladicí port jednoho vidí ostatní."""
     if os.environ.get("HUB_PROHLIZEC") == "1":
         return True
     if os.environ.get("HUB_PROHLIZEC") == "0":
         return False
-    return not os.environ.get("HUB_GATEWAY_SPACE")
+    return not server
 
 
 def _version_key(path):
@@ -451,9 +453,9 @@ class Okno:
 OKNO = Okno()
 
 
-def zprava(conn, msg):
+def zprava(conn, msg, server=False):
     """Volá hub pro každou websocketovou zprávu typu `br`."""
-    if not povoleno():
+    if not povoleno(server):
         conn.send_json({"t": "br-stav", "ok": False,
                         "zprava": "Prohlížeč v appce je na tomhle serveru zatím vypnutý."})
         return
@@ -468,3 +470,61 @@ def zprava(conn, msg):
 
 def odpoj(conn):
     OKNO.odeber(conn)
+
+
+# ── napojení Playwright MCP na tenhle prohlížeč ──────────────────────────────
+
+def na_serveru():
+    """Běží hub jako prostor brány? Brána to zapisuje do hub-config.json."""
+    try:
+        with open(os.path.join(claude_dir(), "hub-config.json"), encoding="utf-8-sig") as fh:
+            return bool(json.load(fh).get("server_mode"))
+    except (OSError, ValueError):
+        return False
+
+
+def _zaznam():
+    """Záznam `playwright` z ~/.claude.json: dict, nebo None. (Claude Code ho
+    drží vedle složky, nebo v ní, když je nastavená CLAUDE_CONFIG_DIR.)"""
+    cd = claude_dir().rstrip("/\\")
+    for path in (cd + ".json", os.path.join(cd, ".claude.json")):
+        try:
+            with open(path, encoding="utf-8-sig") as fh:
+                servers = json.load(fh).get("mcpServers") or {}
+        except (OSError, ValueError):
+            continue
+        return servers.get("playwright") or None
+    return None
+
+
+def registrace():
+    """Jak je v Claude Code zaregistrovaný Playwright MCP: most | jine | zadna."""
+    entry = _zaznam()
+    if not entry:
+        return "zadna"
+    text = " ".join([str(entry.get("command", ""))] + [str(a) for a in entry.get("args") or []])
+    return "most" if "playwright_bridge" in text else "jine"
+
+
+def migruj(log=lambda *a: None):
+    """Jednou po aktualizaci: Playwright MCP zaregistrovaný po staru (vlastní
+    neviditelný prohlížeč) se přepne na most, ať je prohlížeč vidět v appce.
+    Co už člověk nastavil jinak (jiný server pod jménem `playwright`), nechá
+    být. Běží na pozadí a nikdy nespadne."""
+    try:
+        if not povoleno(na_serveru()) or registrace() != "jine":
+            return
+        entry = _zaznam() or {}
+        args = " ".join(str(a) for a in entry.get("args") or [])
+        if "@playwright/mcp" not in args or "--cdp-endpoint" in args:
+            return                           # vlastní nastavení — nesahat
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        bridge = os.path.join(here, "tools", "playwright_bridge.py")
+        if not os.path.isfile(bridge) or not shutil.which("claude"):
+            return
+        res = subprocess.run([sys.executable or "python3", bridge, "--register"],
+                             capture_output=True, text=True, timeout=60)
+        log("Playwright MCP přepnutý na prohlížeč v appce" if res.returncode == 0
+            else "přepnutí Playwright MCP se nepovedlo: " + (res.stderr or res.stdout).strip()[:200])
+    except Exception as exc:          # noqa: BLE001 — pozadí, nic nesmí shodit
+        log(f"přepnutí Playwright MCP: {exc}")
