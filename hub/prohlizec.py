@@ -270,6 +270,9 @@ class Okno:
         self._target = ""
         self._info = None
         self._frames = 0
+        self._cekajici = []        # příkazy poslané dřív, než se prohlížeč připojil
+        self._videne = None        # id stránek, které už jsme viděli (nová = Claude ji otevřel)
+        self._poradi = {}          # id stránky → pořadí, v jakém se objevila (karty zleva doprava)
 
     # -- pohledy
     def pridej(self, conn):
@@ -308,7 +311,13 @@ class Okno:
             data = _get("/json/list", 1.5)
         except Exception:
             return []
-        return [p for p in data if p.get("type") == "page" and p.get("webSocketDebuggerUrl")]
+        strany = [p for p in data if p.get("type") == "page" and p.get("webSocketDebuggerUrl")]
+        # Chromium je vrací podle poslední aktivity — v okně mají karty zůstat
+        # tam, kde vznikly, nejstarší vlevo, ať se při přepínání neskáčou.
+        for p in strany:
+            self._poradi.setdefault(p["id"], len(self._poradi))
+        strany.sort(key=lambda p: self._poradi[p["id"]])
+        return strany
 
     def _bez(self):
         ok, zprava = ensure()
@@ -322,8 +331,11 @@ class Okno:
                 self._posli_info([], None)
                 time.sleep(0.8)
                 continue
+            nova = self._nova(strany)
             cil = next((p for p in strany if p["id"] == self._target), None)
-            if cil is None:
+            if nova:
+                cil = nova                     # Claude otevřel novou kartu — okno jde za ní
+            elif cil is None:
                 cil = strany[0]
             self._target = cil["id"]
             self._posli_info(strany, cil)
@@ -349,6 +361,10 @@ class Okno:
         self._cdp = cdp
         self._posli("Page.enable")
         self._posli("Page.startScreencast", format="jpeg", quality=60, maxWidth=1400, maxHeight=1000, everyNthFrame=1)
+        # Co člověk napsal, než se spojení rozjelo (adresa hned po otevření okna).
+        cekajici, self._cekajici = self._cekajici, []
+        for method, params in cekajici:
+            self._posli(method, **params)
         stop = threading.Event()
 
         def hlidej():
@@ -358,12 +374,11 @@ class Okno:
                     break
                 strany = self._strany()
                 akt = next((p for p in strany if p["id"] == self._target), None)
-                if akt is None or (strany and strany[0]["id"] != self._target and self._novejsi(strany[0])):
+                if akt is None or self._nova(strany, vzit=False):
                     break
                 self._posli_info(strany, akt)
             stop.set()
             cdp.close()
-        self._videne = {cil["id"]}
         threading.Thread(target=hlidej, daemon=True).start()
         try:
             while not stop.is_set() and self.viewers:
@@ -384,13 +399,18 @@ class Okno:
             stop.set()
             cdp.close()
 
-    def _novejsi(self, page):
-        """Nová záložka, kterou jsme ještě nesledovali, převezme obraz."""
-        if page["id"] in self._videne:
-            return False
-        self._videne.add(page["id"])
-        self._target = page["id"]
-        return True
+    def _nova(self, strany, vzit=True):
+        """Stránka, která se objevila od posledního pohledu (`vzit` ji označí
+        za viděnou). Při prvním pohledu se jen zapamatují ty, které už jsou."""
+        ids = [p["id"] for p in strany]
+        if self._videne is None:
+            self._videne = set(ids)
+            return None
+        nove = [p for p in strany if p["id"] not in self._videne]
+        if nove and vzit:
+            self._videne |= set(ids)
+            self._target = nove[0]["id"]
+        return nove[0] if nove else None
 
     # -- vstup od člověka
     def vstup(self, msg):
@@ -426,7 +446,10 @@ class Okno:
             if url and not re.match(r"^[a-z][a-z0-9+.-]*:", url, re.I):
                 url = "https://" + url
             if url and re.match(r"^(https?|about|chrome):", url, re.I):
-                self._posli("Page.navigate", url=url)
+                if self._cdp is None or self._cdp.closed:
+                    self._cekajici = [("Page.navigate", {"url": url})]   # jen poslední adresa
+                else:
+                    self._posli("Page.navigate", url=url)
         elif a in ("back", "forward"):
             self._posli("Runtime.evaluate", expression="history.%s()" % ("back" if a == "back" else "forward"))
         elif a == "reload":
@@ -439,7 +462,8 @@ class Okno:
                 except Exception:
                     pass
                 self._target = tid
-                self._videne.add(tid) if hasattr(self, "_videne") else None
+                if self._videne is not None:
+                    self._videne.add(tid)
                 cdp = self._cdp
                 if cdp:
                     cdp.close()      # smyčka se znovu připojí na novou záložku

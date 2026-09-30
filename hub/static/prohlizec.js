@@ -18,6 +18,7 @@
   const POP_PAUZA = 25000;          // po jak dlouhé pauze mezi nástroji vyskočí znovu
 
   let send = () => {};
+  let kb = null;                    // skrytá textarea: bere psaní a diakritiku
   let root = null, canvas = null, ctx = null, urlInput = null, tabsBox = null, stavEl = null;
   let pill = null;
   let frame = {w: 1280, h: 800};
@@ -40,7 +41,7 @@
     let g = null;
     try { g = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (_) { /* nic */ }
     const vw = window.innerWidth, vh = window.innerHeight;
-    const w = Math.min(g && g.w || 640, vw - 16), h = Math.min(g && g.h || 460, vh - 16);
+    const w = Math.min(g && g.w || Math.round(vw * 0.62), vw - 16), h = Math.min(g && g.h || Math.round(vh * 0.72), vh - 16);
     return {
       w: Math.max(MIN_W, w), h: Math.max(MIN_H, h),
       x: Math.max(0, Math.min(g ? g.x : vw - w - 24, vw - 120)),
@@ -77,7 +78,8 @@
         '<button class="br-btn br-znovu" title="Načíst znovu">' + ico('i-refresh') + '</button>' +
         '<input class="br-url" type="text" spellcheck="false" placeholder="Adresa nebo hledání">' +
       '</div>' +
-      '<div class="br-scena"><canvas class="br-platno" tabindex="0"></canvas>' +
+      '<div class="br-scena"><canvas class="br-platno"></canvas>' +
+        '<textarea class="br-kb" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" tabindex="0"></textarea>' +
         '<div class="br-stav"></div></div>' +
       '<div class="br-roh" title="Změnit velikost"></div>';
     document.body.appendChild(root);
@@ -86,6 +88,7 @@
     urlInput = $('.br-url');
     tabsBox = $('.br-taby');
     stavEl = $('.br-stav');
+    stavEl.textContent = 'Připojuji prohlížeč…';
     // Prohlížeč je na svých stránkách „zpět" a „vpřed" — šipka se jen otáčí.
     $('.br-zpet').classList.add('br-otoc');
     $('.br-mini').onclick = () => nastav('mini');
@@ -95,10 +98,11 @@
     $('.br-znovu').onclick = () => send({t: 'br', a: 'reload'});
     urlInput.addEventListener('keydown', (ev) => {
       ev.stopPropagation();
-      if (ev.key === 'Enter') { send({t: 'br', a: 'go', url: urlInput.value}); canvas.focus(); }
+      if (ev.key === 'Enter') { send({t: 'br', a: 'go', url: urlInput.value}); kb.focus(); }
     });
     tahni($('.br-hlava'));
     velikost($('.br-roh'));
+    kb = $('.br-kb');
     platno();
     root.addEventListener('pointerdown', () => { root.classList.add('br-nahore'); });
   }
@@ -151,14 +155,18 @@
 
   /* ── plátno: myš, kolečko, klávesy ───────────────────────────────────────── */
   function platno() {
+    // Plátno je `object-fit: contain` — obraz nemusí vyplnit celý prvek, takže
+    // se bod počítá od skutečného rohu obrazu, ne od rohu plátna.
     const bod = (ev) => {
       const r = canvas.getBoundingClientRect();
-      return {x: (ev.clientX - r.left) * frame.w / r.width, y: (ev.clientY - r.top) * frame.h / r.height};
+      const k = Math.min(r.width / frame.w, r.height / frame.h) || 1;
+      const ox = (r.width - frame.w * k) / 2, oy = (r.height - frame.h * k) / 2;
+      return {x: (ev.clientX - r.left - ox) / k, y: (ev.clientY - r.top - oy) / k};
     };
     const mod = (ev) => (ev.altKey ? 1 : 0) | (ev.ctrlKey ? 2 : 0) | (ev.metaKey ? 4 : 0) | (ev.shiftKey ? 8 : 0);
     let posl = 0;
     canvas.addEventListener('pointerdown', (ev) => {
-      canvas.focus();
+      kb.focus();
       canvas.setPointerCapture(ev.pointerId);
       send({t: 'br', a: 'mouse', type: 'down', ...bod(ev), button: ev.button, clicks: ev.detail || 1, mod: mod(ev)});
     });
@@ -176,20 +184,40 @@
       send({t: 'br', a: 'wheel', ...bod(ev), dx: ev.deltaX, dy: ev.deltaY});
     }, {passive: false});
     canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
-    canvas.addEventListener('keydown', (ev) => {
+    /* Psaní bere skrytá textarea pod plátnem, ne plátno samo: na plátno
+       se psát nedá a diakritiku (ě, š, č…) z metody zadávání by zahodilo.
+       Obyčejná písmena ASCII jdou jako klávesy (stránky je vidí jako
+       skutečné stisky), cokoli dalšího — diakritika, složené znaky, vložení —
+       jde jako text. Enter, šipky, Backspace a zkratky jdou vždycky jako klávesy. */
+    const foc = () => { try { kb.focus({preventScroll: true}); } catch (_) { kb.focus(); } };
+    canvas.addEventListener('pointerdown', foc);
+    root.querySelector('.br-scena').addEventListener('pointerup', () => { if (document.activeElement !== urlInput) foc(); });
+    const ascii = (ev) => ev.key.length === 1 && ev.key.charCodeAt(0) < 128;
+    kb.addEventListener('keydown', (ev) => {
       ev.stopPropagation();
-      // Vložení (Ctrl+V) jde jako text, ať se nemusí sahat na schránku prohlížeče.
-      if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'v') return;
+      if (ev.isComposing || ev.key === 'Process' || ev.key === 'Dead') return;
+      const zkratka = ev.ctrlKey || ev.metaKey || ev.altKey;
+      if (ev.key.length === 1 && !ascii(ev) && !zkratka) return;      // diakritika → textarea → input
+      if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'v') return;   // vložení → paste
       ev.preventDefault();
       send({t: 'br', a: 'key', type: 'down', key: ev.key, code: ev.code, vk: ev.keyCode, mod: mod(ev)});
     });
-    canvas.addEventListener('keyup', (ev) => {
+    kb.addEventListener('keyup', (ev) => {
       ev.stopPropagation();
+      if (ev.isComposing || ev.key === 'Process' || ev.key === 'Dead') return;
+      if (ev.key.length === 1 && !ascii(ev) && !(ev.ctrlKey || ev.metaKey || ev.altKey)) return;
       if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'v') return;
       ev.preventDefault();
       send({t: 'br', a: 'key', type: 'up', key: ev.key, code: ev.code, vk: ev.keyCode, mod: mod(ev)});
     });
-    canvas.addEventListener('paste', (ev) => {
+    const vypis = () => {
+      const text = kb.value;
+      kb.value = '';
+      if (text) send({t: 'br', a: 'text', text});
+    };
+    kb.addEventListener('input', (ev) => { if (!ev.isComposing) vypis(); });
+    kb.addEventListener('compositionend', () => setTimeout(vypis, 0));
+    kb.addEventListener('paste', (ev) => {
       ev.preventDefault();
       const text = ev.clipboardData && ev.clipboardData.getData('text');
       if (text) send({t: 'br', a: 'text', text});
@@ -249,11 +277,15 @@
     if (!root) return;
     if (msg.t === 'br-frame') {
       if (msg.w && msg.h) frame = {w: msg.w, h: msg.h};
-      stavEl.hidden = true;
+      if (!stavEl.textContent.startsWith('Prázdná')) stavEl.hidden = true;
       obraz.src = 'data:image/jpeg;base64,' + msg.d;
     } else if (msg.t === 'br-info') {
       info = msg;
       if (document.activeElement !== urlInput) urlInput.value = msg.url === 'about:blank' ? '' : msg.url || '';
+      // Prázdná karta je v Chromiu černá — vypadá to jako porucha, tak se řekne, co to je.
+      const prazdna = !msg.url || msg.url === 'about:blank';
+      if (prazdna) { stavEl.textContent = 'Prázdná karta — napiš nahoře adresu, nebo počkej, až tam Claude něco otevře.'; stavEl.hidden = false; }
+      else if (stavEl.textContent.startsWith('Prázdná')) stavEl.hidden = true;
       tabsBox.textContent = '';
       tabsBox.hidden = (msg.pages || []).length < 2;
       for (const p of msg.pages || []) {
