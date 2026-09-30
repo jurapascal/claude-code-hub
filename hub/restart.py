@@ -88,6 +88,8 @@ def snapshot(hub, reason="restart", quiet=False):
     `reason`: restart (aktualizace), zavreni (zavřená appka na počítači),
     uspani (brána zastavuje prostor) — podle toho jak starý stav se ještě
     obnoví a co stránka řekne."""
+    if core.TEST_MODE:
+        return 0
     tabs = []
     for session in list(hub.sessions.values()):
         if session.exited:
@@ -135,7 +137,7 @@ def keep_saving(hub, reason, every=60):
     počítač — ať se i pak dá pokračovat. Nejvýš minuta zpátky."""
     while True:
         time.sleep(every)
-        if not _TAKEN:
+        if not _TAKEN or core.TEST_MODE:
             continue
         try:
             snapshot(hub, reason, quiet=True)
@@ -148,6 +150,8 @@ def take():
     Vrací (taby, důvod)."""
     global _TAKEN
     _TAKEN = True
+    if core.TEST_MODE:
+        return [], ""
     try:
         with open(STATE_PATH, encoding="utf-8") as fh:
             data = json.load(fh)

@@ -16,6 +16,9 @@ pywinpty on Windows). One code path, all three platforms.
     python3 claude-hub.py                 open the hub
     python3 claude-hub.py --doctor        print what this machine has, then exit
     python3 claude-hub.py --no-browser    start the server and print the URL
+    python3 claude-hub.py --no-browser --test
+                                          test copy next to the real hub: no tab
+                                          restore/saving, no link to the gateway
     python3 claude-hub.py --window=webkit force a window host
                                           (chromium | webkit | browser)
     python3 claude-hub.py --server=adresa otevírat prostor na serveru
@@ -223,6 +226,8 @@ def server_start_url(local_url):
 
 def main():
     args = sys.argv[1:]
+    if "--test" in args:
+        core.TEST_MODE = True
     if "--doctor" in args:
         return doctor()
 

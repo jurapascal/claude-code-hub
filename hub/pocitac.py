@@ -191,6 +191,8 @@ def _user_name():
 def start():
     """Spustí most, jednou za běh hubu. V prostoru na serveru jen napojí MCP."""
     global _STARTED
+    if core.TEST_MODE:
+        return                  # zkušební hub není tenhle počítač
     with _LOCK:
         if _STARTED:
             return

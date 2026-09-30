@@ -62,6 +62,11 @@ if IS_WINDOWS:
 
 HOME = os.path.expanduser("~")
 CLAUDE_DIR = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude")
+# Zkušební hub (`claude-hub.py --test`, HUB_TEST=1) vedle toho opravdového:
+# jen okno na prohlížení. Neobnovuje ani neukládá taby (vzal by opravdovému
+# hubu jeho uložené taby a pustil druhého Clauda na tytéž konverzace)
+# a nepřipojuje se k bráně jako tenhle počítač.
+TEST_MODE = os.environ.get("HUB_TEST") == "1"
 CONFIG_PATH = os.path.join(CLAUDE_DIR, "hub-config.json")
 
 # Everything machine-specific lives in hub-config.json — see hub-config.example.json.
