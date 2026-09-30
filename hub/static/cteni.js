@@ -36,31 +36,37 @@
     return node;
   }
 
-  /* Barvy tečky u důležitých bodů a malá paleta na výběr (i na odebrání). */
+  /* Barvy poznámek a malá paleta na výběr (i na odebrání). Otevírá se pravým
+     klikem — `kotva` je prvek, nebo {x, y} z události myši. */
   const DUL_BARVY = ['#e0843c', '#f85149', '#3fb950', '#4c97f0', '#a371f7', '#d29922', '#e5609c'];
+  const DUL_JMENA = {'#e0843c': 'oranžová', '#f85149': 'červená', '#3fb950': 'zelená', '#4c97f0': 'modrá',
+                     '#a371f7': 'fialová', '#d29922': 'žlutá', '#e5609c': 'růžová'};
   function paleta(kotva, aktualni, vyber, odeber) {
     document.querySelectorAll('.dul-paleta').forEach((n) => n.remove());
     const box = el('div', 'dul-paleta');
+    box.appendChild(el('div', 'dul-nadpis', 'Barva poznámky'));
     for (const b of DUL_BARVY) {
       const t = el('button', 'dul-barva' + (b === aktualni ? ' on' : ''));
       t.style.background = b;
-      t.title = b;
+      t.title = DUL_JMENA[b] || b;
       t.onclick = (ev) => { ev.stopPropagation(); vyber(b); zavri(); };
       box.appendChild(t);
     }
     if (odeber) {
-      const x = el('button', 'dul-odeber', 'Odebrat');
+      const x = el('button', 'dul-odeber', 'Odebrat z poznámek');
       x.onclick = (ev) => { ev.stopPropagation(); odeber(); zavri(); };
       box.appendChild(x);
     }
     document.body.appendChild(box);
-    const r = kotva.getBoundingClientRect();
+    const r = kotva.getBoundingClientRect ? kotva.getBoundingClientRect()
+      : {left: kotva.x, bottom: kotva.y};
     const w = box.offsetWidth;
     box.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left)) + 'px';
-    box.style.top = Math.min(window.innerHeight - box.offsetHeight - 8, r.bottom + 6) + 'px';
-    function zavri() { box.remove(); document.removeEventListener('mousedown', mimo, true); }
+    box.style.top = Math.max(8, Math.min(window.innerHeight - box.offsetHeight - 8, r.bottom + 4)) + 'px';
+    function zavri() { box.remove(); document.removeEventListener('mousedown', mimo, true); document.removeEventListener('keydown', esc, true); }
     function mimo(ev) { if (!box.contains(ev.target)) zavri(); }
-    setTimeout(() => document.addEventListener('mousedown', mimo, true), 0);
+    function esc(ev) { if (ev.key === 'Escape') zavri(); }
+    setTimeout(() => { document.addEventListener('mousedown', mimo, true); document.addEventListener('keydown', esc, true); }, 0);
   }
 
   /* Markdown umí už prohlížeč poznámek — Claudeův text je tentýž Markdown,
@@ -234,8 +240,8 @@
         zadani: pr.zadani.slice(-6).map((z, i, a) => ({
           text: z.text, row: z.row, stav: i === a.length - 1 && bezi ? 'bezi' : 'hotovo'})),
         dulezite: (dulNacti(), dul.map((d) => ({k: d.k, text: d.text, barva: d.barva, row: dulRadky.get(d.k)}))),
-        dulBarva, dulOdeber, dulSkoc,
-        barvy: DUL_BARVY,
+        dulBarva, dulOdeber, dulSkoc, dulNova,
+        barvy: DUL_BARVY, jmena: DUL_JMENA,
         todos: pr.todos || (pr.tasks.length ? pr.tasks : null),
         // Kroky práce od poslední zprávy — když Claude seznam úkolů nevede
         // (na tomhle účtu TodoWrite / TaskCreate nemá), jsou to jeho úkoly.
@@ -279,16 +285,24 @@
       const row = dulRadky.get(k);
       if (!row) return;
       const d = dul.find((x) => x.k === k);
-      const pin = row.querySelector('.cteni-pin');
-      if (!pin) return;
-      pin.classList.toggle('on', !!d);
-      pin.style.setProperty('--dul', d ? d.barva : 'transparent');
-      pin.title = d ? 'Důležité — klepni pro barvu nebo odebrání' : 'Označit jako důležité';
+      row.classList.toggle('ma-dul', !!d);
+      row.style.setProperty('--dul', d ? d.barva : 'transparent');
     }
     function dulPridej(k, text, barva) {
       dulNacti();
-      if (!dul.some((x) => x.k === k)) dul.push({k, text: String(text).trim().split('\n')[0].slice(0, 140), barva: barva || DUL_BARVY[0]});
+      const d = dul.find((x) => x.k === k);
+      if (d) { if (barva) d.barva = barva; }
+      else dul.push({k, text: String(text).trim().split('\n')[0].slice(0, 140), barva: barva || DUL_BARVY[0]});
       dulUloz(); dulVykresli(k); zmenaPrehledu();
+    }
+    // Vlastní poznámka z panelu — bez zprávy, ke které by se skákalo.
+    function dulNova(text, barva) {
+      const t = String(text || '').trim();
+      if (!t) return;
+      dulNacti();
+      dul.push({k: 'n:' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+                text: t.slice(0, 140), barva: barva || DUL_BARVY[0], vlastni: true});
+      dulUloz(); zmenaPrehledu();
     }
     function dulOdeber(k) {
       const i = dul.findIndex((x) => x.k === k);
@@ -300,23 +314,25 @@
       if (d) d.barva = barva;
       dulUloz(); dulVykresli(k); zmenaPrehledu();
     }
-    function dulKlik(ev, k, text) {
+    // Pravý klik na zprávu: vybereš barvu a zpráva je poznámka vpravo.
+    function dulMenu(ev, k, text) {
+      ev.preventDefault();
       ev.stopPropagation();
       dulNacti();
       const d = dul.find((x) => x.k === k);
-      if (!d) return dulPridej(k, text);
-      paleta(ev.currentTarget, d.barva, (b) => dulBarva(k, b), () => dulOdeber(k));
+      paleta({x: ev.clientX, y: ev.clientY}, d && d.barva, (b) => dulPridej(k, text, b),
+             d ? () => dulOdeber(k) : null);
     }
-    // Vlajka u zprávy člověka (ne u fronty ani hubích připomínek).
-    function pripojPin(row, text) {
+    function pripojPoznamku(row, text) {
       const k = dulId(text);
       if (!k) return;
       dulNacti();
-      const pin = el('button', 'cteni-pin');
-      pin.innerHTML = '<svg class="ico"><use href="#i-star"/></svg>';
-      pin.onclick = (ev) => dulKlik(ev, k, text);
-      (row.querySelector('.cteni-bubble') || row).appendChild(pin);
-      row.classList.add('ma-pin');
+      row.addEventListener('contextmenu', (ev) => {
+        // Odkazy a vybraný text nech prohlížeči — menu až na prázdné místo zprávy.
+        if (ev.target.closest('a, img') || String(window.getSelection()).trim()) return;
+        dulMenu(ev, k, text);
+      });
+      row.classList.add('ma-poznamku');
       dulRadky.set(k, row);
       dulVykresli(k);
     }
@@ -786,7 +802,7 @@
           b.mid ? '✓ Claude si to přečetl během práce' : '');
         mount.appendChild(radek);
         if (zadaniZ) { zadaniZ.row = radek; zadaniZ = null; }
-        if (b.text) pripojPin(radek, b.text);
+        if (b.text) pripojPoznamku(radek, b.text);
         return;
       }
       if (b.kind === 'queued') {
@@ -828,6 +844,7 @@
         if (html) box.innerHTML = html;
         else box.textContent = b.text;
         mount.appendChild(box);
+        pripojPoznamku(box, b.text);
         // Přečíst nahlas (hlas.js) — tlačítko v rohu bubliny. Nová odpověď
         // v tabu, na který se člověk dívá, se se zapnutým předčítáním čte sama.
         if (global.HubHlas && b.text) {

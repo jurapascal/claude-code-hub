@@ -1250,6 +1250,10 @@ function showActionbar(tab) {
   $('actionbar').hidden = !(acts || clock || prehled);
 }
 
+let dulFiltr = '';                       // barva, podle které se poznámky v Průběhu filtrují
+let dulRazeni = 'cas';                   // cas | barva
+try { dulRazeni = localStorage.getItem('hub-dul-razeni') === 'barva' ? 'barva' : 'cas'; } catch (_) { /* nic */ }
+
 /* ── Průběh ─────────────────────────────────────────────────────────────────
    Panel vpravo jako v appce Claude (Cowork): na čem Claude v tomhle chatu
    dělá. Nahoře Claudův seznam úkolů, a když ho nevede, kroky práce od
@@ -1292,28 +1296,77 @@ function prehledHtml(tab, box) {
     s.appendChild(r);
     neco = true;
   }
-  /* Důležité body: zprávy označené vlajkou u bubliny. Tečka mění barvu,
-     klepnutí na text odroluje ke zprávě. */
+  /* Poznámky: pravý klik na zprávu v konverzaci ji sem přidá s barvou, pravý
+     klik na poznámku tady barvu změní nebo ji odebere, klik odroluje ke zprávě.
+     Nahoře se dá filtrovat a řadit podle barev; vlastní poznámku napíšeš přímo. */
   if (p.dulezite && (p.dulezite.length || zadani)) {
-    const s = sekce('Důležité', p.dulezite.length ? p.dulezite.length + '' : '');
+    const s = sekce('Poznámky', p.dulezite.length ? p.dulezite.length + '' : '');
+    const pridat = mk('button', 'pr-dul-plus');
+    pridat.innerHTML = icon('i-plus');
+    pridat.title = 'Přidat vlastní poznámku';
+    s.firstChild.appendChild(pridat);
+    const pole = mk('input', 'pr-dul-pole');
+    pole.type = 'text';
+    pole.placeholder = 'Nová poznámka — Enter uloží';
+    pole.hidden = true;
+    pridat.onclick = () => { pole.hidden = !pole.hidden; if (!pole.hidden) pole.focus(); };
+    pole.onkeydown = (ev) => {
+      ev.stopPropagation();
+      if (ev.key === 'Enter' && pole.value.trim()) { p.dulNova(pole.value, dulFiltr || undefined); pole.value = ''; }
+      if (ev.key === 'Escape') pole.hidden = true;
+    };
+    s.appendChild(pole);
     if (!p.dulezite.length) {
-      s.appendChild(mk('div', 'pr-napoveda', 'Označ zprávu vlajkou vedle bubliny — objeví se tu.'));
+      s.appendChild(mk('div', 'pr-napoveda', 'Klikni pravým tlačítkem na zprávu v konverzaci, vyber barvu — a je tady.'));
     }
-    for (const d of p.dulezite) {
+    const pouzite = p.barvy.filter((b) => p.dulezite.some((d) => d.barva === b));
+    if (dulFiltr && !pouzite.includes(dulFiltr)) dulFiltr = '';
+    if (p.dulezite.length > 1 && pouzite.length) {
+      const lista = mk('div', 'pr-dul-lista');
+      const vse = mk('button', 'pr-dul-chip' + (dulFiltr ? '' : ' on'), 'Vše');
+      vse.onclick = () => { dulFiltr = ''; renderPrehled(tab); };
+      lista.appendChild(vse);
+      for (const b of pouzite) {
+        const c = mk('button', 'pr-dul-chip pr-dul-barva' + (dulFiltr === b ? ' on' : ''));
+        c.style.setProperty('--dul', b);
+        c.title = (p.jmena[b] || b) + ' (' + p.dulezite.filter((d) => d.barva === b).length + ')';
+        c.onclick = () => { dulFiltr = dulFiltr === b ? '' : b; renderPrehled(tab); };
+        lista.appendChild(c);
+      }
+      const razeni = mk('button', 'pr-dul-razeni', dulRazeni === 'barva' ? 'podle barvy' : 'podle času');
+      razeni.title = 'Přepnout řazení';
+      razeni.onclick = () => {
+        dulRazeni = dulRazeni === 'barva' ? 'cas' : 'barva';
+        try { localStorage.setItem('hub-dul-razeni', dulRazeni); } catch (_) { /* soukromé okno */ }
+        renderPrehled(tab);
+      };
+      lista.appendChild(razeni);
+      s.appendChild(lista);
+    }
+    let seznam = p.dulezite.filter((d) => !dulFiltr || d.barva === dulFiltr);
+    if (dulRazeni === 'barva') {
+      const poradi = (d) => p.barvy.indexOf(d.barva);
+      seznam = seznam.map((d, i) => [d, i]).sort((x, y) => poradi(x[0]) - poradi(y[0]) || x[1] - y[1]).map((x) => x[0]);
+    }
+    for (const d of seznam) {
       const r = mk('div', 'pr-radek pr-dul');
+      r.style.setProperty('--dul', d.barva);
       const tecka = mk('button', 'pr-tecka');
       tecka.style.background = d.barva;
       tecka.title = 'Změnit barvu';
-      tecka.onclick = (ev) => {
+      const menu = (ev, kotva) => {
+        ev.preventDefault();
         ev.stopPropagation();
-        HubCteni.paleta(tecka, d.barva, (b) => p.dulBarva(d.k, b), () => p.dulOdeber(d.k));
+        HubCteni.paleta(kotva, d.barva, (b) => p.dulBarva(d.k, b), () => p.dulOdeber(d.k));
       };
+      tecka.onclick = (ev) => menu(ev, tecka);
       const txt = mk('button', 'pr-dul-text', d.text);
-      txt.title = d.row ? 'Ukázat zprávu' : 'Zpráva už není v načtené konverzaci';
-      txt.onclick = () => p.dulSkoc(d.row);
+      txt.title = d.row ? 'Ukázat zprávu · pravým tlačítkem barva' : 'Pravým tlačítkem barva';
+      txt.onclick = () => { if (d.row) p.dulSkoc(d.row); };
       const x = mk('button', 'pr-dul-x', '×');
-      x.title = 'Odebrat z důležitých';
+      x.title = 'Odebrat poznámku';
       x.onclick = () => p.dulOdeber(d.k);
+      r.oncontextmenu = (ev) => menu(ev, {getBoundingClientRect: () => ({left: ev.clientX, bottom: ev.clientY})});
       r.append(tecka, txt, x);
       s.appendChild(r);
     }
