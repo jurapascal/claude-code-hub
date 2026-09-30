@@ -36,6 +36,33 @@
     return node;
   }
 
+  /* Barvy tečky u důležitých bodů a malá paleta na výběr (i na odebrání). */
+  const DUL_BARVY = ['#e0843c', '#f85149', '#3fb950', '#4c97f0', '#a371f7', '#d29922', '#e5609c'];
+  function paleta(kotva, aktualni, vyber, odeber) {
+    document.querySelectorAll('.dul-paleta').forEach((n) => n.remove());
+    const box = el('div', 'dul-paleta');
+    for (const b of DUL_BARVY) {
+      const t = el('button', 'dul-barva' + (b === aktualni ? ' on' : ''));
+      t.style.background = b;
+      t.title = b;
+      t.onclick = (ev) => { ev.stopPropagation(); vyber(b); zavri(); };
+      box.appendChild(t);
+    }
+    if (odeber) {
+      const x = el('button', 'dul-odeber', 'Odebrat');
+      x.onclick = (ev) => { ev.stopPropagation(); odeber(); zavri(); };
+      box.appendChild(x);
+    }
+    document.body.appendChild(box);
+    const r = kotva.getBoundingClientRect();
+    const w = box.offsetWidth;
+    box.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left)) + 'px';
+    box.style.top = Math.min(window.innerHeight - box.offsetHeight - 8, r.bottom + 6) + 'px';
+    function zavri() { box.remove(); document.removeEventListener('mousedown', mimo, true); }
+    function mimo(ev) { if (!box.contains(ev.target)) zavri(); }
+    setTimeout(() => document.addEventListener('mousedown', mimo, true), 0);
+  }
+
   /* Markdown umí už prohlížeč poznámek — Claudeův text je tentýž Markdown,
      tak se kreslí stejně (a stejně se i escapuje). Bez vault.js zbyde holý
      text, což je pořád čitelné. */
@@ -163,7 +190,7 @@
      `imageUrl` převede cestu k obrázku z hub-images na adresu, ze které ho
      stránka smí načíst (/api/image). */
   function flow(mount, imageUrl, {historie = false, openLink = null, notice = null, zive = null,
-                                  udalost = null, naPrehled = null} = {}) {
+                                  udalost = null, naPrehled = null, dulKlic = null} = {}) {
     /* Odkaz v Markdownu je <a> bez href (vault.js) — sám nikam nevede,
        otevřít ho musí hub. V okně appky by holý odkaz stejně nic neudělal. */
     mount.addEventListener('click', (ev) => {
@@ -205,7 +232,10 @@
       const bezi = pr.pracuje;
       return {
         zadani: pr.zadani.slice(-6).map((z, i, a) => ({
-          text: z.text, stav: i === a.length - 1 && bezi ? 'bezi' : 'hotovo'})),
+          text: z.text, row: z.row, stav: i === a.length - 1 && bezi ? 'bezi' : 'hotovo'})),
+        dulezite: (dulNacti(), dul.map((d) => ({k: d.k, text: d.text, barva: d.barva, row: dulRadky.get(d.k)}))),
+        dulBarva, dulOdeber, dulSkoc,
+        barvy: DUL_BARVY,
         todos: pr.todos || (pr.tasks.length ? pr.tasks : null),
         // Kroky práce od poslední zprávy — když Claude seznam úkolů nevede
         // (na tomhle účtu TodoWrite / TaskCreate nemá), jsou to jeho úkoly.
@@ -221,6 +251,86 @@
         pracuje: bezi,
       };
     }
+    /* ── Důležité body ───────────────────────────────────────────────────────
+       Zprávu si člověk označí vlajkou a vybere jí barvu tečky. V panelu Průběh
+       pak je v seznamu Důležité a klepnutí na ni odrolovává k té zprávě.
+       Ukládá se v prohlížeči podle tabu; zprávu poznává podle začátku textu. */
+    const dul = [];                   // {k, text, barva}
+    const dulRadky = new Map();       // k -> řádek se zprávou
+    let dulNactenoPro = null;
+    const dulId = (t) => norm(t).slice(0, 80);
+    const dulUlozisko = () => { const k = dulKlic ? dulKlic() : ''; return k ? 'hub-dulezite:' + k : ''; };
+    function dulNacti() {
+      const k = dulUlozisko();
+      if (!k || dulNactenoPro === k) return;
+      dulNactenoPro = k;
+      dul.length = 0;
+      try {
+        const a = JSON.parse(localStorage.getItem(k) || '[]');
+        if (Array.isArray(a)) for (const d of a) if (d && d.k && d.text) dul.push(d);
+      } catch (_) { /* soukromé okno */ }
+    }
+    function dulUloz() {
+      const k = dulUlozisko();
+      if (!k) return;
+      try { localStorage.setItem(k, JSON.stringify(dul)); } catch (_) { /* soukromé okno */ }
+    }
+    function dulVykresli(k) {
+      const row = dulRadky.get(k);
+      if (!row) return;
+      const d = dul.find((x) => x.k === k);
+      const pin = row.querySelector('.cteni-pin');
+      if (!pin) return;
+      pin.classList.toggle('on', !!d);
+      pin.style.setProperty('--dul', d ? d.barva : 'transparent');
+      pin.title = d ? 'Důležité — klepni pro barvu nebo odebrání' : 'Označit jako důležité';
+    }
+    function dulPridej(k, text, barva) {
+      dulNacti();
+      if (!dul.some((x) => x.k === k)) dul.push({k, text: String(text).trim().split('\n')[0].slice(0, 140), barva: barva || DUL_BARVY[0]});
+      dulUloz(); dulVykresli(k); zmenaPrehledu();
+    }
+    function dulOdeber(k) {
+      const i = dul.findIndex((x) => x.k === k);
+      if (i >= 0) dul.splice(i, 1);
+      dulUloz(); dulVykresli(k); zmenaPrehledu();
+    }
+    function dulBarva(k, barva) {
+      const d = dul.find((x) => x.k === k);
+      if (d) d.barva = barva;
+      dulUloz(); dulVykresli(k); zmenaPrehledu();
+    }
+    function dulKlik(ev, k, text) {
+      ev.stopPropagation();
+      dulNacti();
+      const d = dul.find((x) => x.k === k);
+      if (!d) return dulPridej(k, text);
+      paleta(ev.currentTarget, d.barva, (b) => dulBarva(k, b), () => dulOdeber(k));
+    }
+    // Vlajka u zprávy člověka (ne u fronty ani hubích připomínek).
+    function pripojPin(row, text) {
+      const k = dulId(text);
+      if (!k) return;
+      dulNacti();
+      const pin = el('button', 'cteni-pin');
+      pin.innerHTML = '<svg class="ico"><use href="#i-star"/></svg>';
+      pin.onclick = (ev) => dulKlik(ev, k, text);
+      (row.querySelector('.cteni-bubble') || row).appendChild(pin);
+      row.classList.add('ma-pin');
+      dulRadky.set(k, row);
+      dulVykresli(k);
+    }
+    function dulSkoc(row) {
+      if (!row || !row.isConnected) return false;
+      row.scrollIntoView({behavior: 'smooth', block: 'center'});
+      row.classList.remove('dul-blik');
+      void row.offsetWidth;
+      row.classList.add('dul-blik');
+      setTimeout(() => row.classList.remove('dul-blik'), 1800);
+      return true;
+    }
+
+    let zadaniZ = null;               // zadání, které čeká na svůj řádek
     const mistni = [];                // odeslané odsud, v přepisu ještě nejsou
 
     function naKonec() {
@@ -657,6 +767,7 @@
         if (!/^\[hub\] /.test(b.text || '') && b.text) {
           pr.zadani.push({text: b.text.trim().split('\n')[0].slice(0, 140)});
           pr.kroky = [];
+          zadaniZ = pr.zadani[pr.zadani.length - 1];
           zmenaPrehledu();
         }
         if (/^\[hub\] /.test(b.text || '')) {
@@ -671,8 +782,11 @@
           mount.appendChild(box);
           return;
         }
-        mount.appendChild(bublina(b, b.mid ? 'mid' : '',
-          b.mid ? '✓ Claude si to přečetl během práce' : ''));
+        const radek = bublina(b, b.mid ? 'mid' : '',
+          b.mid ? '✓ Claude si to přečetl během práce' : '');
+        mount.appendChild(radek);
+        if (zadaniZ) { zadaniZ.row = radek; zadaniZ = null; }
+        if (b.text) pripojPin(radek, b.text);
         return;
       }
       if (b.kind === 'queued') {
@@ -949,6 +1063,7 @@
       zive: () => nacteno && !!global.HubHlas && global.HubHlas.auto.get() &&
                   (!io.aktivni || io.aktivni()),
       naPrehled: () => { if (io.prehled) io.prehled(); },
+      dulKlic: () => tab.id || '',
       /* Historie při otevření tabu se na hřišti nepřehrává: kdo tehdy ještě
          běžel, prostě tam stojí, a co doběhlo, se ani neukáže. */
       udalost: (e) => {
@@ -1204,6 +1319,6 @@
     return {close: zavrit};
   }
 
-  global.HubCteni = {install, open, claudik};
+  global.HubCteni = {install, open, claudik, paleta};
 
 })(typeof window !== 'undefined' ? window : globalThis);

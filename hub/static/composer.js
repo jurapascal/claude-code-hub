@@ -858,6 +858,8 @@
           const poslano = fronta[0];
           await posliJednu(poslano);
           fronta.shift();
+          // Přepnutí modelu se občas ptá (kontext, účtování) — potvrdí se samo.
+          if (/^\/(model|effort)\b/i.test(poslano)) potvrdPrepnuti();
           // Automatický /model nebo /effort doběhl — vrácení výchozího odložit.
           if (autoPrikazy.delete(poslano) && io.autoKeep) io.autoKeep(true).catch(() => {});
           /* Po slash příkazu (/model, /effort) Claude Code chvíli zpracovává
@@ -879,6 +881,40 @@
       } finally {
         pumpuje = false;
         fronta.length = konec() ? 0 : fronta.length;
+      }
+    }
+
+    /* Po /model a /effort Claude Code někdy zobrazí potvrzení („Switch to …",
+       1M kontext, účtování). Hub ho odklepne sám: číslovaná nabídka se
+       potvrdí první kladnou volbou, nečíslovaná Enterem. Dívá se jen pár
+       vteřin po příkazu a jen na dotaz, který se modelu týká — cizí dotaz
+       (oprávnění nástroje) zůstává na člověku. */
+    const PREPNUTI = /(model|effort|context window|1M context|extra usage|switch to)/i;
+    const ZAPORNA = /^(no\b|cancel|keep|stay|don'?t|never)/i;
+    async function potvrdPrepnuti() {
+      if (!AG.full) return;
+      let potvrzeno = 0;
+      for (let i = 0; i < 16 && !konec() && potvrzeno < 2; i++) {
+        await spi(350);
+        const dole = visibleBottom(term, DIALOG_ROWS);
+        if (!dole.some((l) => CONFIRM.test(l) || /^\s*[│|]?\s*❯?\s*1[.)]\s/.test(l))) {
+          if (potvrzeno) return;                 // dotaz zmizel → hotovo
+          continue;
+        }
+        const text = dole.join('\n');
+        if (!PREPNUTI.test(text) || /Do you want to (proceed|make this edit|create|run)|Bash command|Allow /i.test(text)) return;
+        const moznosti = scanOptions(dole);
+        if (moznosti.length) {
+          const vybrana = moznosti.find((o) => o.sel) || moznosti[0];
+          const cil = ZAPORNA.test(vybrana.label) ? (moznosti.find((o) => !ZAPORNA.test(o.label)) || vybrana) : vybrana;
+          toPty(cil.key);
+        } else if (CONFIRM.test(text)) {
+          toPty('\r');
+        } else {
+          return;
+        }
+        potvrzeno++;
+        await spi(900);
       }
     }
 

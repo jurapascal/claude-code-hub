@@ -1286,9 +1286,37 @@ function prehledHtml(tab, box) {
   const zadani = p.zadani[p.zadani.length - 1];
   if (zadani) {
     const s = sekce('Úkol');
-    const r = mk('div', 'pr-radek pr-zadani');
+    const r = mk(zadani.row ? 'button' : 'div', 'pr-radek pr-zadani');
     r.append(stavIco(tab.ceka ? 'ceka' : zadani.stav), mk('span', 'pr-text', zadani.text));
+    if (zadani.row) { r.title = 'Ukázat zprávu'; r.onclick = () => p.dulSkoc(zadani.row); }
     s.appendChild(r);
+    neco = true;
+  }
+  /* Důležité body: zprávy označené vlajkou u bubliny. Tečka mění barvu,
+     klepnutí na text odroluje ke zprávě. */
+  if (p.dulezite && (p.dulezite.length || zadani)) {
+    const s = sekce('Důležité', p.dulezite.length ? p.dulezite.length + '' : '');
+    if (!p.dulezite.length) {
+      s.appendChild(mk('div', 'pr-napoveda', 'Označ zprávu vlajkou vedle bubliny — objeví se tu.'));
+    }
+    for (const d of p.dulezite) {
+      const r = mk('div', 'pr-radek pr-dul');
+      const tecka = mk('button', 'pr-tecka');
+      tecka.style.background = d.barva;
+      tecka.title = 'Změnit barvu';
+      tecka.onclick = (ev) => {
+        ev.stopPropagation();
+        HubCteni.paleta(tecka, d.barva, (b) => p.dulBarva(d.k, b), () => p.dulOdeber(d.k));
+      };
+      const txt = mk('button', 'pr-dul-text', d.text);
+      txt.title = d.row ? 'Ukázat zprávu' : 'Zpráva už není v načtené konverzaci';
+      txt.onclick = () => p.dulSkoc(d.row);
+      const x = mk('button', 'pr-dul-x', '×');
+      x.title = 'Odebrat z důležitých';
+      x.onclick = () => p.dulOdeber(d.k);
+      r.append(tecka, txt, x);
+      s.appendChild(r);
+    }
     neco = true;
   }
   if (p.todos && p.todos.length) {
