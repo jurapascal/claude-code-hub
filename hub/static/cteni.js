@@ -26,7 +26,7 @@
     Read: '◉', Edit: '✎', Write: '✎', NotebookEdit: '✎',
     Bash: '⏵', Grep: '⌕', Glob: '⌕', Task: '⛭', Agent: '⛭',
     WebFetch: '⇱', WebSearch: '⌕', TodoWrite: '☑', AskUserQuestion: '?',
-    peer: '✉',
+    peer: '✉', hub: '↻',
   };
 
   function el(tag, cls, text) {
@@ -619,6 +619,20 @@
         }
         if (b.key) zFronty(b.key);           // z fronty rovnou do konverzace
         potvrd(b);
+        /* Připomínka od hubu (restart.py) není zpráva člověka — jeden tichý
+           řádek, podrobnosti po klepnutí. */
+        if (/^\[hub\] /.test(b.text || '')) {
+          const text = b.text.slice(6);
+          const ulohy = (text.match(/^- /gm) || []).length;
+          const box = udelejNastroj({name: 'hub',
+            title: /restartoval/.test(text)
+              ? 'Appka se restartovala' + (ulohy ? ' — Claude navazuje na ' + pocet(ulohy, 'úlohu', 'úlohy', 'úloh') : '')
+              : text.split('\n')[0].slice(0, 120),
+            detail: text});
+          box.classList.add('hub-pozn');
+          mount.appendChild(box);
+          return;
+        }
         mount.appendChild(bublina(b, b.mid ? 'mid' : '',
           b.mid ? '✓ Claude si to přečetl během práce' : ''));
         return;

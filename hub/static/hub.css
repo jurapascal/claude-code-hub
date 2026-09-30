@@ -3307,3 +3307,24 @@ button, input, select, textarea { font-family: inherit; }
 /* Start/Stop stopek je tlačítko, ne položka nabídky. */
 .barbtn.clk-start { justify-content: center; border-color: var(--border); background: var(--bg-card); font-weight: 600; }
 .barbtn.clk-start:hover { border-color: var(--accent); }
+
+/* Připomínka od appky (restart) — tichý řádek, ne bublina člověka. */
+.cteni-tool.hub-pozn .cteni-title { color: var(--dim); font-style: italic; }
+.cteni-tool.hub-pozn .cteni-ico { color: var(--accent); }
+
+/* Hřiště Claudíků: text konverzace pod ním se ztrácí do pozadí, ať se
+   postavičky nepletou do písmen. */
+.hriste::before {
+  content: ""; position: absolute; z-index: -1; top: -14px; bottom: -2px;
+  left: -50vw; right: -50vw; pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--bg) 45%);
+}
+
+/* Nástroje pod polem na psaní se na úzké obrazovce posouvají — okraj se
+   vytrácí, ať je vidět, že pokračují, a nevypadají useknuté. */
+.composer-tools {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  padding-right: 22px;
+}
+.cteni { overflow: hidden; }
