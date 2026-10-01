@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from hub import __version__, qr
 
-from . import (config, isolation, mcp, mcp_sdilene, pocitac, poznamky, safefs, shared, slozky, totp,
+from . import (config, isolation, mcp, mcp_sdilene, pocitac, poznamky, relace, safefs, shared, slozky, totp,
                workspace)
 from .accounts import Accounts
 
@@ -795,6 +795,8 @@ class Handler(BaseHTTPRequestHandler):
                 if method == "POST":
                     return self._gw_shared_change(user)
                 return self._gw_shared(user)
+            if route in ("/gw/relace", "/gw/relace/cteni", "/gw/relace/poslat"):
+                return self._gw_relace(route, method, user)
             if route == "/gw/tym":
                 return self._gw_team(method, user)
             if route == "/gw/mcp-sdilene":
@@ -1266,6 +1268,77 @@ class Handler(BaseHTTPRequestHandler):
             v["needs_restart"] = bound is not None and v["slug"] not in bound
         gone = sorted(bound - {v["slug"] for v in vaults}) if bound else []
         return self._json({"vaults": vaults, "people": shared.people(), "gone": gone})
+
+    def _gw_relace(self, route, method, user):
+        """Sdílené relace: chat jednoho člověka živě u dalších (gateway/relace.py).
+
+        Seznam a správa sdílení jdou z hubu (`X-Hub-Account`), čtení a psaní
+        z okna se sdíleným chatem. Brána ověří, kdo smí, a teprve potom sáhne
+        do prostoru majitele; prohlížeč kolegy se k cizímu hubu nedostane."""
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        if route == "/gw/relace":
+            if method != "POST":
+                data = relace.seznam(user)
+                data["lide"] = [p for p in shared.people() if p["email"] != user["email"]]
+                return self._json(data)
+            if not self._account_post_ok():
+                return self._json({"error": "Tohle jde jen v hubu."}, 403)
+            form = self._read_form()
+            akce = str(form.get("akce") or "")
+            try:
+                if akce == "zalozit":
+                    result = relace.zalozit(user, form.get("chat"), form.get("titulek"),
+                                            form.get("emaily") or [], form.get("psat") or [])
+                elif akce == "zrusit":
+                    result = relace.zrusit(user, str(form.get("id") or ""))
+                elif akce == "odejit":
+                    result = relace.odejit(user, str(form.get("id") or ""))
+                else:
+                    return self._json({"error": "Neznámá akce."}, 400)
+            except ValueError as exc:
+                return self._json({"error": str(exc)}, 400)
+            except OSError as exc:
+                _errlog("sdílené relace", exc)
+                return self._json({"error": "Nepodařilo se to uložit, zkus to prosím znovu."}, 500)
+            return self._json(result)
+
+        # Čtení a psaní — vždycky přes majitelův hub, a jen když mu prostor běží
+        # (kvůli dívání se neprobouzí spící prostor).
+        if route == "/gw/relace/poslat":
+            if method != "POST" or not self._account_post_ok():
+                return self._json({"error": "Zpráva jde odeslat jen z hubu."}, 403)
+            form = self._read_form()
+            rid = str(form.get("id") or "")
+            try:
+                entry, _role = relace.ziskat(user, rid, psat=True)
+            except ValueError as exc:
+                return self._json({"error": str(exc)}, 403)
+            if not relace.smi_poslat(user):
+                return self._json({"error": "Píšeš moc rychle, chvilku počkej."}, 429)
+            tool, args = "sdilet_poslat", {"chat": entry["chat"], "text": str(form.get("text") or ""),
+                                           "kdo": "" if _role == "majitel" else relace.jmeno(user)}
+        else:
+            if method != "GET":
+                return self._json({"error": "Jen GET."}, 405)
+            rid = str((query.get("id") or [""])[0])
+            try:
+                entry, _role = relace.ziskat(user, rid)
+            except ValueError as exc:
+                return self._json({"error": str(exc)}, 403)
+            relace.dival_se(user, rid)
+            tool, args = "sdilet_cteni", {"chat": entry["chat"],
+                                          "from": (query.get("from") or ["0"])[0]}
+        owner = shared.ACCOUNTS.by_id(entry.get("owner")) if shared.ACCOUNTS else None
+        proc = self.hubs.procs.get(entry.get("owner")) if self.hubs else None
+        if not owner or not proc or not proc.alive():
+            return self._json({"offline": True, "zprava": "Majitel má prostor vypnutý — chat se teď nedá číst."})
+        try:
+            result = mcp._hub_call(self, owner, tool, args, timeout=20)
+        except mcp.ToolError as exc:
+            return self._json({"error": str(exc)}, 502)
+        if tool == "sdilet_cteni":
+            relace.pridej_stav(result, relace.verejne(user, rid, entry), _role)
+        return self._json(result)
 
     def _gw_shared_change(self, user):
         """Sdílené Obsidiany naklikáním (panel v hubu): založit, členové,

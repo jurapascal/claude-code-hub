@@ -257,6 +257,107 @@ def prikaz(args):
             "vyprsel_cas": timed_out, "slozka": cwd}
 
 
+# ── Sdílené relace (gateway/relace.py) ──────────────────────────────────────
+# Brána už ověřila, že volající smí číst (nebo psát). Tady se jen čte přepis
+# chatu majitele a píše do jeho terminálu.
+MAX_SDILENA_ZPRAVA = 4000
+_PRACUJE_MTIME_S = 5          # přepis se před chvílí měnil → Claude pracuje
+_PRACUJE_STARE_S = 900        # rozepsané déle než čtvrt hodiny = spíš zaseklé / opuštěné
+
+
+def _relace_session(cid):
+    from . import server
+    for s in list(server.HUB.sessions.values()):
+        if not s.exited and (getattr(s, "chat_id", "") == cid or s.resume == cid):
+            return s
+    return None
+
+
+def _relace_prepis(cid):
+    s = _relace_session(cid)
+    if s:
+        try:
+            path = core.transcript_for(s)
+            if path and os.path.isfile(path):
+                return path
+        except Exception:
+            pass
+    return cteni.path_for(cid)
+
+
+def _pracuje(path):
+    """Claude v téhle konverzaci právě pracuje? Podle konce přepisu: poslední
+    zpráva je od člověka nebo výsledek nástroje, nebo odpověď bez konce tahu."""
+    import json
+    import time
+    try:
+        age = time.time() - os.path.getmtime(path)
+        if age < _PRACUJE_MTIME_S:
+            return True
+        if age > _PRACUJE_STARE_S:
+            return False
+        with open(path, "rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - 65536))
+            tail = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return False
+    for line in reversed(tail):
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        t = e.get("type")
+        if t not in ("user", "assistant") or e.get("isSidechain") or e.get("isMeta"):
+            continue
+        if t == "user":
+            return True
+        return (e.get("message") or {}).get("stop_reason") in (None, "tool_use")
+    return False
+
+
+def sdilet_cteni(args):
+    cid = str(args.get("chat") or "")
+    if not cteni.je_id(cid):
+        raise ToolError("Chybí číslo chatu.")
+    path = _relace_prepis(cid)
+    if not path:
+        raise ToolError("Chat v prostoru majitele už není.")
+    try:
+        start = max(0, int(args.get("from") or 0))
+    except (TypeError, ValueError):
+        start = 0
+    data = cteni.read(path, start, tail=not start)
+    data["pracuje"] = _pracuje(path)
+    data["bezi"] = _relace_session(cid) is not None
+    return data
+
+
+def sdilet_poslat(args):
+    import threading
+    cid = str(args.get("chat") or "")
+    if not cteni.je_id(cid):
+        raise ToolError("Chybí číslo chatu.")
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", str(args.get("text") or "")).strip()
+    if not text:
+        raise ToolError("Zpráva je prázdná.")
+    if len(text) > MAX_SDILENA_ZPRAVA:
+        raise ToolError("Zpráva je moc dlouhá.")
+    s = _relace_session(cid)
+    if not s:
+        raise ToolError("Majitel má chat zavřený — zpráva by nikam nedošla.")
+    kdo = re.sub(r"[\r\n\[\]]", " ", str(args.get("kdo") or "")).strip()[:60]
+    # Claude i majitel pak vidí, od koho zpráva je.
+    body = (f"[{kdo}] " if kdo else "") + text
+    data = ("\x1b[200~" + body + "\x1b[201~") if "\n" in body else body
+    s.pty.write(data.encode("utf-8"))
+    # Enter zvlášť a o chvíli později: slepený s textem by ho Claude Code přebral
+    # jako součást vloženého textu (stejně to dělá bublina v composer.js).
+    threading.Timer(0.25, lambda: None if s.exited else s.pty.write(b"\r")).start()
+    return {"odeslano": True}
+
+
 TOOLS = {
     "projekty": projekty,
     "konverzace": konverzace,
@@ -269,6 +370,8 @@ TOOLS = {
     "soubor_cti": soubor_cti,
     "soubor_zapis": soubor_zapis,
     "prikaz": prikaz,
+    "sdilet_cteni": sdilet_cteni,
+    "sdilet_poslat": sdilet_poslat,
 }
 
 

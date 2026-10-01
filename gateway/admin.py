@@ -46,7 +46,7 @@ import subprocess
 import sys
 import time
 
-from . import config, isolation, mcp_sdilene, poznamky, shared, slozky, workspace
+from . import config, isolation, mcp_sdilene, poznamky, relace, shared, slozky, workspace
 from .accounts import Accounts
 
 
@@ -489,6 +489,7 @@ def cmd_remove(a, args):
     if not user:
         return
     shared.forget_user(user["id"])
+    relace.forget_user(user["id"])
     poznamky.forget_user(user["id"])
     mcp_sdilene.forget_user(user["id"])
     try:

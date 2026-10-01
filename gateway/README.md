@@ -662,3 +662,21 @@ podmínkám Anthropicu — proto `central` od 2.4.4 znamená klíč API brány, 
 sdílené přihlášení. Klíč přichází do prostoru v prostředí, takže ho kdo
 v prostoru spustí Claude Code, taky přečte. Mezi kolegy únosné; mimo firmu
 dej každému `own`.
+
+## Sdílené chaty (relace)
+
+Majitel sdílí rozběhnutý chat s kolegy: v panelu Průběh „Sdílet chat…“, u každého
+vybraného zvlášť „smí psát“. Kolega ho najde v sekci „Sdílené chaty“ a sleduje živě
+(konverzace, nástroje, kód z Edit/Write, „Claude pracuje…“, kdo se dívá); kdo smí,
+píše — zpráva dojde do chatu majitele s jeho jménem v hranatých závorkách.
+
+* Registr: `GATEWAY_DIR/relace.json` (`gateway/relace.py`), log `relace.jsonl`.
+  Kdo smí číst, psát a rušit, rozhoduje jen ten modul; prostor nic nerozhoduje.
+* `/gw/relace` (seznam, založit, zrušit, odejít; POST jen z hubu s `X-Hub-Account`),
+  `/gw/relace/cteni` (čtení po bytech od `from`) a `/gw/relace/poslat` (nejvýš 6 zpráv
+  za 20 s na člověka). Brána volá nástroje `sdilet_cteni` a `sdilet_poslat` v majitelově
+  hubu (`hub/mcp_tools.py`) — kolegův prohlížeč se k cizímu hubu nedostane.
+* Čte se, jen když majiteli prostor běží (dívání se prostor neprobouzí). Odchod
+  z týmu (`admin.py`) sdílení smaže.
+* **Právo psát je právo zadávat práci majitelovu Claudovi s jeho oprávněními** (i v režimu
+  bez ptaní). Výchozí je jen čtení; psát dávej jen lidem, kterým to svěříš.

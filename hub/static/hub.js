@@ -741,7 +741,7 @@ async function sharedPost(body) {
 }
 
 /* Okno s výběrem lidí (a názvem). Vrací {name, emails} nebo null. */
-function peopleDialog({title, note, withName, chosen, ok}) {
+function peopleDialog({title, note, withName, chosen, ok, withWrite, chosenWrite, hint}) {
   return new Promise((resolve) => {
     const me = ((STATE.config && STATE.config.gateway_user) || {}).email || '';
     const wrap = document.createElement('div');
@@ -752,7 +752,7 @@ function peopleDialog({title, note, withName, chosen, ok}) {
           <span class="spacer"></span><button class="set-x pd-close" title="Zavřít">×</button></div>
         <div class="acc-list">
           <label class="mcp-field pd-name"><span>Název</span><input class="set-input" placeholder="např. Marketing"></label>
-          <p class="who-hint">Kdo je uvidí (ty je vidíš vždycky):</p>
+          <p class="who-hint"></p>
           <div class="who-people"></div>
         </div>
         <div class="who-foot"><button class="btn ghost pd-close">Zrušit</button><button class="btn pd-ok"></button></div>
@@ -760,8 +760,10 @@ function peopleDialog({title, note, withName, chosen, ok}) {
     wrap.querySelector('.onb-title').textContent = title;
     wrap.querySelector('.onb-sub').textContent = note || '';
     wrap.querySelector('.pd-ok').textContent = ok;
+    wrap.querySelector('.who-hint').textContent = hint || 'Kdo je uvidí (ty je vidíš vždycky):';
     wrap.querySelector('.pd-name').hidden = !withName;
     const picked = new Set(chosen || []);
+    const writers = new Set(chosenWrite || []);
     const list = wrap.querySelector('.who-people');
     for (const p of sharedPeople) {
       if (p.email === me) continue;
@@ -770,7 +772,11 @@ function peopleDialog({title, note, withName, chosen, ok}) {
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.checked = picked.has(p.email);
-      cb.onchange = () => (cb.checked ? picked.add(p.email) : picked.delete(p.email));
+      let wcb = null;
+      cb.onchange = () => {
+        if (cb.checked) picked.add(p.email); else { picked.delete(p.email); writers.delete(p.email); }
+        if (wcb) { wcb.disabled = !cb.checked; if (!cb.checked) wcb.checked = false; }
+      };
       const who = document.createElement('div');
       who.className = 'acc-who';
       const strong = document.createElement('strong');
@@ -780,6 +786,19 @@ function peopleDialog({title, note, withName, chosen, ok}) {
       mail.textContent = p.email;
       who.append(strong, mail);
       row.append(cb, who);
+      if (withWrite) {
+        // Číst smí každý vybraný; psát (zadávat Claudovi) jen ten, komu to výslovně dovolíš.
+        const wl = document.createElement('label');
+        wl.className = 'who-write';
+        wl.title = 'Smí psát do chatu — jeho zprávy dostane tvůj Claude a pracuje na nich s tvými právy';
+        wcb = document.createElement('input');
+        wcb.type = 'checkbox';
+        wcb.checked = writers.has(p.email);
+        wcb.disabled = !cb.checked;
+        wcb.onchange = () => (wcb.checked ? writers.add(p.email) : writers.delete(p.email));
+        wl.append(wcb, document.createTextNode(' smí psát'));
+        row.append(wl);
+      }
       list.appendChild(row);
     }
     const done = (value) => { wrap.remove(); resolve(value); };
@@ -789,7 +808,7 @@ function peopleDialog({title, note, withName, chosen, ok}) {
       const name = wrap.querySelector('.pd-name input').value.trim();
       if (withName && !name) return toast('Napiš název.');
       if (!picked.size) return toast('Vyber aspoň jednoho člověka.');
-      done({name, emails: [...picked]});
+      done({name, emails: [...picked], psat: [...writers].filter((e) => picked.has(e))});
     };
     document.body.appendChild(wrap);
     if (withName) wrap.querySelector('.pd-name input').focus();
@@ -1285,6 +1304,119 @@ let dulFiltr = '';                       // barva, podle které se poznámky v P
 let dulRazeni = 'cas';                   // cas | barva
 try { dulRazeni = localStorage.getItem('hub-dul-razeni') === 'barva' ? 'barva' : 'cas'; } catch (_) { /* nic */ }
 
+/* ── Sdílené chaty (gateway/relace.py) ──────────────────────────────────────
+   Majitel sdílí rozběhnutý chat s kolegy; ti ho živě sledují (a když smí, píšou
+   do něj). Jen na serveru — na počítači nemá kdo se dívat. */
+let RELACE = {moje: [], semnou: [], lide: []};
+let relaceTimer = null;
+const relaceZnama = new Set();
+
+async function relacePost(body) {
+  const r = await fetch('/gw/relace', {
+    method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json', 'X-Hub-Account': '1'},
+    body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || 'Server teď neodpovídá, zkus to za chvíli.');
+  return data;
+}
+
+async function loadRelace() {
+  if (!onServer()) return;
+  try {
+    const r = await fetch('/gw/relace', {credentials: 'same-origin'});
+    if (!r.ok) return;                 // starší brána — přijde s aktualizací
+    RELACE = await r.json();
+  } catch (_) { return; }
+  sharedPeople = RELACE.lide || sharedPeople;
+  // Někdo mi něco nasdílel — řekne se to jednou.
+  for (const s of RELACE.semnou) {
+    if (!relaceZnama.has(s.id)) {
+      if (relaceZnama.size || relaceHotovo) toast(`${s.majitel} s tebou sdílí chat „${s.titulek}“.`);
+      relaceZnama.add(s.id);
+    }
+  }
+  relaceHotovo = true;
+  renderRelace();
+  if (ACTIVE) renderPrehled(ACTIVE);
+}
+let relaceHotovo = false;
+
+function relaceTabu(tab) {
+  const chat = tab && (tab.chat || tab.resume);
+  return chat ? RELACE.moje.find((r) => r.chat === chat) : null;
+}
+
+/* Sdílení aktuálního chatu: výběr lidí, u každého zvlášť „smí psát". */
+async function sdiletChat(tab) {
+  const chat = tab.chat || tab.resume;
+  if (!chat) return toast('Tenhle chat se ještě nedá sdílet — pošli v něm aspoň jednu zprávu.');
+  if (!sharedPeople.length) await loadRelace();
+  const now = relaceTabu(tab);
+  const got = await peopleDialog({
+    title: now ? 'Sdílení chatu' : 'Sdílet chat', ok: now ? 'Uložit' : 'Sdílet',
+    note: 'Kolegové ho uvidí živě — co píšete, nástroje i kód, který Claude napíše.',
+    hint: 'S kým chat sdílíš (číst smí vybraní, psát jen ti s „smí psát“):',
+    withWrite: true,
+    chosen: now ? now.clenove.map((c) => c.email) : [],
+    chosenWrite: now ? now.clenove.filter((c) => c.pise).map((c) => c.email) : [],
+  });
+  if (!got) return;
+  try {
+    // Chat se jmenuje „Chat“ — v seznamu kolegy by nic neřekl, tak první zadání.
+    const zadani = tab.cteni && tab.cteni.prehled && (tab.cteni.prehled().zadani || [])[0];
+    const titulek = (tab.title && !/^(Chat|Rozhovor|Osobní chat)$/.test(tab.title)) ? tab.title
+      : (zadani && zadani.text ? zadani.text.slice(0, 60) : 'Chat');
+    const res = await relacePost({akce: 'zalozit', chat, titulek,
+                                  emaily: got.emails, psat: got.psat});
+    toast(res.message || 'Chat je sdílený.');
+  } catch (err) { toast(err.message); }
+  loadRelace();
+}
+
+async function zrusitSdileni(rel) {
+  if (!confirm('Přestat chat sdílet? Kolegové ho přestanou vidět.')) return;
+  try { await relacePost({akce: 'zrusit', id: rel.id}); } catch (err) { toast(err.message); }
+  loadRelace();
+}
+
+function renderRelace() {
+  const box = $('relace-section');
+  if (!box) return;
+  const list = $('relace-list');
+  list.textContent = '';
+  box.hidden = !onServer() || !RELACE.semnou.length;
+  for (const s of RELACE.semnou) {
+    const row = document.createElement('button');
+    row.className = 'chat-item relace-row';
+    const t = document.createElement('span');
+    t.className = 'chat-title';
+    t.textContent = s.titulek;
+    const m = document.createElement('span');
+    m.className = 'chat-meta';
+    m.textContent = s.majitel + (s.role === 'pise' ? ' · smíš psát' : ' · jen čtení') +
+      (s.diva.length ? ' · dívá se ' + s.diva.join(', ') : '');
+    row.append(t, m);
+    row.onclick = () => HubCteni.openSdilene({
+      gw: relaceGw, notice: toast, imageUrl, openLink, onClose: loadRelace,
+    }, s);
+    list.appendChild(row);
+  }
+}
+
+/* Okno se sdíleným chatem čte a píše přes bránu (ne přes vlastní hub). */
+async function relaceGw(path, body) {
+  const r = await fetch('/gw/relace' + path, body === undefined ? {credentials: 'same-origin'} : {
+    method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json', 'X-Hub-Account': '1'},
+    body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || 'Server teď neodpovídá, zkus to za chvíli.');
+  return data;
+}
+
 /* ── Průběh ─────────────────────────────────────────────────────────────────
    Panel vpravo jako v appce Claude (Cowork): na čem Claude v tomhle chatu
    dělá. Nahoře Claudův seznam úkolů, a když ho nevede, kroky práce od
@@ -1400,6 +1532,38 @@ function prehledHtml(tab, box) {
       r.oncontextmenu = (ev) => menu(ev, {getBoundingClientRect: () => ({left: ev.clientX, bottom: ev.clientY})});
       r.append(tecka, txt, x);
       s.appendChild(r);
+    }
+    neco = true;
+  }
+  /* Sdílení chatu s kolegy (jen na serveru): kdo ho vidí, kdo smí psát a kdo
+     se právě dívá. */
+  if (onServer() && (tab.chat || tab.resume)) {
+    const rel = relaceTabu(tab);
+    const s = sekce('Sdílení', rel ? String(rel.clenove.length) : '');
+    if (!rel) {
+      s.appendChild(mk('div', 'pr-napoveda', 'Kolega uvidí tenhle chat živě — i kód, který Claude píše.'));
+      const b = mk('button', 'btn ghost pr-sdilet', 'Sdílet chat…');
+      b.onclick = () => sdiletChat(tab);
+      s.appendChild(b);
+    } else {
+      for (const c of rel.clenove) {
+        const r = mk('div', 'pr-radek pr-clen');
+        r.append(mk('span', 'pr-text', c.name || c.email),
+                 mk('span', 'pr-druh', c.pise ? 'smí psát' : 'čte'));
+        s.appendChild(r);
+      }
+      if (rel.diva.length) {
+        const d = mk('div', 'pr-radek bezi');
+        d.append(stavIco('bezi'), mk('span', 'pr-text', 'Právě se dívá: ' + rel.diva.join(', ')));
+        s.appendChild(d);
+      }
+      const btns = mk('div', 'pr-sdileni-btns');
+      const e = mk('button', 'btn ghost pr-sdilet', 'Upravit…');
+      e.onclick = () => sdiletChat(tab);
+      const z = mk('button', 'btn ghost pr-sdilet', 'Přestat sdílet');
+      z.onclick = () => zrusitSdileni(rel);
+      btns.append(e, z);
+      s.appendChild(btns);
     }
     neco = true;
   }
@@ -2048,6 +2212,10 @@ async function reload() {
   markAdvanced();
   renderProjects($('search').value);
   if (!usageTimer && Date.now() - usageAt > 120000) loadUsage();
+  if (onServer() && !relaceTimer) {
+    relaceTimer = setInterval(() => { if (!document.hidden) loadRelace(); }, 5000);
+    loadRelace();
+  }
   if (!$('projekty-page').hidden) renderProjekty();
   renderMemory();
   renderFirma();
@@ -3114,6 +3282,7 @@ function handle(msg) {
     if (tab) {
       tab.id = msg.id;
       tab.bypass = !!msg.bypass;
+      tab.chat = msg.chat || tab.chat || '';
       // Server mohl model doplnit sám (Ollama bez modelu nespustíš), tak se
       // tím, co doopravdy běží, přepíše i to, s čím se tab zakládal.
       if (msg.model && msg.model !== tab.model) {
@@ -3249,6 +3418,7 @@ function restore(list) {
                        vault: info.vault, background: true});
     }
     tab.bypass = !!info.bypass;
+    tab.chat = info.chat || tab.chat || '';
     if (info.vault !== undefined && (tab.vault || '') !== (info.vault || '')) {
       tab.vault = info.vault || '';
       paintAgent(tab);

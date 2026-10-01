@@ -42,7 +42,7 @@
     const pomocnici = new Map();         // id → figurka
 
     function figurka(typ, barva, cls) {
-      const f = {el: el('cl-fig ' + (cls || '')), x: DOMOV, t: null, t2: null, konci: false};
+      const f = {el: el('cl-fig ' + (cls || '')), x: DOMOV, t: null, t2: null, konci: false, rec: null, recT: null};
       f.el.style.setProperty('--ag', barva || 'var(--accent)');
       f.bublina = el('cl-bublina');
       const telo = el('cl-postava');
@@ -54,6 +54,55 @@
     }
 
     const hlavni = figurka('', 'var(--accent)', 'hlavni');
+
+    /* ── řeč ─────────────────────────────────────────────────────────────────
+       Bublina s větou nad postavičkou. Jedna na postavičku, po chvíli zmizí;
+       kdo mluví moc často, nic navíc neřekne (aby to nebyl šum). */
+    const vyber = (pole) => pole[Math.floor(Math.random() * pole.length)];
+    const zkrat = (t, n) => {
+      t = String(t || '').replace(/\s+/g, ' ').trim();
+      return t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t;
+    };
+    function mluv(f, text, ms, pak) {
+      if (!zivy || !text) return;
+      const ted = Date.now();
+      if (f.mluvilOd && ted - f.mluvilOd < 1400 && !pak) return;
+      f.mluvilOd = ted;
+      if (f.rec) f.rec.remove();
+      clearTimeout(f.recT);
+      f.rec = el('cl-rec', text);
+      f.rec.classList.toggle('vpravo', f.x > 62);
+      f.el.appendChild(f.rec);
+      f.recT = setTimeout(() => { if (f.rec) { f.rec.remove(); f.rec = null; } if (pak) pak(); }, ms || 2600);
+    }
+    /* Bič: z hlavního k pomocníkovi — rozmáchne se a práskne. */
+    function bic(cil, text) {
+      if (!zivy) return;
+      const od = hlavni.x, k = cil.x;
+      const b = el('cl-bic');
+      b.style.left = Math.min(od, k) + '%';
+      b.style.width = Math.max(4, Math.abs(k - od)) + '%';
+      b.classList.toggle('zpet', k < od);
+      b.appendChild(el('cl-prask', 'práásk!'));
+      box.appendChild(b);
+      hlavni.el.classList.remove('bicuje');
+      void hlavni.el.offsetWidth;
+      hlavni.el.classList.add('bicuje');
+      cil.el.classList.add('trhne');
+      setTimeout(() => { hlavni.el.classList.remove('bicuje'); cil.el.classList.remove('trhne'); b.remove(); }, 900);
+    }
+    const TOKY = {
+      zadani: ['Jdi na to!', 'Máš práci!', 'Pracovat!', 'Šup, šup!'],
+      odpoved: ['Jasně, šéfe!', 'Už běžím!', 'Rozkaz!', 'Hned to bude!'],
+      kontrola: ['Tak co, jak to jde?', 'Jak jsi daleko?', 'Něco nového?'],
+      stav: ['Pracuju na tom!', 'Ještě chvilku!', 'Skoro to mám.'],
+      hotovo: ['Hotovo, šéfe!', 'Mám to!', 'Tady je výsledek!'],
+      diky: ['Skvělá práce!', 'Díky!', 'Dobře jsi to zvládl.'],
+      chyba: ['Au, nepovedlo se…', 'Něco se pokazilo.'],
+      utecha: ['Nevadí, příště líp!', 'Zkusíme to jinak.'],
+      predani: ['Koukni na tohle!', 'Tohle se ti bude hodit.', 'Mám pro tebe info!'],
+      prijato: ['Díky, beru!', 'Super, mrknu na to.', 'Dobře, dík!'],
+    };
 
     function jdi(f, x, pak) {
       clearTimeout(f.t);
@@ -132,15 +181,33 @@
           a.predava = true;
           stuj(a);
           jdi(a, Math.max(OD, Math.min(DO, b.x + (a.x < b.x ? -5 : 5))), () => {
-            papir(a.x, b.x, '', () => {
+            mluv(a, vyber(TOKY.predani), 1800);
+            setTimeout(() => papir(a.x, b.x, '', () => {
               radost(b);
+              mluv(b, vyber(TOKY.prijato), 1800);
               a.predava = false;
               toulej(a);
-            });
+            }), 700);
           });
         }
         if (pomocnici.size >= 2) naplanujPredavku();
       }, nahoda(...PREDAVKA));
+    }
+
+    /* Hlavní Claudík se občas zeptá, jak to jde, a někdo z pomocníků odpoví. */
+    let kontrolaTimer = null;
+    function naplanujKontrolu() {
+      clearTimeout(kontrolaTimer);
+      kontrolaTimer = setTimeout(() => {
+        if (!zivy) return;
+        const bezi = [...pomocnici.values()].filter((f) => !f.konci && !f.predava && !f.cekaNaZadani);
+        if (bezi.length) {
+          const f = vyber(bezi);
+          mluv(hlavni, vyber(TOKY.kontrola), 2000);
+          setTimeout(() => mluv(f, vyber(TOKY.stav), 2000), 1400);
+        }
+        if (pomocnici.size) naplanujKontrolu();
+      }, nahoda(9000, 15000));
     }
 
     function nekdoJe() {
@@ -200,7 +267,7 @@
         }
       },
       /* Nový pomocník. `tise` = byl tu už před otevřením tabu, bez výskoku. */
-      pridej(id, typ, barva, tise) {
+      pridej(id, typ, barva, tise, ukol) {
         if (!zivy || pomocnici.has(id)) return;
         ukaz();
         const f = figurka(typ, barva, 'pomocnik' + (tise ? '' : ' vznik'));
@@ -208,8 +275,32 @@
         f.el.style.left = f.x + '%';
         pomocnici.set(id, f);
         if (!tise) radost(hlavni);
-        setTimeout(() => toulej(f), tise ? 0 : 450);
+        // Hlavní Claudík pomocníkovi zadá práci, práskne bičem a ten odpoví.
+        f.cekaNaZadani = !tise;
+        setTimeout(() => {
+          if (!tise) {
+            const x = Math.min(DO, Math.max(OD, hlavni.x + 14 + nahoda(0, 22)));
+            jdi(f, x, () => {
+              f.cekaNaZadani = false;
+              mluv(hlavni, ukol ? 'Jdi: ' + zkrat(ukol, 34) : vyber(TOKY.zadani), 2800);
+              setTimeout(() => {
+                bic(f, 'práásk');
+                setTimeout(() => { mluv(f, vyber(TOKY.odpoved), 1800); toulej(f); }, 450);
+              }, 1100);
+            });
+          } else toulej(f);
+        }, tise ? 0 : 450);
         if (pomocnici.size === 2) naplanujPredavku();
+        if (!tise) naplanujKontrolu();
+      },
+      /* Pomocník dělá další krok — občas to řekne nahlas. */
+      krok(id, text) {
+        const f = pomocnici.get(id);
+        if (!f || f.konci || !text) return;
+        const ted = Date.now();
+        if (f.krokOd && ted - f.krokOd < 7000) return;
+        f.krokOd = ted;
+        mluv(f, zkrat(text, 30), 2400);
       },
       /* Pomocník doběhl: s výsledkem k hlavnímu, s chybou jen odejde. */
       hotovo(id, stav, tise) {
@@ -228,13 +319,25 @@
         if (tise || !zivy) { f.el.remove(); pomocnici.delete(id); moznaSchovat(); return; }
         if (stav !== 'hotovo') {
           f.el.classList.add(stav === 'chyba' ? 'chyba' : 'stop');
-          setTimeout(pryc, 900);
+          if (stav === 'chyba') {
+            // Selhal: přiběhne to říct, šéf ho potěší (a malinko pohrozí bičem).
+            jdi(f, Math.min(DO, hlavni.x + 7), () => {
+              mluv(f, vyber(TOKY.chyba), 2200);
+              setTimeout(() => { mluv(hlavni, vyber(TOKY.utecha), 2200); bic(f); }, 900);
+              setTimeout(pryc, 2600);
+            });
+          } else setTimeout(pryc, 900);
           return;
         }
         f.el.classList.add('hotovo');
         jdi(f, Math.min(DO, hlavni.x + 7), () => {
           f.el.classList.add('vlevo');
-          papir(f.x, hlavni.x, '', () => { radost(hlavni); setTimeout(pryc, 250); });
+          mluv(f, vyber(TOKY.hotovo), 1800);
+          papir(f.x, hlavni.x, '', () => {
+            radost(hlavni);
+            mluv(hlavni, vyber(TOKY.diky), 2000);
+            setTimeout(pryc, 900);
+          });
         });
       },
       /* Zpráva mezi chaty: `ven` odletí za okraj, `dovnitr` přiletí. */
@@ -247,7 +350,8 @@
         zivy = false;
         clearTimeout(schovatTimer);
         clearTimeout(predavkaTimer);
-        for (const f of [hlavni, ...pomocnici.values()]) stuj(f);
+        clearTimeout(kontrolaTimer);
+        for (const f of [hlavni, ...pomocnici.values()]) { stuj(f); clearTimeout(f.recT); }
         box.remove();
         root.classList.remove('hriste-on');
       },

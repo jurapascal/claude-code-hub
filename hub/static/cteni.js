@@ -592,6 +592,7 @@
         if (sig !== kroky.dataset.sig) {
           const stare = kroky.dataset.sig ? kroky.dataset.sig.split('\n') : [];
           kroky.dataset.sig = sig;
+          if (udalost && k.kroky.length) udalost({co: 'krok', id: k.id, text: k.kroky[k.kroky.length - 1].title});
           kroky.textContent = '';
           const ukazat = k.kroky.slice(-AG_KROKU);
           if (!ukazat.length) kroky.appendChild(el('li', 'ag-krok prazdny', 'Rozjíždí se…'));
@@ -667,7 +668,7 @@
       kresliAgenta(k);
       hlidej();
       // Na hřiště (claudici.js) — pomocník vyskočí z hlavního Claudíka.
-      if (udalost) udalost({co: 'agent', id: b.id, typ: b.type, barva: barvaAgenta(b.type)});
+      if (udalost) udalost({co: 'agent', id: b.id, typ: b.type, barva: barvaAgenta(b.type), ukol: b.title || ''});
     }
 
     function doplnAgenta(k, info) {
@@ -1133,7 +1134,8 @@
           document.dispatchEvent(new CustomEvent('hub-tool', {detail: {name: e.name}}));
         }
         if (!hriste) return;
-        if (e.co === 'agent') hriste.pridej(e.id, e.typ, e.barva, !nacteno);
+        if (e.co === 'agent') hriste.pridej(e.id, e.typ, e.barva, !nacteno, e.ukol);
+        else if (e.co === 'krok' && nacteno) hriste.krok(e.id, e.text);
         else if (e.co === 'konec') hriste.hotovo(e.id, e.stav, !nacteno);
         else if (e.co === 'dopis' && nacteno) hriste.dopis(e.smer);
       },
@@ -1384,6 +1386,163 @@
     return {close: zavrit};
   }
 
-  global.HubCteni = {install, open, claudik, paleta};
+  /* ── sdílený chat ─────────────────────────────────────────────────────────
+     Okno s chatem, který kolega sdílí: čte se živě přes bránu (io.gw →
+     /gw/relace/cteni), je vidět, že je sdílený, že Claude pracuje, kdo se
+     dívá, a kód, který Claude napsal (Edit/Write se rozbalí sám). Kdo smí,
+     píše — zpráva dojde do chatu majitele s tvým jménem. */
+  function openSdilene(io, share) {
+    const box = el('div', 'onb set-modal cteni-modal relace-modal');
+    box.innerHTML = `
+      <div class="onb-box">
+        <div class="onb-head">
+          <span class="onb-mark"><svg class="ico" width="26" height="26"><use href="#i-hub"/></svg></span>
+          <div>
+            <div class="onb-title"></div>
+            <div class="onb-sub"></div>
+          </div>
+          <span class="spacer"></span>
+          <span class="relace-stav"></span>
+          <button class="set-x cteni-close" title="Zavřít (Esc)">×</button>
+        </div>
+        <div class="relace-lista"></div>
+        <div class="onb-body">
+          <div class="cteni-scroll"><div class="cteni-flow"></div></div>
+          <div class="cteni-write">
+            <textarea class="cteni-input" rows="1" spellcheck="false" autocomplete="off"
+                      data-form-type="other" data-1p-ignore data-lpignore="true"></textarea>
+            <button class="cteni-send" title="Odeslat (Enter)">↑</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(box);
+    const q = (sel) => box.querySelector(sel);
+    q('.onb-title').textContent = share.titulek || 'Sdílený chat';
+    q('.onb-sub').textContent = share.majitel + ' ti ho sdílí';
+    const scroll = q('.cteni-scroll');
+    const pole = q('.cteni-input');
+    const stav = q('.relace-stav');
+    const lista = q('.relace-lista');
+    let zivy = true, uDna = true, odkud = 0, psat = share.role === 'pise', prazdnych = 0;
+
+    const proud = flow(q('.cteni-flow'), io.imageUrl, {openLink: io.openLink, notice: io.notice});
+    scroll.addEventListener('scroll', () => {
+      uDna = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < U_DNA;
+    }, {passive: true});
+
+    const zavrit = () => {
+      zivy = false;
+      clearTimeout(timer);
+      proud.stav(null);
+      proud.zavri();
+      box.remove();
+      document.removeEventListener('keydown', naKlavesu, true);
+      if (io.onClose) io.onClose();
+    };
+    function naKlavesu(ev) { if (ev.key === 'Escape' && document.activeElement !== pole) { ev.stopPropagation(); zavrit(); } }
+    document.addEventListener('keydown', naKlavesu, true);
+    q('.cteni-close').onclick = zavrit;
+    box.addEventListener('click', (ev) => { if (ev.target === box) zavrit(); });
+
+    function psaniPole() {
+      q('.cteni-write').hidden = !psat;
+      pole.placeholder = psat
+        ? `Napiš ${share.majitel} do chatu… (Enter odešle, Claude to uvidí s tvým jménem)`
+        : '';
+    }
+    psaniPole();
+    async function odeslat() {
+      const text = pole.value.trim();
+      if (!text || !psat) return;
+      pole.value = '';
+      pole.style.height = 'auto';
+      try {
+        await io.gw('/poslat', {id: share.id, text});
+        stav.textContent = 'zpráva odeslána';
+      } catch (err) {
+        pole.value = text;
+        io.notice(err.message);
+      }
+      tik(true);
+    }
+    q('.cteni-send').onclick = odeslat;
+    pole.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); odeslat(); }
+    });
+    pole.addEventListener('input', () => {
+      pole.style.height = 'auto';
+      pole.style.height = Math.min(pole.scrollHeight, 160) + 'px';
+    });
+
+    function hlavicka(res) {
+      const r = res.relace;
+      if (!r) return;
+      psat = !!r.psat;
+      psaniPole();
+      lista.textContent = '';
+      const chip = (text, cls, title) => {
+        const c = el('span', 'relace-chip' + (cls ? ' ' + cls : ''), text);
+        if (title) c.title = title;
+        lista.appendChild(c);
+      };
+      chip('Sdílený chat', 'sdileny', 'Chat běží u ' + r.majitel + ', ty ho sleduješ.');
+      chip(psat ? 'Smíš psát' : 'Jen čtení', psat ? 'pise' : '');
+      if (r.diva && r.diva.length) chip('Dívá se i: ' + r.diva.join(', '), 'diva');
+      const souboru = proud.prehled().soubory.length;
+      if (souboru) chip('✎ ' + souboru + (souboru === 1 ? ' upravený soubor' : souboru < 5 ? ' upravené soubory' : ' upravených souborů'),
+                         'soubory', proud.prehled().soubory.join('\n'));
+    }
+
+    // Kód, který Claude napsal (Edit, Write), se rozbalí sám — kvůli tomu sdílíš.
+    function rozbalKod() {
+      for (const t of q('.cteni-flow').querySelectorAll('.cteni-tool:not([data-auto])')) {
+        t.dataset.auto = '1';
+        const ico = t.querySelector('.cteni-ico');
+        if (ico && ico.textContent === '✎' && t.querySelector('.cteni-detail') &&
+            t.querySelector('.cteni-detail').textContent) {
+          t.querySelector('.cteni-head').click();
+        }
+      }
+    }
+
+    let timer = null, ceka = false;
+    async function tik(hned) {
+      if (!zivy || ceka) return;
+      clearTimeout(timer);
+      ceka = true;
+      let dalsi = prazdnych < 6 && !document.hidden ? 1200 : 4000;
+      try {
+        const res = await io.gw('/cteni?id=' + encodeURIComponent(share.id) + '&from=' + odkud);
+        if (!zivy) return;
+        if (res.offline) {
+          stav.textContent = 'majitel je offline';
+          proud.stav(null);
+        } else {
+          odkud = res.next !== undefined ? res.next : odkud;
+          if (res.blocks && res.blocks.length) {
+            proud.add(res.blocks);
+            rozbalKod();
+            prazdnych = 0;
+            if (uDna) scroll.scrollTop = scroll.scrollHeight;
+          } else prazdnych++;
+          proud.stav(res.pracuje ? {on: true, sloveso: '', sekund: null, tokeny: ''} : null);
+          stav.textContent = res.pracuje ? 'Claude pracuje…' : (res.bezi === false ? 'chat je zavřený' : 'čeká');
+          stav.classList.toggle('pracuje', !!res.pracuje);
+          hlavicka(res);
+          if (res.pracuje) dalsi = 900;
+        }
+      } catch (err) {
+        stav.textContent = err.message;
+        dalsi = 5000;
+      } finally {
+        ceka = false;
+        if (zivy) timer = setTimeout(tik, dalsi);
+      }
+    }
+    tik();
+    return {close: zavrit};
+  }
+
+  global.HubCteni = {install, open, openSdilene, claudik, paleta};
 
 })(typeof window !== 'undefined' ? window : globalThis);

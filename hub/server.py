@@ -260,7 +260,8 @@ class Session:
         return {"id": self.id, "title": self.title, "kind": self.kind,
                 "path": self.path, "exited": self.exited,
                 "agent": self.agent, "model": self.model, "bypass": self.bypass,
-                "resume": self.resume, "vault": self.vault}
+                "resume": self.resume, "vault": self.vault,
+                "chat": getattr(self, "chat_id", "") or self.resume or ""}
 
 
 class Hub:
