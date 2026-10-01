@@ -224,6 +224,8 @@
     closeDrawer();
     if (matchMedia(NARROW).matches) { if (newTop) newTab(newTop); } else $('btn-new-agent').click();
   };
+  const drawerFirma = $('btn-drawer-firma');
+  if (drawerFirma) drawerFirma.onclick = () => { closeDrawer(); if (window.hubFirmaChat) window.hubFirmaChat(); };
   const drawerHome = $('btn-drawer-home');
   if (drawerHome) drawerHome.onclick = () => { if (window.hubHome) window.hubHome(); else closeDrawer(); };
   const drawerX = $('btn-drawer-x');

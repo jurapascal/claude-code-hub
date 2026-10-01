@@ -3667,3 +3667,7 @@ button.pr-radek:hover { background: var(--card-hover); color: var(--fg-bright); 
 .br-dialog-btns { display: flex; justify-content: flex-end; gap: 8px; }
 .ag.dul-blik { animation: dul-blik-ag 1.8s ease-out; }
 @keyframes dul-blik-ag { 0%, 40% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: 0 0 0 3px transparent; } }
+
+/* Server firemní v panelu vlevo — fialový, ať je vidět, že se píše nad firemním Obsidianem. */
+.nav-item.firma.nav-new { color: var(--firma); }
+.nav-item.firma .nav-plus { background: var(--firma); color: #fff; }

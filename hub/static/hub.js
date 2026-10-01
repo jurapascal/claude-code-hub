@@ -627,7 +627,7 @@ let firmaBusy = false;                 // nahrávání z firemního tabu běží
    rovnou — souhlas dal uživatel tím, že tab otevřel. Otevírá se ze dvou míst
    (lišta tabů i uvítání), tak ať obě dělají doopravdy totéž. */
 function openFirmaTab() {
-  return openTab({kind: 'project', path: STATE.home, title: 'Firemní chat',
+  return openTab({kind: 'project', path: STATE.home, title: onServer() ? 'Server firemní' : 'Firemní chat',
                   agent: 'claude', vault: 'firma'});
 }
 
@@ -1366,7 +1366,7 @@ async function sdiletChat(tab) {
   try {
     // Chat se jmenuje „Chat“ — v seznamu kolegy by nic neřekl, tak první zadání.
     const zadani = tab.cteni && tab.cteni.prehled && (tab.cteni.prehled().zadani || [])[0];
-    const titulek = (tab.title && !/^(Chat|Rozhovor|Osobní chat)$/.test(tab.title)) ? tab.title
+    const titulek = (tab.title && !TITULKY_BEZ_JMENA.test(tab.title)) ? tab.title
       : (zadani && zadani.text ? zadani.text.slice(0, 60) : 'Chat');
     const res = await relacePost({akce: 'zalozit', chat, titulek,
                                   emaily: got.emails, psat: got.psat});
@@ -1924,13 +1924,13 @@ function renderWelcome() {
     const a = agentById(STATE.default_agent) || agentList(true)[0];
     if (a) {
       // Stejné pojmenování jako v liště tabů: kde se bude pracovat.
-      actions.push(['i-terminal', 'Nový ' + newTabLabel().toLowerCase(), 'primary',
+      actions.push(['i-terminal', naServeruSFirmou() ? 'Server osobní' : 'Nový chat', 'primary',
         () => openTab({kind: 'project', path: STATE.home, title: newTabLabel(),
                        agent: a.id})]);
       // Firemní trezor má vlastní tlačítko i tady, ne jen v liště tabů — a
       // fialové, ať je hned vidět, že se v něm píše do firemního Obsidianu.
       if (firma) {
-        actions.push(['i-terminal', 'Firemní chat', 'primary firma',
+        actions.push(['i-terminal', onServer() ? 'Server firemní' : 'Firemní chat', 'primary firma',
           () => openFirmaTab()]);
       }
     }
@@ -2177,12 +2177,19 @@ function renderDoctor() {
 /* Které „+" tlačítko se ukazuje. Kdo jede jen v agentovi, nechce vedle sebe
    pořád tlačítko na holý shell — a naopak. Klíč `claude` je tu z verzí do 1.6,
    kde se tlačítko tak jmenovalo; starý konfig se tím pádem nemusí přepisovat. */
+/* Na serveru s firemním Obsidianem se chaty jmenují podle toho, kde pracují:
+   „Server osobní" a „Server firemní" (fialový). Jinde je to prostě „Nový chat". */
+function naServeruSFirmou() {
+  return onServer() && !!(STATE.firma && STATE.firma.vault);
+}
+const TITULKY_BEZ_JMENA = /^(Chat|Rozhovor|Osobní chat|Server osobní|Server firemní|Firemní chat)$/;
+
 function newTabLabel() {
   // Tlačítko říká, KDE se bude pracovat, ne kdo to odpracuje — to je vidět
   // na odznaku agenta a v popisku. Na počítači „PC", v prostoru „Server";
   // kde je firemní trezor, je potřeba rozlišit i nad čím Claude pojede.
   const firma = !!(STATE.firma && STATE.firma.vault);
-  return onServer() && firma ? 'Osobní chat' : 'Chat';
+  return onServer() && firma ? 'Server osobní' : 'Chat';
 }
 
 function renderNewTabButtons() {
@@ -2195,12 +2202,19 @@ function renderNewTabButtons() {
   $('btn-new-shell').hidden = cfg.shell === false || !STATE.config.dev_mode;
   const firma = !!(STATE.firma && STATE.firma.vault);
   $('btn-new-firma').hidden = !firma;
+  const fl = $('btn-new-firma').querySelector('span');
+  if (fl) fl.textContent = onServer() ? 'Server firemní' : 'Firemní';
+  // Panel vlevo: „Server osobní" a pod ním fialový „Server firemní".
+  const dn = $('btn-drawer-new');
+  if (dn) dn.querySelector('.nav-text').textContent = naServeruSFirmou() ? 'Server osobní' : 'Nový chat';
+  const df = $('btn-drawer-firma');
+  if (df) df.hidden = !naServeruSFirmou();
   // Jedno „+" na telefonu: schová se jen tehdy, když by pod ním nic nebylo.
   $('btn-new-menu').hidden = btn.hidden && !firma && $('btn-new-shell').hidden;
   const a = agentById(STATE.default_agent) || agentList(true)[0];
   const label = btn.querySelector('span');
   if (a && label) {
-    label.textContent = 'Nový ' + newTabLabel().toLowerCase();
+    label.textContent = naServeruSFirmou() ? 'Server osobní' : 'Nový chat';
     const kde = onServer() ? (firma ? ' nad tvými osobními poznámkami' : ' na serveru')
                            : ' na tomhle počítači';
     btn.title = 'Nový chat s Claudem' + kde +
@@ -2730,6 +2744,7 @@ function goHome() {
   if (window.HubMobile) HubMobile.closeDrawer();
 }
 window.hubHome = goHome;
+window.hubFirmaChat = () => openFirmaTab();
 
 function refit(tab) {
   if (!tab || tab.pane.offsetWidth === 0) return;
@@ -3136,7 +3151,7 @@ function newTabMenu(btn) {
                                     title: newTabLabel(), agent: a.id})});
   }
   if (STATE.firma && STATE.firma.vault) {
-    items.push({icon: 'i-terminal', label: 'Firemní chat', color: 'var(--firma)',
+    items.push({icon: 'i-terminal', label: onServer() ? 'Server firemní' : 'Firemní chat', color: 'var(--firma)',
                 run: () => openFirmaTab()});
   }
   if (cfg.shell !== false && STATE.config.dev_mode) {
