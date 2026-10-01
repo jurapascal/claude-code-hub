@@ -165,6 +165,8 @@ def ensure(wait=15.0):
 
 # ── Minimální websocket klient (jen standardní knihovna) ─────────────────────
 
+SROVNAT_OKNO = False         # appka nemění velikost skutečného okna Chromia
+
 class _WS:
     def __init__(self, url):
         m = re.match(r"ws://([^/:]+):(\d+)(/.*)$", url)
@@ -473,7 +475,14 @@ class Okno:
         velikost, kterou člověk vidí (responzivní web, nic neuříznutého, 1:1
         bez zmenšování). Výška okna obsahuje i lištu prohlížeče, kterou
         screencast nevidí, tak se její tloušťka změří a odečte. Běží
-        na vlastním spojení — Claude přitom nic nevidí a nic se nepřeruší."""
+        na vlastním spojení — Claude přitom nic nevidí a nic se nepřeruší.
+
+        VYPNUTO: skutečné okno Chromia se nechává na pokoji (člověk ho vidí
+        a nechce, aby mu appka měnila rozměry). Obraz v appce se přizpůsobí
+        velikosti okna Chromia — plátno zachovává poměr stran a myš se
+        přepočítává podle rozměrů snímku."""
+        if not SROVNAT_OKNO:
+            return
         cil = self._target
         if not cil:
             return
