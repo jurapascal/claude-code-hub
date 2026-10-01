@@ -1201,7 +1201,8 @@ function readChat(c) {
    zpráva napsaná v okně se čtením — Claude na ní začne dělat hned po startu. */
 function resumeChat(c, prompt, preneseny) {
   if (!c.exists) {
-    toast('Složka téhle konverzace už není: ' + (c.cwd || '?'));
+    toast(c.cwd ? 'Složka téhle konverzace už není: ' + c.cwd
+                : 'U téhle konverzace se nepodařilo zjistit složku, otevřít ji nejde.');
     return;
   }
   // Změněná před chvílí a v žádném tabu hubu neběží: nejspíš je otevřená
