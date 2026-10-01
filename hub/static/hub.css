@@ -3532,3 +3532,18 @@ button.pr-radek:hover { background: var(--card-hover); color: var(--fg-bright); 
 .pr-dul-barva.on { border-color: var(--fg-bright); }
 .pr-dul-razeni { margin-left: auto; border: none; background: none; color: var(--dim); font: inherit; font-size: 11.5px; cursor: pointer; text-decoration: underline dotted; }
 .pr-dul-razeni:hover { color: var(--fg-bright); }
+
+/* Využití tokenů a odhad ceny u projektu (seznam i stránka Projekty). */
+.card-usage {
+  flex: none; display: inline-flex; flex-direction: column; align-items: flex-end; gap: 1px;
+  padding: 2px 6px; border: none; border-radius: 6px; background: none; cursor: pointer;
+  color: var(--dim); font: inherit; line-height: 1.15; text-align: right;
+}
+.card-usage[hidden] { display: none; }
+.card-usage:hover { background: var(--card-hover); color: var(--fg-bright); }
+.card-usage .cu-cost { font-size: 12px; font-weight: 600; color: var(--fg-bright); }
+.card-usage .cu-tok { font-size: 10px; }
+.card:hover .card-usage, .card:focus-within .card-usage { margin-right: 24px; }
+.pp-usage { cursor: pointer; border: 1px solid var(--border); background: none; font: inherit; }
+.pp-usage:hover { background: var(--card-hover); color: var(--fg-bright); }
+.st-projekt { z-index: 80; }

@@ -243,6 +243,24 @@ function icon(name, cls) {
   return `<svg class="ico${cls ? ' ' + cls : ''}"><use href="#${name}"/></svg>`;
 }
 
+/* Tokeny a cena podle projektu (cesta → součty). Čte se z mezipaměti statistik,
+   takže je to rychlé; po aktualizaci hubu se mezipaměť jednou přepočítá na
+   pozadí (pár desítek vteřin) a seznam se pak dokreslí. */
+let USAGE = {};
+let usageTimer = null, usageAt = 0;
+async function loadUsage() {
+  clearTimeout(usageTimer);
+  usageTimer = null;
+  usageAt = Date.now();
+  try {
+    const res = await api('project-usage');
+    USAGE = res.projects || {};
+    renderProjects($('search').value);
+    if (!$('projekty-page').hidden) renderProjekty();
+    if (res.pending) usageTimer = setTimeout(loadUsage, 6000);
+  } catch (_) { usageTimer = setTimeout(loadUsage, 30000); }
+}
+
 function renderProjects(filter) {
   const box = $('projects');
   const needle = (filter || '').trim().toLowerCase();
@@ -287,8 +305,21 @@ function renderProjects(filter) {
         <span class="card-name"></span>
         <span class="card-meta"></span>
         <span class="card-path"></span></span>
+      <button class="card-usage" title="Využití tokenů — klikni pro statistiky" hidden></button>
       <button class="card-more" title="Možnosti">⋯</button>`;
     el.querySelector('.card-name').textContent = p.label || p.name;
+    // Tokeny a odhad ceny u projektu (z mezipaměti statistik, /api/project-usage).
+    const u = USAGE[p.path];
+    if (u && (u.out || u.cost)) {
+      const b = el.querySelector('.card-usage');
+      b.hidden = false;
+      b.innerHTML = '<span class="cu-cost"></span><span class="cu-tok"></span>';
+      b.querySelector('.cu-cost').textContent = HubStats.dolary(u.cost);
+      b.querySelector('.cu-tok').textContent = HubStats.cislo(u.out) + ' tok.';
+      b.title = `Napsáno ${HubStats.cislo(u.out)} tokenů, ${u.answers} odpovědí v ${u.sessions} sezeních.\n` +
+        `Odhad ceny podle ceníku API ${HubStats.dolary(u.cost)} — na předplatném se neplatí.\nKlikni pro statistiky projektu.`;
+      b.onclick = (ev) => { ev.stopPropagation(); HubStats.openProject(hubIO(), p); };
+    }
     el.querySelector('.card-meta').textContent = meta;
     el.querySelector('.card-path').textContent = shortPath(p.path);
     const thumb = el.querySelector('.card-thumb');
@@ -2016,6 +2047,7 @@ async function reload() {
   STATE = await api('state');
   markAdvanced();
   renderProjects($('search').value);
+  if (!usageTimer && Date.now() - usageAt > 120000) loadUsage();
   if (!$('projekty-page').hidden) renderProjekty();
   renderMemory();
   renderFirma();
@@ -2463,10 +2495,13 @@ function renderProjekty() {
   const showArchived = !!STATE.config.show_archived;
   let list = STATE.projects.filter(p => (showArchived || !p.archived) &&
     (!needle || foldText((p.label || '') + ' ' + p.name + ' ' + (p.brief || '')).includes(needle)));
+  const cena = (p) => (USAGE[p.path] || {}).cost || 0;
   list = ppSort === 'name'
     ? list.sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name, 'cs'))
-    : list.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
-  $('pp-sort').textContent = ppSort === 'name' ? 'Podle jména' : 'Naposledy upravené';
+    : ppSort === 'cena'
+      ? list.sort((a, b) => cena(b) - cena(a) || (b.mtime || 0) - (a.mtime || 0))
+      : list.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
+  $('pp-sort').textContent = ppSort === 'name' ? 'Podle jména' : ppSort === 'cena' ? 'Podle využití tokenů' : 'Naposledy upravené';
   grid.textContent = '';
   if (!list.length) {
     grid.appendChild(Object.assign(document.createElement('div'),
@@ -2495,6 +2530,14 @@ function renderProjekty() {
     card.querySelector('.pp-desc').textContent = desc.slice(0, 160) || (devMode() ? shortPath(p.path) : '');
     card.querySelector('.pp-when').textContent = p.mtime ? 'Upraveno ' + kdy(p.mtime) : '';
     const tags = card.querySelector('.pp-tags');
+    const u = USAGE[p.path];
+    if (u && (u.out || u.cost)) {
+      const chip = Object.assign(document.createElement('button'), {className: 'pp-tag pp-usage',
+        textContent: HubStats.dolary(u.cost) + ' · ' + HubStats.cislo(u.out) + ' tok.'});
+      chip.title = 'Využití tokenů, odhad ceny podle ceníku API — klikni pro statistiky';
+      chip.onclick = (ev) => { ev.stopPropagation(); HubStats.openProject(hubIO(), p); };
+      tags.appendChild(chip);
+    }
     if (devMode()) {
       if (p.branch) tags.appendChild(Object.assign(document.createElement('span'), {className: 'pp-tag', textContent: p.branch}));
       if (p.dirty) tags.appendChild(Object.assign(document.createElement('span'), {className: 'pp-tag dirty', textContent: p.dirty + ' změn'}));
@@ -2820,6 +2863,8 @@ function projectMenu(ev, p) {
                 run: () => HubSettings.open({...hubIO(), state: STATE, tab: 'agenti'})});
   }
   items.push({icon: 'i-note', label: 'Upravit…', run: () => editProject(p)});
+  items.push({icon: 'i-chart', label: 'Statistiky a tokeny…',
+              run: () => HubStats.openProject(hubIO(), p)});
   if (devMode()) {
     items.push({icon: 'i-deploy', label: p.deployable ? 'Deploy (FTP)' : 'Deploy',
       run: () => openTab({kind: 'deploy', path: p.path, title: 'deploy: ' + p.name})});
@@ -3380,7 +3425,7 @@ async function main() {
   $('nav-projekty').onclick = () => showProjekty(true);
   $('pp-q').oninput = renderProjekty;
   $('pp-sort').onclick = () => {
-    ppSort = ppSort === 'name' ? 'recent' : 'name';
+    ppSort = ppSort === 'recent' ? 'name' : ppSort === 'name' ? 'cena' : 'recent';
     try { localStorage.setItem('hub-pp-sort', ppSort); } catch (_) {}
     renderProjekty();
   };

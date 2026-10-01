@@ -19,12 +19,12 @@ import os
 import time
 from collections import Counter, defaultdict
 
-from . import core
+from . import core, pricing
 
 CACHE_PATH = os.path.join(core.CLAUDE_DIR, "hub-stats.json")
 HISTORY_PATH = os.path.join(core.CLAUDE_DIR, "history.jsonl")
 PROJECTS_ROOT = os.path.join(core.CLAUDE_DIR, "projects")
-CACHE_VERSION = 1
+CACHE_VERSION = 3          # 2: tokeny podle modelu (cena), 3: cena podle dne
 DAYS_KEPT = 120
 
 
@@ -40,7 +40,9 @@ def _add(into, other):
 def _scan_file(path):
     """Tokeny a dny z jednoho přepisu sezení."""
     totals = _empty()
+    models = {}
     days = Counter()
+    dcost = Counter()
     first = last = 0
     with open(path, encoding="utf-8", errors="replace") as fh:
         for line in fh:
@@ -62,12 +64,25 @@ def _scan_file(path):
             totals["cache_r"] += usage.get("cache_read_input_tokens") or 0
             totals["think"] += ((usage.get("output_tokens_details") or {})
                                 .get("thinking_tokens") or 0)
+            # Podle modelu, ať se dá spočítat cena (ceny se u modelů liší).
+            m = models.setdefault(str((entry.get("message") or {}).get("model") or "?"), _empty())
+            m["answers"] += 1
+            m["in"] += usage.get("input_tokens") or 0
+            m["out"] += usage.get("output_tokens") or 0
+            m["cache_w"] += usage.get("cache_creation_input_tokens") or 0
+            m["cache_r"] += usage.get("cache_read_input_tokens") or 0
+            price = pricing.cost(entry.get("message", {}).get("model"), {
+                "in": usage.get("input_tokens") or 0, "out": usage.get("output_tokens") or 0,
+                "cache_w": usage.get("cache_creation_input_tokens") or 0,
+                "cache_r": usage.get("cache_read_input_tokens") or 0})
             stamp = entry.get("timestamp") or ""
             if isinstance(stamp, str) and len(stamp) >= 10:
                 days[stamp[:10]] += usage.get("output_tokens") or 0
+                dcost[stamp[:10]] += price
                 first = first or stamp
                 last = stamp
-    return {"totals": totals, "days": dict(days), "first": first, "last": last}
+    return {"totals": totals, "models": models, "days": dict(days),
+            "dcost": {d: round(c, 4) for d, c in dcost.items()}, "first": first, "last": last}
 
 
 def _load_cache():
@@ -214,6 +229,100 @@ def github(force=False):
     return result
 
 
+def _file_cost(cached):
+    """Odhad ceny jednoho přepisu podle modelů (pricing.py)."""
+    return sum(pricing.cost(m, u) for m, u in (cached.get("models") or {}).items())
+
+
+def usage_by_slug(files):
+    """Součty tokenů a ceny podle složky sezení z hotové mezipaměti."""
+    out = defaultdict(lambda: {**_empty(), "cost": 0.0, "sessions": 0, "last": ""})
+    for cached in files.values():
+        slug = cached.get("slug")
+        if not slug:
+            continue
+        u = out[slug]
+        t = cached.get("totals") or {}
+        for key in ("in", "out", "cache_w", "cache_r", "think", "answers"):
+            u[key] += t.get(key, 0)
+        u["cost"] += _file_cost(cached)
+        u["sessions"] += 1
+        if (cached.get("last") or "") > u["last"]:
+            u["last"] = cached.get("last") or ""
+    return out
+
+
+def project_usage():
+    """Využití tokenů a cena u každého projektu — jen z mezipaměti, bez čtení
+    přepisů (vteřiny místo půl minuty). `pending` = mezipaměť je stará nebo
+    prázdná, je potřeba přepočítat (collect)."""
+    cache = _load_cache()
+    files = cache.get("files") or {}
+    pending = (not files) or any("models" not in f for f in files.values())
+    known = [p["path"] for p in core.get_projects()]
+    result = {}
+    for slug, u in usage_by_slug(files).items():
+        path = _slug_to_path(slug, known)
+        if not path:
+            continue
+        result[path] = {"in": u["in"], "out": u["out"], "cache_w": u["cache_w"],
+                        "cache_r": u["cache_r"], "answers": u["answers"],
+                        "cost": round(u["cost"], 2), "sessions": u["sessions"], "last": u["last"]}
+    return {"pending": pending, "projects": result,
+            "note": "Cena je odhad podle ceníku API; na předplatném se po tokenech neplatí."}
+
+
+def project_detail(path):
+    """Statistiky jednoho projektu z mezipaměti: součty, modely, dny, nejdražší
+    sezení a počet zpráv z historie."""
+    cache = _load_cache()
+    slug = slugify(os.path.abspath(os.path.expanduser(path or "")))
+    mine = {k: f for k, f in (cache.get("files") or {}).items() if f.get("slug") == slug}
+    total = _empty()
+    cost = 0.0
+    models = defaultdict(lambda: {**_empty(), "cost": 0.0})
+    days = defaultdict(lambda: {"out": 0, "cost": 0.0})
+    sessions = []
+    first = last = ""
+    for key, f in mine.items():
+        t = f.get("totals") or {}
+        for k in total:
+            total[k] += t.get(k, 0)
+        c = _file_cost(f)
+        cost += c
+        for model, u in (f.get("models") or {}).items():
+            m = models[model]
+            for k in _empty():
+                m[k] += u.get(k, 0)
+            m["cost"] += pricing.cost(model, u)
+        for d, out in (f.get("days") or {}).items():
+            days[d]["out"] += out
+        for d, cc in (f.get("dcost") or {}).items():
+            days[d]["cost"] += cc
+        if f.get("first") and (not first or f["first"] < first):
+            first = f["first"]
+        if (f.get("last") or "") > last:
+            last = f.get("last") or ""
+        sessions.append({"id": os.path.basename(key)[:-6], "first": f.get("first") or "",
+                         "last": f.get("last") or "", "out": t.get("out", 0),
+                         "answers": t.get("answers", 0), "cost": round(c, 2)})
+    sessions.sort(key=lambda s: -s["cost"])
+    hist = _history()
+    day_list = [{"day": d, "out": v["out"], "cost": round(v["cost"], 2)} for d, v in sorted(days.items())][-60:]
+    return {
+        "path": path, "name": os.path.basename(str(path).rstrip("/\\")) or str(path),
+        "tokens": total, "cost": round(cost, 2),
+        "models": [{"model": m, "cost": round(v["cost"], 2), "out": v["out"], "answers": v["answers"]}
+                   for m, v in sorted(models.items(), key=lambda x: -x[1]["cost"])
+                   if v["answers"] and not m.startswith("<")],
+        "days": day_list, "active_days": len(days), "sessions_count": len(sessions),
+        "sessions": sessions[:8], "first": first, "last": last,
+        "prompts": hist["projects"].get(slug, 0),
+        "pending": bool(mine) and any("dcost" not in f for f in mine.values()),
+        "note": "Cena je odhad podle ceníku API; na předplatném se po tokenech neplatí.",
+    }
+
+
 def collect(progress=None):
     """Spočítá statistiky. Vrací hotový slovník pro UI."""
     cache = _load_cache()
@@ -221,6 +330,8 @@ def collect(progress=None):
     known = [p["path"] for p in core.get_projects()]
 
     per_project = defaultdict(_empty)
+    cost_by_slug = defaultdict(float)
+    cost_by_model = defaultdict(float)
     grand = _empty()
     token_days = Counter()
     sessions = 0
@@ -262,6 +373,9 @@ def collect(progress=None):
         sessions += 1
         _add(grand, cached["totals"])
         _add(per_project[slug], cached["totals"])
+        cost_by_slug[slug] += _file_cost(cached)
+        for model, u in (cached.get("models") or {}).items():
+            cost_by_model[model] += pricing.cost(model, u)
         for day, out in (cached.get("days") or {}).items():
             token_days[day] += out
 
@@ -279,6 +393,8 @@ def collect(progress=None):
         projects.append({
             "name": name or slug, "path": path,
             "out": totals["out"], "answers": totals["answers"],
+            "in": totals["in"], "cache_w": totals["cache_w"], "cache_r": totals["cache_r"],
+            "cost": round(cost_by_slug[slug], 2),
             "prompts": hist["projects"].get(slug, 0),
         })
     projects.sort(key=lambda p: -p["out"])
@@ -288,6 +404,8 @@ def collect(progress=None):
 
     return {
         "tokens": grand,
+        "cost": round(sum(cost_by_slug.values()), 2),
+        "cost_by_model": {m: round(c, 2) for m, c in sorted(cost_by_model.items(), key=lambda x: -x[1]) if c >= 0.01},
         "sessions": sessions,
         "prompts": hist["prompts"],
         "active_days": len(hist["days"]),

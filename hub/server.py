@@ -1155,6 +1155,18 @@ class Handler(BaseHTTPRequestHandler):
                     progress=lambda m: core.job_step("stats", m)))
                 return self._json({"running": True, "step": "počítám…"})
             return self._json({"running": False, **(cached.get("result") or {})})
+        if name == "project-usage":
+            # Tokeny a cena u každého projektu — z mezipaměti, bez čtení přepisů.
+            usage = stats.project_usage()
+            if usage["pending"] and not core.job_state("stats").get("running"):
+                core.start_job("stats", lambda: stats.collect(
+                    progress=lambda m: core.job_step("stats", m)))
+            return self._json(usage)
+        if name == "project-stats":
+            path = (query.get("path") or [""])[0]
+            if not path:
+                return self._json({"error": "chybí cesta"}, 400)
+            return self._json(stats.project_detail(path))
         if name == "connect":
             # Služby pro člověka — Freelo, Canva, Ecomail, Google, i více účtů
             # (hub/connect.py). Nad technickým katalogem /api/mcp.

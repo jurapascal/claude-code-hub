@@ -163,6 +163,7 @@
         `${data.active_days || 0} dnů s prací`));
       tiles.appendChild(tile(cislo(t.cache_r || 0), 'přečteno z cache',
         `zapsáno ${cislo(t.cache_w || 0)}`));
+      if (data.cost) tiles.appendChild(tile(dolary(data.cost), 'odhad ceny', 'podle ceníku API, na předplatném se neplatí'));
     } else {
       const zprav = data.prompts || 0;
       const odpovedi = t.answers || 0;
@@ -229,7 +230,7 @@
         row.appendChild(track);
         row.appendChild(el('span', 'st-row-val', cislo(kolik(p))));
         row.title = pro
-          ? `${p.path || p.name}\n${cislo(p.out)} tokenů · ${p.prompts} zpráv`
+          ? `${p.path || p.name}\n${cislo(p.out)} tokenů · ${p.prompts} zpráv · ${dolary(p.cost)}`
           : `${p.name}\n${p.prompts || 0} ${tvar(p.prompts || 0, 'zpráva', 'zprávy', 'zpráv')}`;
         list.appendChild(row);
       }
@@ -272,6 +273,136 @@
     root = null;
   }
 
-  global.HubStats = {open, close};
+  /* ── statistiky jednoho projektu ─────────────────────────────────────────
+     Tokeny, odhad ceny, modely, dny a nejdražší sezení. Cena je podle ceníku
+     API (hub/pricing.py) — na předplatném se po tokenech neplatí, je to míra,
+     co projekt „váží". */
+  const dolary = (c) => {
+    c = Number(c) || 0;
+    if (c >= 100) return Math.round(c).toLocaleString('cs-CZ') + ' $';
+    if (c >= 1) return c.toFixed(1).replace('.', ',') + ' $';
+    return c.toFixed(2).replace('.', ',') + ' $';
+  };
+  const datum = (iso) => (iso ? new Date(iso).toLocaleDateString('cs-CZ') : '–');
+  const kratce = (iso) => (iso ? new Date(iso).toLocaleDateString('cs-CZ', {day: 'numeric', month: 'numeric'}) : '–');
+  const jmenoModelu = (m) => String(m || '?').replace(/^claude-/, '').replace(/-(\d{8})$/, '')
+    .replace(/-(\d+)-(\d+)$/, ' $1.$2').replace(/-(\d+)$/, ' $1').replace(/^\w/, (c) => c.toUpperCase());
+
+  async function openProject(opts, project) {
+    const wrap = el('div', 'onb st-projekt');
+    wrap.innerHTML = `
+      <div class="onb-box st-box">
+        <div class="onb-head">
+          <div><div class="onb-title"></div><div class="onb-sub">Využití tokenů a odhad ceny</div></div>
+          <span class="spacer"></span>
+          <button class="set-x" title="Zavřít">×</button>
+        </div>
+        <div class="onb-body"></div>
+      </div>`;
+    wrap.querySelector('.onb-title').textContent = project.label || project.name;
+    const zavri = () => wrap.remove();
+    wrap.querySelector('.set-x').onclick = zavri;
+    let downOutside = false;
+    wrap.addEventListener('pointerdown', (ev) => { downOutside = ev.target === wrap; });
+    wrap.addEventListener('click', (ev) => { if (ev.target === wrap && downOutside) zavri(); });
+    document.body.appendChild(wrap);
+    const body = wrap.querySelector('.onb-body');
+    body.appendChild(el('div', 'set-status busy', 'Počítám…'));
+    let d;
+    try {
+      d = await opts.api('project-stats?path=' + encodeURIComponent(project.path));
+    } catch (err) {
+      body.textContent = '';
+      body.appendChild(el('div', 'set-status warn', 'Nepovedlo se: ' + err.message));
+      return;
+    }
+    body.textContent = '';
+    const t = d.tokens || {};
+    if (!t.answers) {
+      body.appendChild(el('div', 'set-note', 'U tohohle projektu zatím nejsou žádná sezení s Claudem.'));
+      return;
+    }
+    const tiles = el('div', 'st-tiles');
+    tiles.appendChild(tile(dolary(d.cost), 'odhad ceny', 'podle ceníku API'));
+    tiles.appendChild(tile(cislo(t.out || 0), 'napsaných tokenů', `z toho ${cislo(t.think || 0)} přemýšlení`));
+    tiles.appendChild(tile(cislo(d.prompts || 0), tvar(d.prompts || 0, 'zpráva', 'zprávy', 'zpráv'), `${cislo(t.answers)} odpovědí`));
+    tiles.appendChild(tile(String(d.sessions_count || 0), tvar(d.sessions_count || 0, 'sezení', 'sezení', 'sezení'),
+      `${d.active_days || 0} dnů s prací`));
+    body.appendChild(tiles);
+
+    const s1 = section('Tokeny', 'Z čeho se cena skládá.');
+    const rows = [
+      ['Vstup (nový)', t.in, 'tokeny, které model četl poprvé'],
+      ['Výstup', t.out, 'co Claude napsal a promyslel'],
+      ['Zápis do cache', t.cache_w, 'kontext uložený pro další zprávy'],
+      ['Čtení z cache', t.cache_r, 'kontext znovu použitý (levné)'],
+    ];
+    const max = Math.max(1, ...rows.map((r) => r[1] || 0));
+    const list = el('div', 'st-rows');
+    for (const [name, val, note] of rows) {
+      const row = el('div', 'st-row');
+      row.appendChild(el('span', 'st-row-name', name));
+      const track = el('span', 'st-track');
+      const fill = el('span', 'st-fill');
+      fill.style.width = Math.max(1, (val || 0) / max * 100) + '%';
+      track.appendChild(fill);
+      row.appendChild(track);
+      row.appendChild(el('span', 'st-row-val', cislo(val || 0)));
+      row.title = note;
+      list.appendChild(row);
+    }
+    s1.appendChild(list);
+    body.appendChild(s1);
+
+    if ((d.models || []).length) {
+      const s2 = section('Modely', 'Odhad ceny podle toho, čím Claude odpovídal.');
+      const l2 = el('div', 'st-rows');
+      const mc = Math.max(0.01, ...d.models.map((m) => m.cost));
+      for (const m of d.models) {
+        const row = el('div', 'st-row');
+        row.appendChild(el('span', 'st-row-name', jmenoModelu(m.model)));
+        const track = el('span', 'st-track');
+        const fill = el('span', 'st-fill');
+        fill.style.width = Math.max(1, m.cost / mc * 100) + '%';
+        track.appendChild(fill);
+        row.appendChild(track);
+        row.appendChild(el('span', 'st-row-val', dolary(m.cost)));
+        row.title = `${m.model}\n${cislo(m.out)} tokenů výstupu · ${m.answers} odpovědí`;
+        l2.appendChild(row);
+      }
+      s2.appendChild(l2);
+      body.appendChild(s2);
+    }
+
+    const dny = (d.days || []);
+    if (dny.length) {
+      const s3 = section('Cena po dnech', `Posledních ${dny.length} dnů s prací.`);
+      s3.appendChild(bars(dny.map((x, i, a) => ({
+        value: x.cost, label: x.day, full: x.day, tick: i === 0 || i === a.length - 1 ? x.day.slice(5) : '',
+      })), {unit: ' $'}));
+      body.appendChild(s3);
+    }
+
+    if ((d.sessions || []).length) {
+      const s4 = section('Nejdražší sezení', 'Jedno sezení = jeden rozhovor s Claudem.');
+      const l4 = el('div', 'st-rows');
+      for (const s of d.sessions.slice(0, 6)) {
+        const row = el('div', 'st-row');
+        const nm = el('span', 'st-row-name', kratce(s.first) + (s.last && s.last.slice(0, 10) !== (s.first || '').slice(0, 10) ? ' – ' + kratce(s.last) : ''));
+        nm.style.minWidth = '110px';
+        row.appendChild(nm);
+        row.appendChild(el('span', 'st-track'));
+        row.appendChild(el('span', 'st-row-val', dolary(s.cost)));
+        row.title = `${cislo(s.out)} tokenů · ${s.answers} odpovědí\n${s.id}`;
+        l4.appendChild(row);
+      }
+      s4.appendChild(l4);
+      body.appendChild(s4);
+    }
+    body.appendChild(el('div', 'set-note',
+      `${datum(d.first)} – ${datum(d.last)}. ${d.note || ''}`));
+  }
+
+  global.HubStats = {open, close, openProject, dolary, cislo};
 
 })(window);
