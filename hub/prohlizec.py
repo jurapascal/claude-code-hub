@@ -29,6 +29,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 
 IS_WINDOWS = sys.platform == "win32"
@@ -273,6 +274,11 @@ class Okno:
         self._cekajici = []        # příkazy poslané dřív, než se prohlížeč připojil
         self._videne = None        # id stránek, které už jsme viděli (nová = Claude ji otevřel)
         self._poradi = {}          # id stránky → pořadí, v jakém se objevila (karty zleva doprava)
+        self._odpovedi = {}        # id požadavku → funkce, která dostane odpověď
+        self._nav = {"back": False, "fwd": False}   # lze jít zpět / vpřed
+        self._nacita = False       # stránka se načítá (kolečko na kartě, stop místo reload)
+        self._velikost = None      # (šířka, výška) plochy okna v appce
+        self._fit_cekajici = None
 
     # -- pohledy
     def pridej(self, conn):
@@ -305,6 +311,51 @@ class Okno:
             cdp.send(json.dumps({"id": self._next_id, "method": method, "params": params}))
         except OSError:
             pass
+
+    def _dotaz(self, method, cb=None, **params):
+        """Požadavek, jehož odpověď chceme (cb dostane `result` nebo None)."""
+        cdp = self._cdp
+        if not cdp or cdp.closed:
+            return
+        self._next_id += 1
+        rid = self._next_id
+        if cb:
+            self._odpovedi[rid] = cb
+        try:
+            cdp.send(json.dumps({"id": rid, "method": method, "params": params}))
+        except OSError:
+            self._odpovedi.pop(rid, None)
+
+    def _obnov_historii(self):
+        def hotovo(res):
+            if not res:
+                return
+            i = res.get("currentIndex", 0)
+            n = len(res.get("entries") or [])
+            nav = {"back": i > 0, "fwd": i < n - 1}
+            if nav != self._nav:
+                self._nav = nav
+                self._info = None          # překreslí se s novým stavem šipek
+        self._dotaz("Page.getNavigationHistory", hotovo)
+
+    def _udalost(self, msg):
+        """Události stránky: načítání, historie, dialogy JavaScriptu."""
+        m = msg.get("method")
+        par = msg.get("params") or {}
+        if m == "Page.frameStartedLoading":
+            self._nacita = True
+            self._info = None
+        elif m == "Page.frameStoppedLoading":
+            self._nacita = False
+            self._info = None
+            self._obnov_historii()
+        elif m in ("Page.frameNavigated", "Page.navigatedWithinDocument"):
+            self._obnov_historii()
+        elif m == "Page.javascriptDialogOpening":
+            self._vsem({"t": "br-dialog", "typ": par.get("type", "alert"), "zprava": par.get("message", ""),
+                        "vychozi": par.get("defaultPrompt", ""), "url": par.get("url", "")})
+        elif m == "Page.javascriptDialogClosed":
+            self._vsem({"t": "br-dialog", "zavrit": True})
 
     def _strany(self):
         try:
@@ -350,7 +401,9 @@ class Okno:
         info = {"t": "br-info", "active": aktivni["id"] if aktivni else "",
                 "url": aktivni.get("url", "") if aktivni else "",
                 "title": aktivni.get("title", "") if aktivni else "",
-                "pages": [{"id": p["id"], "title": p.get("title", ""), "url": p.get("url", "")} for p in strany]}
+                "back": self._nav["back"], "fwd": self._nav["fwd"], "loading": self._nacita,
+                "pages": [{"id": p["id"], "title": p.get("title", ""), "url": p.get("url", ""),
+                           "icon": p.get("faviconUrl", "")} for p in strany]}
         sig = json.dumps(info, sort_keys=True)
         if sig != self._info:
             self._info = sig
@@ -360,7 +413,12 @@ class Okno:
         cdp = _WS(cil["webSocketDebuggerUrl"])
         self._cdp = cdp
         self._posli("Page.enable")
-        self._posli("Page.startScreencast", format="jpeg", quality=60, maxWidth=1400, maxHeight=1000, everyNthFrame=1)
+        self._nacita = False
+        self._nav = {"back": False, "fwd": False}
+        self._spust_obraz()
+        self._obnov_historii()
+        if self._velikost:
+            self._srovnej_okno(*self._velikost)
         # Co člověk napsal, než se spojení rozjelo (adresa hned po otevření okna).
         cekajici, self._cekajici = self._cekajici, []
         for method, params in cekajici:
@@ -389,15 +447,75 @@ class Okno:
                     msg = json.loads(raw)
                 except ValueError:
                     continue
-                if msg.get("method") == "Page.screencastFrame":
+                if msg.get("id") in self._odpovedi:
+                    self._odpovedi.pop(msg["id"])(msg.get("result"))
+                elif msg.get("method") == "Page.screencastFrame":
                     p = msg["params"]
                     meta = p.get("metadata", {})
                     self._vsem({"t": "br-frame", "d": p["data"],
                                 "w": meta.get("deviceWidth", 0), "h": meta.get("deviceHeight", 0)})
                     self._posli("Page.screencastFrameAck", sessionId=p["sessionId"])
+                elif msg.get("method"):
+                    self._udalost(msg)
         finally:
             stop.set()
             cdp.close()
+
+    # -- velikost: okno prohlížeče = plocha okna v appce
+    def _spust_obraz(self):
+        w, h = self._velikost or (1280, 800)
+        self._posli("Page.stopScreencast")
+        self._posli("Page.startScreencast", format="jpeg", quality=70, maxWidth=max(w, 320),
+                    maxHeight=max(h, 240), everyNthFrame=1)
+
+    def _srovnej_okno(self, w, h):
+        """Skutečné okno Chromia dostane rozměr plochy, ať stránka vidí tu
+        velikost, kterou člověk vidí (responzivní web, nic neuříznutého, 1:1
+        bez zmenšování). Výška okna obsahuje i lištu prohlížeče, kterou
+        screencast nevidí, tak se její tloušťka změří a odečte. Běží
+        na vlastním spojení — Claude přitom nic nevidí a nic se nepřeruší."""
+        cil = self._target
+        if not cil:
+            return
+
+        def prace():
+            try:
+                cdp = _WS(f"ws://{HOST}:{port()}/devtools/page/{cil}")
+            except Exception:
+                return
+            try:
+                seq = [0]
+
+                def zavolej(method, **params):
+                    seq[0] += 1
+                    cdp.send(json.dumps({"id": seq[0], "method": method, "params": params}))
+                    while True:
+                        raw = cdp.recv()
+                        if raw is None:
+                            return None
+                        d = json.loads(raw)
+                        if d.get("id") == seq[0]:
+                            return d.get("result")
+                win = zavolej("Browser.getWindowForTarget")
+                if not win:
+                    return
+                wid = win["windowId"]
+                zavolej("Browser.setWindowBounds", windowId=wid, bounds={"windowState": "normal"})
+                zavolej("Browser.setWindowBounds", windowId=wid, bounds={"width": w + 0, "height": h + 140})
+                vnitrek = zavolej("Runtime.evaluate", expression="[innerWidth,innerHeight].join(',')")
+                try:
+                    iw, ih = [int(x) for x in vnitrek["result"]["value"].split(",")]
+                except Exception:
+                    return
+                if (iw, ih) != (w, h):
+                    # Okno = obsah + rámeček; dorovnat o naměřený rozdíl.
+                    zavolej("Browser.setWindowBounds", windowId=wid,
+                            bounds={"width": max(200, w + (w - iw) + 0), "height": h + 140 + (h - ih)})
+            except Exception:
+                pass
+            finally:
+                cdp.close()
+        threading.Thread(target=prace, daemon=True).start()
 
     def _nova(self, strany, vzit=True):
         """Stránka, která se objevila od posledního pohledu (`vzit` ji označí
@@ -441,10 +559,48 @@ class Okno:
             text = str(msg.get("text", ""))[:20000]
             if text:
                 self._posli("Input.insertText", text=text)
+        elif a == "size":
+            try:
+                w = max(320, min(int(msg.get("w", 0)), 3000))
+                h = max(200, min(int(msg.get("h", 0)), 2000))
+            except (TypeError, ValueError):
+                return
+            if (w, h) != self._velikost:
+                self._velikost = (w, h)
+                self._srovnej_okno(w, h)
+                # Obraz o velikosti okna: spustí se znovu, až se okno srovná.
+                threading.Timer(0.6, self._spust_obraz).start()
+        elif a == "stop":
+            self._posli("Page.stopLoading")
+        elif a == "closetab":
+            tid = str(msg.get("id", ""))
+            if re.match(r"^[A-Za-z0-9-]+$", tid):
+                try:
+                    if len(self._strany()) <= 1:       # poslední karta se nezavírá, jen vyprázdní
+                        urllib.request.urlopen(urllib.request.Request(endpoint() + "/json/new?about:blank", method="PUT"), timeout=2).read()
+                    urllib.request.urlopen(endpoint() + "/json/close/" + tid, timeout=2).read()
+                except Exception:
+                    pass
+                self._info = None
+        elif a == "copy":
+            def vybrano(res):
+                text = ((res or {}).get("result") or {}).get("value") or ""
+                self._vsem({"t": "br-copy", "text": str(text)[:200000]})
+            self._dotaz("Runtime.evaluate", vybrano, expression="String(getSelection())")
+        elif a == "dialog":
+            self._posli("Page.handleJavaScriptDialog", accept=bool(msg.get("accept")),
+                        promptText=str(msg.get("text", ""))[:10000])
         elif a == "go":
             url = str(msg.get("url", "")).strip()
-            if url and not re.match(r"^[a-z][a-z0-9+.-]*:", url, re.I):
-                url = "https://" + url
+            if url and not re.match(r"^(https?|about|chrome):", url, re.I):
+                # „abc.cz/x" je adresa, „jak se peče chleba" hledání (jako v Chromu).
+                hostitel = url.split("/")[0]
+                if re.match(r"^(localhost|\d{1,3}(\.\d{1,3}){3})(:\d+)?$", hostitel, re.I):
+                    url = "http://" + url
+                elif " " in url or "." not in hostitel:
+                    url = "https://www.google.com/search?q=" + urllib.parse.quote(url)
+                else:
+                    url = "https://" + url
             if url and re.match(r"^(https?|about|chrome):", url, re.I):
                 if self._cdp is None or self._cdp.closed:
                     self._cekajici = [("Page.navigate", {"url": url})]   # jen poslední adresa

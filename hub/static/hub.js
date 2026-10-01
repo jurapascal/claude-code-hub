@@ -3638,7 +3638,7 @@ async function main() {
     ev.returnValue = '';             // vyžadují starší prohlížeče
   });
 
-  if (window.HubProhlizec) HubProhlizec.install({send});
+  if (window.HubProhlizec) HubProhlizec.install({send, copy: (t) => copyText(t)});
   connect();
   checkForUpdate();
   checkServerUpdate();
