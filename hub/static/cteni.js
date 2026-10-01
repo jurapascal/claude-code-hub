@@ -69,6 +69,33 @@
     setTimeout(() => { document.addEventListener('mousedown', mimo, true); document.addEventListener('keydown', esc, true); }, 0);
   }
 
+  /* Zpráva člověka je holý text — adresy v ní se ale mají dát otevřít, stejně
+     jako v odpovědi Clauda. Kreslí se po kouscích (textNode + <a>), nic se
+     nevkládá jako HTML, takže se nedá nic podstrčit. Otevírá je tentýž
+     handler jako odkazy v odpovědích (mount click → openLink). */
+  const ADRESA = /\b(?:https?:\/\/|www\.)[^\s<>"'`]+/gi;
+  function textSOdkazy(text) {
+    const box = el('div', 'cteni-text');
+    let kam = 0;
+    for (const m of String(text).matchAll(ADRESA)) {
+      let url = m[0];
+      // Tečka, čárka, závorka na konci věty k adrese nepatří.
+      const konec = /[.,;:!?)\]}»”]+$/.exec(url);
+      if (konec) url = url.slice(0, url.length - konec[0].length);
+      if (url.length < 8) continue;
+      if (m.index > kam) box.appendChild(document.createTextNode(text.slice(kam, m.index)));
+      const a = el('a', 'cteni-odkaz', url);
+      const href = /^www\./i.test(url) ? 'https://' + url : url;
+      a.href = href;
+      a.dataset.href = href;
+      a.title = href;
+      box.appendChild(a);
+      kam = m.index + url.length;
+    }
+    if (kam < String(text).length) box.appendChild(document.createTextNode(String(text).slice(kam)));
+    return box;
+  }
+
   /* Markdown umí už prohlížeč poznámek — Claudeův text je tentýž Markdown,
      tak se kreslí stejně (a stejně se i escapuje). Bez vault.js zbyde holý
      text, což je pořád čitelné. */
@@ -405,7 +432,7 @@
         }
         bubble.appendChild(imgs);
       }
-      if (b.text) bubble.appendChild(el('div', 'cteni-text', b.text));
+      if (b.text) bubble.appendChild(textSOdkazy(b.text));
       row.appendChild(bubble);
       if (stitek) row.appendChild(el('div', 'cteni-stitek', stitek));
       return row;

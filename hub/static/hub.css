@@ -3547,3 +3547,7 @@ button.pr-radek:hover { background: var(--card-hover); color: var(--fg-bright); 
 .pp-usage { cursor: pointer; border: 1px solid var(--border); background: none; font: inherit; }
 .pp-usage:hover { background: var(--card-hover); color: var(--fg-bright); }
 .st-projekt { z-index: 80; }
+
+/* Odkazy ve zprávě člověka (cteni.js textSOdkazy). */
+.cteni-text a.cteni-odkaz { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; word-break: break-all; cursor: pointer; }
+.cteni-text a.cteni-odkaz:hover { color: var(--fg-bright); }
