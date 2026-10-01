@@ -2033,7 +2033,7 @@ function renderWelcome() {
     const a = agentById(STATE.default_agent) || agentList(true)[0];
     if (a) {
       // Stejné pojmenování jako v liště tabů: kde se bude pracovat.
-      actions.push(['i-terminal', naServeruSFirmou() ? 'Server osobní' : 'Nový chat', 'primary',
+      actions.push(['i-terminal', novyChatText(), 'primary',
         () => openTab({kind: 'project', path: STATE.home, title: newTabLabel(),
                        agent: a.id})]);
       // Firemní trezor má vlastní tlačítko i tady, ne jen v liště tabů — a
@@ -2291,14 +2291,25 @@ function renderDoctor() {
 function naServeruSFirmou() {
   return onServer() && !!(STATE.firma && STATE.firma.vault);
 }
-const TITULKY_BEZ_JMENA = /^(Chat|Rozhovor|Osobní chat|Server osobní|Server firemní|Firemní chat)$/;
+/* Na počítači, který je připojený k serveru, je potřeba rozlišit, kde chat poběží:
+   „PC" (tady) × „Server osobní" / „Server firemní" (tam). Bez serveru zůstává „Nový chat". */
+function naPcSeServerem() {
+  const cfg = (STATE && STATE.config) || {};
+  return !onServer() && !!(cfg.gw_server && cfg.gw_logged_in);
+}
+/* Text tlačítka pro nový chat. */
+function novyChatText() {
+  if (naServeruSFirmou()) return 'Server osobní';
+  return naPcSeServerem() ? 'PC' : 'Nový chat';
+}
+const TITULKY_BEZ_JMENA = /^(Chat|Rozhovor|Osobní chat|Server osobní|Server firemní|Firemní chat|PC)$/;
 
 function newTabLabel() {
   // Tlačítko říká, KDE se bude pracovat, ne kdo to odpracuje — to je vidět
   // na odznaku agenta a v popisku. Na počítači „PC", v prostoru „Server";
   // kde je firemní trezor, je potřeba rozlišit i nad čím Claude pojede.
   const firma = !!(STATE.firma && STATE.firma.vault);
-  return onServer() && firma ? 'Server osobní' : 'Chat';
+  return onServer() && firma ? 'Server osobní' : naPcSeServerem() ? 'PC' : 'Chat';
 }
 
 function renderNewTabButtons() {
@@ -2315,7 +2326,7 @@ function renderNewTabButtons() {
   if (fl) fl.textContent = onServer() ? 'Server firemní' : 'Firemní';
   // Panel vlevo: „Server osobní" a pod ním fialový „Server firemní".
   const dn = $('btn-drawer-new');
-  if (dn) dn.querySelector('.nav-text').textContent = naServeruSFirmou() ? 'Server osobní' : 'Nový chat';
+  if (dn) dn.querySelector('.nav-text').textContent = novyChatText();
   const df = $('btn-drawer-firma');
   if (df) df.hidden = !naServeruSFirmou();
   // Jedno „+" na telefonu: schová se jen tehdy, když by pod ním nic nebylo.
@@ -2323,7 +2334,7 @@ function renderNewTabButtons() {
   const a = agentById(STATE.default_agent) || agentList(true)[0];
   const label = btn.querySelector('span');
   if (a && label) {
-    label.textContent = naServeruSFirmou() ? 'Server osobní' : 'Nový chat';
+    label.textContent = novyChatText();
     const kde = onServer() ? (firma ? ' nad tvými osobními poznámkami' : ' na serveru')
                            : ' na tomhle počítači';
     btn.title = 'Nový chat s Claudem' + kde +
