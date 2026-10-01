@@ -1202,7 +1202,7 @@ function readChat(c) {
 function resumeChat(c, prompt, preneseny) {
   if (!c.exists) {
     toast(c.cwd ? 'Složka téhle konverzace už není: ' + c.cwd
-                : 'U téhle konverzace se nepodařilo zjistit složku, otevřít ji nejde.');
+                : 'Tuhle konverzaci jsi poslal na počítač — pokračuj v ní tam.');
     return;
   }
   // Změněná před chvílí a v žádném tabu hubu neběží: nejspíš je otevřená
