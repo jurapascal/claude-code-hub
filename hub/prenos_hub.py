@@ -43,8 +43,15 @@ def na_server(chat, titulek=""):
         if res is None or not res.get("ok"):
             raise ValueError((res or {}).get("error") or err or "Server chat nepřijal.")
     core.log(f"přenos: chat „{meta['title']}\" poslán na server ({len(data) // 1024} kB)")
+    # Chat se stěhuje: na počítači zmizí ze seznamu, přepis zůstane jako `.preneseno`.
+    stary, _sub = prenos.najdi(core.CLAUDE_DIR, meta["id"])
+    if stary:
+        try:
+            os.replace(stary, stary + ".preneseno")
+        except OSError:
+            pass
     return {"ok": True, "chat": meta["id"], "title": meta["title"],
-            "message": f"Chat „{meta['title']}“ je na serveru."}
+            "message": f"Chat „{meta['title']}“ je na serveru a z počítače zmizel."}
 
 
 def na_pocitac(chat, titulek=""):

@@ -1371,6 +1371,9 @@ async function prenosPoslat(chat, titulek, jenPoslat) {
     return toast(err.message);
   }
   if (p.smer === 'na-server') {
+    const tab = TABS.find((t) => (t.chat || t.resume) === chat);
+    if (tab) closeTab(tab);
+    loadChats();
     prenosKarta({titulek: 'Chat je na serveru', text: `„${res.title}“ — otevři ho na serveru a pokračuj tam.`,
       tlacitka: [{label: 'Otevřít na serveru', primary: true, run: () => HubServer.go(hubIO())},
                  {label: 'Zavřít', run: async () => {}}]});
