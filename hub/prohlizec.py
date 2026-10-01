@@ -140,8 +140,10 @@ def ensure(wait=15.0):
         args = [exe, f"--remote-debugging-port={port()}", f"--remote-debugging-address={HOST}",
                 "--remote-allow-origins=*", f"--user-data-dir={profile_dir()}",
                 "--no-first-run", "--no-default-browser-check", "--headless=new",
-                "--window-size=1280,800", "--disable-background-timer-throttling",
-                "--disable-backgrounding-occluded-windows", "about:blank"]
+                "--window-size=1600,1000", "--disable-background-timer-throttling",
+                "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding",
+                "--disable-features=Translate,MediaRouter,OptimizationHints", "--disable-extensions",
+                "--disable-component-update", "--disable-default-apps", "--force-color-profile=srgb", "about:blank"]
         if not IS_WINDOWS and hasattr(os, "geteuid") and os.geteuid() == 0:
             args.insert(1, "--no-sandbox")
         kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
@@ -465,9 +467,9 @@ class Okno:
 
     # -- velikost: okno prohlížeče = plocha okna v appce
     def _spust_obraz(self):
-        w, h = self._velikost or (1280, 800)
+        w, h = self._velikost or (1600, 1000)
         self._posli("Page.stopScreencast")
-        self._posli("Page.startScreencast", format="jpeg", quality=70, maxWidth=max(w, 320),
+        self._posli("Page.startScreencast", format="jpeg", quality=85, maxWidth=max(w, 320),
                     maxHeight=max(h, 240), everyNthFrame=1)
 
     def _srovnej_okno(self, w, h):

@@ -21,6 +21,7 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+PW_MCP = "@playwright/mcp@0.0.83"   # pevná verze: @latest se při každém startu ptá npm a občas rozbije revizi prohlížeče
 sys.path.insert(0, os.path.dirname(HERE))
 
 from hub import prohlizec  # noqa: E402
@@ -48,9 +49,9 @@ def main():
         if not ok:
             print(f"playwright_bridge: {why} — jedu s vlastním prohlížečem", file=sys.stderr)
     if ok:
-        args = [npx, "@playwright/mcp@latest", "--cdp-endpoint", prohlizec.endpoint()]
+        args = [npx, PW_MCP, "--cdp-endpoint", prohlizec.endpoint()]
     else:
-        args = [npx, "@playwright/mcp@latest", "--browser", "chromium", "--user-data-dir", profile]
+        args = [npx, PW_MCP, "--browser", "chromium", "--user-data-dir", profile]
     if os.name == "nt":
         return subprocess.call(args)
     os.execvp(args[0], args)
