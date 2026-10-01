@@ -3665,3 +3665,5 @@ button.pr-radek:hover { background: var(--card-hover); color: var(--fg-bright); 
 .br-dialog-text { font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; margin-bottom: 12px; }
 .br-dialog-pole { width: 100%; box-sizing: border-box; margin-bottom: 12px; padding: 7px 10px; background: var(--bg); color: var(--fg-bright); border: 1px solid var(--border); border-radius: 8px; font: inherit; }
 .br-dialog-btns { display: flex; justify-content: flex-end; gap: 8px; }
+.ag.dul-blik { animation: dul-blik-ag 1.8s ease-out; }
+@keyframes dul-blik-ag { 0%, 40% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: 0 0 0 3px transparent; } }

@@ -1596,7 +1596,8 @@ function prehledHtml(tab, box) {
       r.style.setProperty('--ag', a.barva);
       r.append(stavIco(a.stav), mk('span', 'pr-text', a.ukol || a.jmeno));
       r.title = a.jmeno + (a.ukol ? ' — ' + a.ukol : '');
-      r.onclick = () => a.box.scrollIntoView({behavior: 'smooth', block: 'center'});
+      // Odroluje ke kartě agenta a krátce ji zvýrazní — stejně jako klik na zprávu.
+      r.onclick = () => p.dulSkoc(a.box);
       s.appendChild(r);
     }
     neco = true;
