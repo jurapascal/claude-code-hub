@@ -437,8 +437,22 @@ def open_path(path):
         return False
 
 
+_HAS_OBSIDIAN = [0.0, None]
+
+
 def has_obsidian():
-    """True if an obsidian:// URL handler is registered on this machine."""
+    """True if an obsidian:// URL handler is registered on this machine.
+
+    Cached for a few minutes — on Linux it's an `xdg-mime` call and the
+    answer is needed on every page load."""
+    now = time.monotonic()
+    if _HAS_OBSIDIAN[1] is not None and now - _HAS_OBSIDIAN[0] < 300:
+        return _HAS_OBSIDIAN[1]
+    _HAS_OBSIDIAN[0], _HAS_OBSIDIAN[1] = now, _has_obsidian()
+    return _HAS_OBSIDIAN[1]
+
+
+def _has_obsidian():
     try:
         if IS_WINDOWS:
             import winreg
@@ -546,18 +560,11 @@ def get_projects():
                 ptype = "Node"
             else:
                 ptype = "Git"
-            branch, dirty_count, remote = "", 0, ""
-            if is_git and GIT:
-                branch = run([GIT, "branch", "--show-current"], cwd=path)
-                status = run([GIT, "status", "--porcelain"], cwd=path)
-                dirty_count = len(status.split("\n")) if status else 0
-                remote = github_slug(run([GIT, "remote", "get-url", "origin"],
-                                         cwd=path))
             projects.append({
                 "name": d, "path": path, "type": ptype,
-                "branch": branch, "dirty": dirty_count,
+                "branch": "", "dirty": 0, "git": is_git,
                 "deployable": os.path.isfile(os.path.join(path, ".ftp-deploy.json")),
-                "remote": remote,
+                "remote": "",
             })
 
     # Ručně přidané složky se skenem nenajdou — leží mimo nastavené cesty.
@@ -566,17 +573,23 @@ def get_projects():
         path = os.path.expanduser(extra)
         if not os.path.isdir(path) or path in known:
             continue
-        branch, dirty_count = "", 0
-        if os.path.isdir(os.path.join(path, ".git")) and GIT:
-            branch = run([GIT, "branch", "--show-current"], cwd=path)
-            status = run([GIT, "status", "--porcelain"], cwd=path)
-            dirty_count = len(status.split("\n")) if status else 0
         projects.append({
             "name": os.path.basename(path.rstrip("/\\")) or path, "path": path,
-            "type": "Git" if branch else "Složka", "branch": branch,
-            "dirty": dirty_count, "manual": True,
+            "type": "Složka", "branch": "", "dirty": 0, "manual": True,
+            "git": os.path.isdir(os.path.join(path, ".git")),
             "deployable": os.path.isfile(os.path.join(path, ".ftp-deploy.json")),
         })
+
+    # Git u všech projektů najednou: dřív šly tři příkazy gitu za každý projekt
+    # jeden po druhém a s třiceti projekty se na seznam čekalo přes půl vteřiny.
+    stavy = _git_stavy([p["path"] for p in projects if p.pop("git") and GIT])
+    for proj in projects:
+        branch, dirty_count, remote = stavy.get(proj["path"], ("", 0, ""))
+        proj["branch"], proj["dirty"] = branch, dirty_count
+        if proj.get("manual"):
+            proj["type"] = "Git" if branch else "Složka"
+        else:
+            proj["remote"] = remote
 
     meta = load_projects()
     for proj in projects:
@@ -610,6 +623,75 @@ def get_projects():
                                  (p["label"] or p["name"]).lower()))
     BLOCKED_DIRS[:] = blocked
     return projects
+
+
+_GIT_CACHE = {}               # cesta → (kdy, (větev, změněných souborů, owner/repo))
+_GIT_CACHE_S = 3.0           # stav a projekty chce stránka při načtení zároveň
+_GIT_LOCK = threading.Lock()
+
+
+def _git_head(path):
+    """Větev přímo z .git/HEAD — bez spouštění gitu. Odpojená HEAD = ''."""
+    try:
+        with open(os.path.join(path, ".git", "HEAD"), encoding="utf-8") as fh:
+            head = fh.read().strip()
+    except OSError:
+        return None
+    return head[len("ref: refs/heads/"):] if head.startswith("ref: refs/heads/") else ""
+
+
+def _git_origin(path):
+    """Adresa remote `origin` z .git/config, None když se nedá přečíst."""
+    try:
+        with open(os.path.join(path, ".git", "config"), encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        return None
+    if "insteadof" in text.lower():
+        return None              # přepisy adres umí jen git sám
+    section = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("["):
+            section = line
+            continue
+        if re.fullmatch(r'\[remote\s+"origin"\]', section) and line.split("=", 1)[0].strip().lower() == "url":
+            return line.split("=", 1)[1].strip() if "=" in line else ""
+    return ""
+
+
+def _git_stav(path):
+    branch = _git_head(path)
+    if branch is None:
+        branch = run([GIT, "branch", "--show-current"], cwd=path)
+    status = run([GIT, "status", "--porcelain"], cwd=path)
+    dirty = len(status.split("\n")) if status else 0
+    origin = _git_origin(path)
+    if origin is None:
+        origin = run([GIT, "remote", "get-url", "origin"], cwd=path)
+    return branch, dirty, github_slug(origin)
+
+
+def _git_stavy(paths):
+    """{cesta: (větev, změněných, owner/repo)} — `git status` paralelně."""
+    from concurrent.futures import ThreadPoolExecutor
+    now = time.monotonic()
+    out, todo = {}, []
+    with _GIT_LOCK:
+        for path in paths:
+            hit = _GIT_CACHE.get(path)
+            if hit and now - hit[0] < _GIT_CACHE_S:
+                out[path] = hit[1]
+            else:
+                todo.append(path)
+    if todo:
+        with ThreadPoolExecutor(max_workers=min(8, len(todo))) as pool:
+            fresh = dict(zip(todo, pool.map(_git_stav, todo)))
+        with _GIT_LOCK:
+            for path, val in fresh.items():
+                _GIT_CACHE[path] = (now, val)
+        out.update(fresh)
+    return out
 
 
 def _note_title(path):

@@ -15,6 +15,7 @@ import os
 import re
 import stat
 import threading
+import time
 
 from . import core
 
@@ -22,6 +23,11 @@ HEAD = 128 * 1024
 TAIL = 256 * 1024
 _CACHE = {}                      # cesta -> (velikost, mtime, info)
 _LOCK = threading.Lock()
+# Mezipaměť přežije restart hubu: bez ní první načtení seznamu po startu četlo
+# začátek a konec každého přepisu (stovky souborů, přes vteřinu čekání).
+_DISK_VERSION = 1
+_disk_loaded = False
+_disk_saved = [0.0]              # kdy naposled — rozepsaný chat se mění pořád
 # Značky, které Claude Code vkládá do uživatelských zpráv a člověk je nepsal.
 # `task-notification` = hláška, že doběhla úloha na pozadí — v seznamu i ve
 # čtení by se jinak tvářila jako něco, co člověk napsal.
@@ -106,9 +112,59 @@ def _info(path, size):
             "cwd": cwd, "project": os.path.basename(cwd.rstrip("/\\")) if cwd else ""}
 
 
+def _disk_path():
+    return os.path.join(core.CLAUDE_DIR, "hub-chats-cache.json")
+
+
+def _load_disk():
+    global _disk_loaded
+    with _LOCK:
+        if _disk_loaded:
+            return
+        _disk_loaded = True
+    try:
+        with open(_disk_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict) or data.get("v") != _DISK_VERSION:
+        return
+    items = data.get("items")
+    if not isinstance(items, dict):
+        return
+    with _LOCK:
+        for path, row in items.items():
+            if (isinstance(row, list) and len(row) == 3 and path not in _CACHE
+                    and (row[2] is None or isinstance(row[2], dict))):
+                _CACHE[path] = (row[0], row[1], row[2])
+
+
+def _save_disk():
+    with _LOCK:
+        items = {p: list(v) for p, v in _CACHE.items()}
+    tmp = _disk_path() + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"v": _DISK_VERSION, "items": items}, fh, ensure_ascii=False,
+                      separators=(",", ":"))
+        os.replace(tmp, _disk_path())
+    except OSError:
+        pass
+
+
+def warm_up():
+    """Při startu hubu: seznam připravit dřív, než si o něj stránka řekne."""
+    try:
+        list_chats()
+    except Exception as exc:
+        core.log_error("chaty: příprava seznamu", exc)
+
+
 def list_chats(limit=1000):
     """Konverzace od nejnověji změněné: id, title, prompt, cwd, project,
     exists (složka pořád je), updated (epoch), size."""
+    _load_disk()
+    changed = False
     root = _root()
     try:
         folders = os.listdir(root)
@@ -138,6 +194,7 @@ def list_chats(limit=1000):
                 info = cached[2]
             else:
                 info = _info(path, st.st_size)
+                changed = True
                 with _LOCK:
                     _CACHE[path] = (st.st_size, st.st_mtime, info)
             if info:
@@ -146,5 +203,9 @@ def list_chats(limit=1000):
     with _LOCK:
         for gone in [p for p in _CACHE if p not in seen]:
             _CACHE.pop(gone, None)
+            changed = True
+    if changed and time.monotonic() - _disk_saved[0] > 30:
+        _disk_saved[0] = time.monotonic()
+        _save_disk()
     out.sort(key=lambda c: c["updated"], reverse=True)
     return out[:limit]

@@ -365,8 +365,25 @@ def detect(extra=None, with_version=True):
 
 
 # ── Ollama ───────────────────────────────────────────────────────────────────
-def ollama_models():
-    """Stažené lokální modely. Prázdný seznam = neběží nebo nic stažené."""
+_OLLAMA_CACHE = [0.0, None]     # (kdy, seznam) — `ollama list` trvá desetiny sekundy
+OLLAMA_TTL = 30.0
+
+
+def ollama_models(fresh=False):
+    """Stažené lokální modely. Prázdný seznam = neběží nebo nic stažené.
+
+    Volá se při každém načtení stránky (nabídka modelů u tří agentů), takže
+    se výsledek chvíli drží — jinak by každé otevření hubu spustilo
+    `ollama list` třikrát. Nastavení si říká o čerstvý (`fresh`)."""
+    import time
+    if not fresh and _OLLAMA_CACHE[1] is not None and time.monotonic() - _OLLAMA_CACHE[0] < OLLAMA_TTL:
+        return list(_OLLAMA_CACHE[1])
+    names = _ollama_list()
+    _OLLAMA_CACHE[0], _OLLAMA_CACHE[1] = time.monotonic(), names
+    return list(names)
+
+
+def _ollama_list():
     path = shutil.which("ollama")
     if not path:
         return []
@@ -395,7 +412,7 @@ def ollama_state():
             running = True
     except Exception:
         running = False
-    return {"installed": True, "running": running, "models": ollama_models()}
+    return {"installed": True, "running": running, "models": ollama_models(fresh=True)}
 
 
 # ── Modely Claude Code ──────────────────────────────────────────────────────

@@ -407,6 +407,26 @@ def _gzipped(full, st, body):
     return packed
 
 
+def _verze_souboru(st):
+    return f"{st.st_mtime_ns:x}{st.st_size:x}"
+
+
+_ODKAZ = re.compile(rb'((?:src|href)=")/([A-Za-z0-9_./-]+\.(?:js|css))"')
+
+
+def _verzuj(page):
+    """Skripty a styly v index.html dostanou `?v=<verze souboru>`. Změněný
+    soubor = nová adresa, takže je prohlížeč smí držet natrvalo bez ptaní."""
+    def nahrad(m):
+        rel = posixpath.normpath("/" + m.group(2).decode()).lstrip("/")
+        try:
+            st = os.stat(os.path.join(STATIC_DIR, *rel.split("/")))
+        except OSError:
+            return m.group(0)
+        return m.group(1) + b"/" + m.group(2) + b"?v=" + _verze_souboru(st).encode() + b'"'
+    return _ODKAZ.sub(nahrad, page)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "ClaudeCodeHub"
     protocol_version = "HTTP/1.1"
@@ -562,14 +582,19 @@ class Handler(BaseHTTPRequestHandler):
         extra = dict(extra or {})
         if rel != "index.html":
             # index.html se upravuje podle vzhledu (a nese cookie párování),
-            # ten zůstává no-store. Zbytek se ověřuje ETagem.
+            # ten zůstává no-store. Zbytek se ověřuje ETagem — a co stránka
+            # odkazuje s verzí (`?v=`, viz _verzuj), si prohlížeč nechá
+            # natrvalo a vůbec se neptá: dřív každé otevření okna znamenalo
+            # 28 dotazů „změnilo se?", přes bránu po síti i 300 ms každý.
             etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
             extra["ETag"] = etag
-            extra["Cache-Control"] = "no-cache"
+            asked = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("v", [""])[0]
+            extra["Cache-Control"] = ("public, max-age=31536000, immutable"
+                                      if asked and asked == _verze_souboru(st) else "no-cache")
             if self.headers.get("If-None-Match") == etag:
                 self.send_response(304)
                 self.send_header("ETag", etag)
-                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Cache-Control", extra["Cache-Control"])
                 self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
@@ -581,6 +606,7 @@ class Handler(BaseHTTPRequestHandler):
                 body = vzhled.uprav_stranku(body)
             except Exception as exc:
                 core.log_error("vlastní vzhled stránky", exc)
+            body = _verzuj(body)
         if (len(body) >= _GZIP_MIN and ctype.startswith(_GZIP_TYPES)
                 and "gzip" in self.headers.get("Accept-Encoding", "")):
             body = (gzip.compress(body, compresslevel=6, mtime=0)
@@ -1543,6 +1569,7 @@ def start():
                      daemon=True).start()
     threading.Thread(target=watch_autosave, daemon=True).start()
     threading.Thread(target=prohlizec.migruj, args=(core.log,), daemon=True).start()
+    threading.Thread(target=chats.warm_up, daemon=True).start()
     # Taby průběžně na disk — po pádu nebo zabití se appka vrátí, kde byla.
     threading.Thread(target=restart.keep_saving,
                      args=(HUB, "uspani" if core.on_gateway() else "zavreni"),
