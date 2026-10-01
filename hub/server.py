@@ -1224,7 +1224,9 @@ class Handler(BaseHTTPRequestHandler):
             if action == "add":
                 result = connect.add_account(payload.get("service", ""),
                                              payload.get("label", ""),
-                                             payload.get("account", ""))
+                                             payload.get("account", ""),
+                                             payload.get("client_id", ""),
+                                             payload.get("client_secret", ""))
                 return self._json(result, 200 if result.get("ok") else 400)
             if action == "login":
                 result = connect.login_start(payload.get("name", ""))

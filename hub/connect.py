@@ -125,6 +125,18 @@ SERVICES = {
                 "Formuláře, Úkoly a Kontakty.",
         "kind": "google",
     },
+    # Cokoli dalšího jako v oficiální appce Claude („Add custom connector"):
+    # název a adresa vzdáleného MCP serveru, v pokročilých OAuth Client ID
+    # a Secret pro servery, které si klienta neumí zaregistrovat samy (DCR).
+    # Napojení se jmenuje podle názvu (`notion`), ne `vlastni-…` — tak ho
+    # pojmenuje i Claude v nástrojích (mcp__notion__…).
+    "vlastni": {
+        "label": "Vlastní napojení",
+        "note": "Jakýkoli vzdálený MCP server — stačí jeho adresa.",
+        "kind": "custom",
+        "field": {"name": "account", "label": "Adresa vzdáleného MCP serveru",
+                  "help": "Třeba https://mcp.example.com/mcp — najdeš ji v dokumentaci služby."},
+    },
 }
 
 GOOGLE_MCP_NAME = "google"
@@ -159,6 +171,9 @@ GOOGLE_SETUP = list(core.MCP_CATALOG.get("google-workspace", {}).get("setup") or
 ]
 
 LOGIN_TTL = 15 * 60
+# Přesměrování po přihlášení u vlastního klienta OAuth (redirect URI ve službě).
+CUSTOM_CALLBACK_PORT = 33418
+CUSTOM_REDIRECT = f"http://localhost:{CUSTOM_CALLBACK_PORT}/callback"
 
 
 # ── pomocné ──────────────────────────────────────────────────────────────────
@@ -166,10 +181,11 @@ def _claude():
     return shutil.which("claude") or ""
 
 
-def _run(argv, timeout=60):
+def _run(argv, timeout=60, env=None):
     try:
         return subprocess.run(argv, capture_output=True, text=True, cwd=core.HOME,
-                              timeout=timeout, creationflags=core._NO_WINDOW)
+                              timeout=timeout, creationflags=core._NO_WINDOW,
+                              env=env, stdin=subprocess.DEVNULL)
     except Exception as exc:
         return subprocess.CompletedProcess(argv, 1, "", str(exc))
 
@@ -182,6 +198,26 @@ def _slug(text, limit=30):
 
 def _user_servers():
     return core._claude_json().get("mcpServers") or {}
+
+
+_recheck_waiting = threading.Event()
+
+
+def _recheck():
+    """Znovu zjistit stav napojení po změně. Když kontrola zrovna běží, začala
+    před změnou a nový server nezná — pustí se proto ještě jednou, až doběhne."""
+    if core.start_job("mcp", core.mcp_list) or _recheck_waiting.is_set():
+        return
+    _recheck_waiting.set()
+
+    def later():
+        try:
+            while core.job_state("mcp").get("running"):
+                time.sleep(0.5)
+            core.start_job("mcp", core.mcp_list)
+        finally:
+            _recheck_waiting.clear()
+    threading.Thread(target=later, daemon=True).start()
 
 
 def _states():
@@ -310,17 +346,129 @@ def _cmd_accounts(service_id, spec, states):
     return out
 
 
+def _custom_accounts(states, claimed):
+    """Vlastní napojení: vzdálené servery (adresa, ne příkaz), které nepatří
+    žádné službě z katalogu ani sdílení. Ukážou se i ty přidané ručně přes
+    `claude mcp add` — v oficiální appce jsou taky všechna pohromadě."""
+    out = []
+    for name, entry in sorted(_user_servers().items()):
+        if not isinstance(entry, dict) or not entry.get("url"):
+            continue
+        if name in claimed or name.startswith(SHARED_PREFIX):
+            continue
+        state, status = states.get(name, ("unknown", "zjišťuju…"))
+        out.append({"name": name, "label": name, "state": state, "status": status,
+                    "detail": urllib.parse.urlparse(entry["url"]).hostname or ""})
+    return out
+
+
+def _catalog_names():
+    """Jména serverů, které patří službám z katalogu (Freelo-firma, Clockify…)."""
+    names = set()
+    for sid, spec in SERVICES.items():
+        if spec["kind"] in ("mcp", "apikey"):
+            names.update(a["name"] for a in _mcp_accounts(sid, spec, {}))
+        elif spec["kind"] == "token":
+            names.update(a["name"] for a in _cmd_accounts(sid, spec, {}))
+    return names
+
+
+def _custom_url(text):
+    """Adresa vlastního serveru, nebo ValueError s větou pro člověka."""
+    url = (text or "").strip()
+    if url and "://" not in url:
+        url = "https://" + url
+    parts = urllib.parse.urlparse(url)
+    local = parts.hostname in ("localhost", "127.0.0.1", "::1")
+    if parts.scheme not in ("https", "http") or not parts.hostname:
+        raise ValueError("Tohle nevypadá jako adresa serveru — čekám https://…")
+    if parts.scheme == "http" and not local:
+        raise ValueError("Adresa musí začínat https:// (http jde jen na tomhle počítači, localhost).")
+    return url
+
+
+def _server_state(name):
+    """(stav, popis) jednoho serveru z `claude mcp get` — ptá se jen jeho."""
+    r = _run([_claude(), "mcp", "get", name], 45)
+    m = re.search(r"^\s*Status:\s*(.+)$", r.stdout or "", re.M)
+    if not m:
+        return "fail", _last_line(_clean(r.stderr or r.stdout or "")) or "server neodpověděl"
+    return core._mcp_status(m.group(1))
+
+
+def add_custom(label, url, client_id="", client_secret=""):
+    """Vlastní napojení: registrace a podle odpovědi serveru buď hotovo
+    (server přihlášení nechce), nebo přihlášení OAuth jako u Freela."""
+    claude = _claude()
+    if not claude:
+        return {"ok": False, "detail": "Claude Code (claude) tu není nainstalovaný."}
+    name = _slug(label)
+    if not name:
+        return {"ok": False, "detail": "Pojmenuj napojení, ať se dá poznat."}
+    if name in _user_servers() or name in SERVICES or name.startswith(SHARED_PREFIX) \
+            or name in ("playwright", GOOGLE_MCP_NAME):
+        return {"ok": False, "detail": f"Napojení „{name}“ už je — zvol jiný název."}
+    try:
+        url = _custom_url(url)
+    except ValueError as exc:
+        return {"ok": False, "detail": str(exc)}
+    client_id, client_secret = (client_id or "").strip(), (client_secret or "").strip()
+    if client_secret and not client_id:
+        return {"ok": False, "detail": "K OAuth Client Secret patří i Client ID."}
+    path = urllib.parse.urlparse(url).path.rstrip("/")
+    argv = [claude, "mcp", "add", "--transport", "sse" if path.endswith("/sse") else "http",
+            "-s", "user", name, url]
+    env = None
+    if client_id:
+        # Vlastní klient má u služby předem zapsanou adresu pro přesměrování;
+        # bez pevného portu by Claude Code poslal pokaždé jiný a nesedělo by to.
+        argv += ["--client-id", client_id, "--callback-port", str(CUSTOM_CALLBACK_PORT)]
+    if client_secret:
+        # Secret jen v proměnné prostředí, ne v příkazové řádce (ps by ho ukázal).
+        argv.append("--client-secret")
+        env = dict(os.environ, MCP_CLIENT_SECRET=client_secret)
+    r = _run(argv, env=env)
+    if r.returncode != 0:
+        return {"ok": False, "detail": (r.stderr or r.stdout or "nepovedlo se").strip()[:300]}
+    core.log(f"služby: přidáno vlastní napojení {name}")
+    state, status = _server_state(name)
+    if state == "ok":
+        write_claude_md()
+        _recheck()
+        return {"ok": True, "name": name,
+                "login": {"done": True, "message": f"Napojení {name} funguje."}}
+    started = login_start(name) if state == "auth" else {"ok": False}
+    if not started.get("ok"):
+        # Nefunkční napojení v seznamu by jen mátlo — registrace pryč.
+        _run([claude, "mcp", "logout", name], 30)
+        _run([claude, "mcp", "remove", name, "-s", "user"], 30)
+        detail = started.get("detail") or ""
+        if state != "auth":
+            hint = (f"Server na téhle adrese neodpovídá jako MCP server ({status}). "
+                    "Zkontroluj adresu.")
+        elif re.search(r"registration|client", detail, re.I) and not client_id:
+            hint = ("Server si nenechá automaticky zaregistrovat klienta — v Pokročilém "
+                    "nastavení zadej OAuth Client ID (a Secret) od té služby.")
+        else:
+            hint = f"Přihlášení se nerozběhlo: {detail or 'server ho odmítl'}"
+        return {"ok": False, "detail": hint}
+    write_claude_md()
+    return {**started, "name": name}
+
+
 def services(refresh=False):
     """Karty služeb s účty a jejich stavem. Stav je z `claude mcp list`, který
     se ptá každého serveru (~10 s) — počítá se na pozadí v úloze „mcp"."""
     job = core.job_state("mcp")
     if (refresh or not job.get("result")) and not job.get("running"):
-        core.start_job("mcp", core.mcp_list)
+        _recheck()
         job = core.job_state("mcp")
     states = _states()
     out = []
+    claimed = set()                  # servery, které už patří službě z katalogu
     for sid, spec in SERVICES.items():
         item = {"id": sid, "label": spec["label"], "note": spec["note"],
+                "redirect": CUSTOM_REDIRECT if spec["kind"] == "custom" else "",
                 "kind": spec["kind"], "warn": spec.get("warn", ""),
                 "field": spec.get("field")}
         if spec["kind"] == "google":
@@ -338,6 +486,8 @@ def services(refresh=False):
             elif not shutil.which("uvx"):
                 item["missing"] = ("Chybí uv (uvx), na kterém napojení na Google "
                                    "běží: https://docs.astral.sh/uv/")
+        elif spec["kind"] == "custom":
+            item["accounts"] = _custom_accounts(states, claimed)
         elif spec["kind"] == "token":
             item["accounts"] = _cmd_accounts(sid, spec, states)
             item["setup"] = spec.get("setup")
@@ -347,18 +497,21 @@ def services(refresh=False):
             item["accounts"] = _mcp_accounts(sid, spec, states)
         if not _claude():
             item["missing"] = "Claude Code (claude) tu není nainstalovaný."
+        claimed.update(a["name"] for a in item.get("accounts") or [])
         out.append(item)
-    return {"services": out, "checking": bool(job.get("running")),
+    return {"services": out, "checking": bool(job.get("running")) or _recheck_waiting.is_set(),
             "on_server": core.on_gateway()}
 
 
-def add_account(service, label="", account=""):
+def add_account(service, label="", account="", client_id="", client_secret=""):
     """Přidá účet a rovnou spustí přihlášení. Vrací {ok, name, login|detail}."""
     spec = SERVICES.get(service)
     if not spec:
         return {"ok": False, "detail": "Tuhle službu neznám."}
     if spec["kind"] == "google":
         return google_login_start()
+    if spec["kind"] == "custom":
+        return add_custom(label, account, client_id, client_secret)
     claude = _claude()
     if not claude:
         return {"ok": False, "detail": "Claude Code (claude) tu není nainstalovaný."}
@@ -378,7 +531,7 @@ def add_account(service, label="", account=""):
             return {"ok": False, "detail": (r.stderr or r.stdout or "nepovedlo se").strip()[:300]}
         core.log(f"služby: přidán účet {name}")
         write_claude_md()
-        core.start_job("mcp", core.mcp_list)
+        _recheck()
         return {"ok": True, "name": name,
                 "login": {"done": True, "message": f"{spec['label']} napojené."}}
     if spec["kind"] == "apikey":
@@ -394,7 +547,7 @@ def add_account(service, label="", account=""):
             return {"ok": False, "detail": (r.stderr or r.stdout or "nepovedlo se").strip()[:300]}
         core.log(f"služby: přidán účet {name}")
         write_claude_md()
-        core.start_job("mcp", core.mcp_list)
+        _recheck()
         return {"ok": True, "name": name,
                 "login": {"done": True, "message": f"{spec['label']} napojené."}}
     if "{account}" in url:
@@ -440,9 +593,12 @@ def remove_account(service, name):
             _ensure_google_server()        # odebraný mohl být ten výchozí
         write_claude_md()
         core.log("služby: odebrán Google účet")
-        core.start_job("mcp", core.mcp_list)
+        _recheck()
         return {"ok": True, "detail": f"Google účet {name} odebrán."}
-    if (name != service and not name.startswith(service + "-")) or \
+    if spec["kind"] == "custom":
+        if name not in {a["name"] for a in _custom_accounts({}, _catalog_names())}:
+            return {"ok": False, "detail": "Takové vlastní napojení tu není."}
+    elif (name != service and not name.startswith(service + "-")) or \
             name not in _user_servers():
         return {"ok": False, "detail": "Tenhle účet tu není."}
     # Odhlásit dřív, než zmizí registrace — jinak by token zůstal v úložišti.
@@ -452,8 +608,9 @@ def remove_account(service, name):
         return {"ok": False, "detail": (r.stderr or r.stdout or "nepovedlo se").strip()[:300]}
     write_claude_md()
     core.log(f"služby: odebrán účet {name}")
-    core.start_job("mcp", core.mcp_list)
-    return {"ok": True, "detail": f"Účet {name} odebrán."}
+    _recheck()
+    return {"ok": True, "detail": f"Napojení {name} odebráno." if spec["kind"] == "custom"
+            else f"Účet {name} odebrán."}
 
 
 def _google_default():
@@ -553,7 +710,7 @@ class _McpLogin:
             self.ok = code == 0 and not re.search(r"couldn.t complete|failed", text[-800:], re.I)
             self.message = (f"Účet {self.name} je přihlášený." if self.ok
                             else _last_line(text) or "Přihlášení se nepovedlo.")
-        core.start_job("mcp", core.mcp_list)
+        _recheck()
 
     def paste(self, url, wait=20):
         with _LOCK:
@@ -670,7 +827,7 @@ class _GoogleLogin:
             if self.ok and not token.get("refresh_token"):
                 self.message += " Google ale nevydal trvalé přihlášení — po hodině se přihlas znovu."
         core.log("služby: napojen Google účet")
-        core.start_job("mcp", core.mcp_list)
+        _recheck()
         self._stop()
 
     def _stop(self):

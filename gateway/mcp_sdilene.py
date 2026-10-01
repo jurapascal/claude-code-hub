@@ -322,7 +322,7 @@ def delete(user, slug):
 # ── účty ze služeb vlastníka (druh „ucet") ──────────────────────────────────
 SERVICES = {"freelo": "Freelo", "canva": "Canva", "ecomail": "Ecomail",
             "clockify": "Clockify", "google": "Google", "facebook": "Facebook a Instagram",
-            "reklamy": "Meta reklamy"}
+            "reklamy": "Meta reklamy", "vlastni": "Vlastní napojení"}
 # Služby spouštěné příkazem s tokenem v proměnné (hub/connect.py, druh „token").
 COMMAND_SERVICES = {"facebook": ("@oliverames/meta-mcp-server", "META_ACCESS_TOKEN")}
 ACCOUNT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
@@ -397,7 +397,11 @@ def _check_account(owner_uid, service, account):
                 not safefs.is_file(home, _google_file(account)):
             raise ValueError("Tenhle Google účet u sebe nemáš.")
         return
-    if not ACCOUNT_NAME.fullmatch(account) or \
+    # Vlastní napojení se jmenuje podle sebe (`notion`), ne `vlastni-…`.
+    if service == "vlastni":
+        if not ACCOUNT_NAME.fullmatch(account) or account.startswith("sdilene-"):
+            raise ValueError("Takové napojení není.")
+    elif not ACCOUNT_NAME.fullmatch(account) or \
             (account != service and not account.startswith(service + "-")):
         raise ValueError("Takový účet u služby není.")
     try:
@@ -438,7 +442,8 @@ def share_account(user, form):
             _save(items)
         else:
             owner = _label(uid).split("@")[0].split(" ")[0]
-            name = f"{SERVICES[service]} {label or account} ({owner})"[:60]
+            name = (f"{label or account} ({owner})" if service == "vlastni" else
+                    f"{SERVICES[service]} {label or account} ({owner})")[:60]
             slug = _slugify(f"{service} {label or account.split('@')[0]} {owner}", items)
             items[slug] = {"name": name, "owner": uid, "members": [uid] + ids,
                            "created": time.strftime("%Y-%m-%d %H:%M:%S"), "kind": "ucet",
@@ -574,8 +579,10 @@ class _Account(_Remote):
         if url != self.server_url:
             raise RuntimeError("Vlastník účet mezitím změnil — Claude se připojí znovu.")
         if not any(k.lower() == "authorization" for k in headers):
-            # Klíč v hlavičce (Clockify) přihlášení OAuth nepotřebuje.
-            token = _oauth_token(self.entry, url, required=not headers)
+            # Klíč v hlavičce (Clockify) přihlášení OAuth nepotřebuje, vlastní
+            # napojení bez přihlášení taky ne.
+            token = _oauth_token(self.entry, url, required=not headers
+                                 and self.entry.get("service") != "vlastni")
             if token:
                 headers["Authorization"] = "Bearer " + token
         return headers

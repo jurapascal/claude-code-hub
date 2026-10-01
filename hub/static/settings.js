@@ -1106,7 +1106,8 @@
       const list = el('div', 'svc-accounts');
       const fromOthers = sharedItems(svc.id).filter((n) => !n.is_owner);
       if (!(svc.accounts || []).length && !fromOthers.length) {
-        list.appendChild(el('div', 'svc-empty', 'Zatím žádný účet.'));
+        list.appendChild(el('div', 'svc-empty',
+          svc.kind === 'custom' ? 'Zatím žádné vlastní napojení.' : 'Zatím žádný účet.'));
       }
       for (const acc of svc.accounts || []) list.appendChild(accountRow(svc, acc));
       for (const n of fromOthers) list.appendChild(sharedRow(n));
@@ -1125,12 +1126,13 @@
         }
         return box;
       }
-      const add = el('button', 'btn ghost svc-add', '+ Přidat účet');
+      const addText = svc.kind === 'custom' ? '+ Přidat napojení' : '+ Přidat účet';
+      const add = el('button', 'btn ghost svc-add', addText);
       const form = el('div', 'svc-form');
       form.hidden = true;
       add.onclick = () => {
         form.hidden = !form.hidden;
-        add.textContent = form.hidden ? '+ Přidat účet' : 'Zavřít';
+        add.textContent = form.hidden ? addText : 'Zavřít';
         if (!form.hidden) {
           addForm(svc, form);
           const first = form.querySelector('input');
@@ -1189,7 +1191,8 @@
       const del = el('button', 'set-x', '×');
       del.title = 'Odebrat účet';
       del.onclick = async () => {
-        if (!confirm(`Odebrat účet ${acc.label} (${svc.label})?`)) return;
+        if (!confirm(svc.kind === 'custom' ? `Odebrat napojení ${acc.label}?`
+                                           : `Odebrat účet ${acc.label} (${svc.label})?`)) return;
         try {
           const r = await io.api('connect', {action: 'remove', service: svc.id, name: acc.name});
           if (mine) {
@@ -1256,7 +1259,10 @@
     function addForm(svc, form) {
       form.textContent = '';
       const inputs = {};
-      if (svc.kind !== 'google') {
+      if (svc.kind === 'custom') {
+        inputs.label = field(form, 'Název', 'třeba Notion',
+          'Podle něj napojení poznáš ty i Claude (jeho nástroje budou mcp__název__…).');
+      } else if (svc.kind !== 'google') {
         inputs.label = field(form, 'Popisek účtu', 'třeba firma nebo osobní',
           'Podle něj účty poznáš ty i Claude.');
       }
@@ -1280,16 +1286,32 @@
         form.appendChild(steps);
       }
       if (svc.field) {
-        inputs.account = field(form, svc.field.label, '', svc.field.help);
+        inputs.account = field(form, svc.field.label,
+          svc.kind === 'custom' ? 'https://…' : '', svc.field.help);
         if (svc.field.secret) inputs.account.type = 'password';
       }
+      // Nepovinné jako v oficiální appce: jen pro servery, které si klienta
+      // OAuth neumí zaregistrovat samy.
+      const optional = {};
+      if (svc.kind === 'custom') {
+        const adv = el('details', 'svc-adv');
+        adv.appendChild(el('summary', null, 'Pokročilá nastavení'));
+        optional.client_id = field(adv, 'OAuth Client ID (nepovinné)', '');
+        optional.client_secret = field(adv, 'OAuth Client Secret (nepovinné)', '');
+        optional.client_secret.type = 'password';
+        adv.appendChild(el('small', 'set-note',
+          'Vyplň, jen když služba vydává vlastní přihlašovací klienty. ' +
+          'Jako adresu pro přesměrování (redirect URI) jim zadej ' + (svc.redirect || '') + '.'));
+        form.appendChild(adv);
+      }
       const goText = svc.kind === 'google' ? 'Přihlásit Google účet'
+        : svc.kind === 'custom' ? 'Přidat'
         : (svc.kind === 'apikey' || svc.kind === 'token') ? 'Napojit' : 'Přihlásit';
       const go = el('button', 'btn primary', goText);
       form.appendChild(go);
       const slot = el('div', 'svc-slot');
       form.appendChild(slot);
-      for (const input of Object.values(inputs)) {
+      for (const input of [...Object.values(inputs), ...Object.values(optional)]) {
         input.onkeydown = (ev) => { if (ev.key === 'Enter') go.click(); };
       }
       go.onclick = async () => {
@@ -1297,17 +1319,22 @@
         for (const [key, input] of Object.entries(inputs)) {
           payload[key] = input.value.trim();
           if (!payload[key]) {
-            io.toast(key === 'label' ? 'Pojmenuj účet, ať se dají poznat.' : 'Vyplň ' + svc.field.label + '.');
+            io.toast(key === 'label' ? (svc.kind === 'custom' ? 'Pojmenuj napojení.'
+                                                               : 'Pojmenuj účet, ať se dají poznat.')
+                                     : 'Vyplň ' + svc.field.label + '.');
             input.focus();
             return;
           }
         }
+        for (const [key, input] of Object.entries(optional)) {
+          if (input.value.trim()) payload[key] = input.value.trim();
+        }
         go.disabled = true;
-        go.textContent = 'Připravuju přihlášení…';
+        go.textContent = svc.kind === 'custom' ? 'Připojuju se k serveru…' : 'Připravuju přihlášení…';
         try {
           const r = await io.api('connect', payload);
           go.hidden = true;
-          for (const input of Object.values(inputs)) input.disabled = true;
+          for (const input of [...Object.values(inputs), ...Object.values(optional)]) input.disabled = true;
           startLogin(svc, r, slot);
         } catch (err) {
           io.toast('Nepovedlo se: ' + err.message);
@@ -1329,7 +1356,8 @@
       slot.textContent = '';
       const p = el('div', 'svc-login');
       p.appendChild(el('div', 'svc-step', '1. Otevři přihlášení a potvrď přístup.'));
-      const openBtn = el('button', 'btn primary', 'Otevřít přihlášení — ' + svc.label);
+      const who = svc.kind === 'custom' && r.name ? r.name : svc.label;
+      const openBtn = el('button', 'btn primary', 'Otevřít přihlášení — ' + who);
       openBtn.onclick = () => io.open(login.url);
       p.appendChild(openBtn);
       p.appendChild(el('div', 'svc-step', data && data.on_server

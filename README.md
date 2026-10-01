@@ -689,6 +689,22 @@ python3 ~/.claude/claude-hub.py --doctor
 #                        ! claude.ai Gmail — chce přihlásit
 ```
 
+### Vlastní napojení
+
+Jako *Add custom connector* v oficiální appce Claude: v Propojených službách
+je poslední karta **Vlastní napojení** → *+ Přidat napojení*, vyplní se
+**název** a **adresa vzdáleného MCP serveru** (https, `…/sse` jede přes SSE).
+V **Pokročilých nastaveních** jde zadat OAuth Client ID a Secret — jen pro
+služby, které si klienta neumí zaregistrovat samy; u nich se jako redirect URI
+zapíše `http://localhost:33418/callback`.
+
+Hub server zaregistruje (`claude mcp add -s user <název> <adresa>`) a zeptá se
+ho, co chce: když přihlášení nepotřebuje, je hotovo hned, jinak se přihlašuje
+stejně jako u Freela. Secret jde do Claude Code jen proměnnou prostředí, ne na
+příkazový řádek ani do `~/.claude.json`. Nefunkční adresa se nezaregistruje.
+V kartě jsou i vzdálené servery přidané dřív ručně (`figma`…), na serveru jdou
+nasdílet dalším lidem jako ostatní účty.
+
 ### Katalog napojení
 
 Napojení se nemusí skládat ručně přes `claude mcp add`. V **Nastavení → Napojení**
