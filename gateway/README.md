@@ -680,3 +680,23 @@ píše — zpráva dojde do chatu majitele s jeho jménem v hranatých závorká
   z týmu (`admin.py`) sdílení smaže.
 * **Právo psát je právo zadávat práci majitelovu Claudovi s jeho oprávněními** (i v režimu
   bez ptaní). Výchozí je jen čtení; psát dávej jen lidem, kterým to svěříš.
+
+## Přenos chatu mezi počítačem a serverem
+
+Chat jde poslat z počítače na server a zpátky a pokračovat v něm na druhé straně
+(`hub/prenos.py`, `hub/prenos_hub.py`). Pravý klik na chat v seznamu → „Poslat na
+server“ / „Poslat na počítač“, nebo v panelu Průběh „Pokračovat na serveru / na počítači“.
+
+* Chat (přepis `.jsonl` a pomocníci) se zabalí do zipu (nejvýš 40 MB, posílá se po
+  kusech do 7 MB) a na druhé straně se zapíše do složky projektů tak, aby v něm
+  `claude --resume` pokračoval; `cwd` se přepíše na domovskou složku té strany.
+  Chat, který tam už je (vrací se), se přepíše na místě a předchozí verze zůstane
+  jako `<id>.jsonl.bak`.
+* PC → server: `POST /gw/prenos/nahrat` s tokenem zařízení; brána kusy předá hubu
+  v prostoru (nástroj `prenos_prijmout`), ten chat zapíše sám a ohlásí ho (karta
+  „Chat z počítače je tady“ → Otevřít). Zapisuje hub, ne brána, takže soubory patří
+  jemu a Claude Code do nich může dál psát.
+* Server → počítač: hub v prostoru nechá chat počítači jako úkol na později druhu `chat`
+  (`ukol-novy`, přílohy až `CHAT_BYTES` 45 MB). Počítač ho s plným přístupem přijme sám,
+  jinak čeká na souhlas v appce („Přijmout a otevřít“). Přepis může obsahovat citlivé
+  věci z tool výstupů — proto se nic neposílá samo, vždy až po kliknutí.

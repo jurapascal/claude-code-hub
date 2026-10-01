@@ -752,6 +752,9 @@ def _fetch_ukol(tid, token):
                 core.log_error("počítač: úkol ze serveru se nepodařilo uložit", exc)
                 return
             core.log(f"počítač: převzat úkol ze serveru „{meta['title']}\"")
+            if meta.get("kind") == "chat":
+                _chat_ze_serveru(meta, token)
+                return
             if meta["state"] == "ceka" and access_level() == "vse" and OPEN_TAB:
                 try:
                     start_ukol(tid, auto=True)
@@ -809,6 +812,7 @@ def _store_ukol(ukol):
         _atomic_write(os.path.join(_ukol_dir(tid), "soubory", name), data)
         names.append(name)
     meta = {"id": tid, "title": title, "text": str(ukol.get("text") or ""),
+            "kind": "chat" if ukol.get("kind") == "chat" else "",
             "folder": str(ukol.get("folder") or "")[:500], "files": names,
             "created": int(ukol.get("created") or 0), "received": int(time.time()),
             "server": account._host(account._base()) if account._base() else "",
@@ -878,10 +882,55 @@ def _set_state(tid, state, expect="ceka"):
     return meta
 
 
+def _chat_ze_serveru(meta, token=""):
+    """Chat, který člověk poslal ze serveru (hub/prenos.py). S plným přístupem
+    se přijme rovnou, jinak čeká na jeho souhlas v appce — zapisuje se do
+    složky projektů na tomhle počítači."""
+    if access_level() == "vse":
+        try:
+            prijmi_chat(meta["id"])
+            return
+        except ValueError as exc:
+            core.log(f"počítač: chat ze serveru se nepřijal — {exc}", "warn")
+    _notify({"t": "prenos-ceka", "id": meta["id"], "title": meta["title"]})
+    _report(meta, token)
+
+
+def prijmi_chat(tid):
+    """Rozbalí chat ze serveru do složky projektů (v domovské složce počítače)."""
+    from . import prenos
+    meta = _read_ukol(str(tid or "")) if UKOL_ID.fullmatch(str(tid or "")) else None
+    if meta is None or meta.get("kind") != "chat":
+        raise ValueError("Takový chat tu nečeká.")
+    folder = os.path.join(_ukol_dir(meta["id"]), "soubory")
+    try:
+        names = sorted(os.listdir(folder))
+        data = b""
+        for name in names:
+            with open(os.path.join(folder, name), "rb") as fh:
+                data += fh.read()
+    except OSError:
+        raise ValueError("Balíček chatu se nenašel.") from None
+    try:
+        chat = prenos.rozbal_na_disk(data, core.CLAUDE_DIR, core.HOME)
+    except ValueError as exc:
+        raise ValueError(str(exc)) from None
+    _set_state(meta["id"], "spusteno")
+    shutil.rmtree(folder, ignore_errors=True)
+    core.log(f"počítač: chat „{chat['title']}\" ze serveru je tu")
+    _notify({"t": "prenos-prijat", "chat": chat["id"], "title": chat["title"],
+             "from": meta.get("server", "")})
+    threading.Thread(target=_report, args=(_read_ukol(meta["id"]) or meta,), daemon=True).start()
+    return {"ok": True, "chat": chat["id"], "title": chat["title"]}
+
+
 def start_ukol(tid, auto=False):
     """Otevře tab s Claude Code, který úkol dodělá."""
     if not OPEN_TAB:
         raise ValueError("Úkol jde spustit jen v appce na počítači.")
+    pred = _read_ukol(str(tid or "")) if UKOL_ID.fullmatch(str(tid or "")) else None
+    if pred and pred.get("kind") == "chat":
+        raise ValueError("Tohle je chat ze serveru — přijmi ho tlačítkem „Přijmout a otevřít“.")
     meta = _set_state(tid, "spusteno")
     note = ""
     path = _path(meta["folder"]) if meta["folder"] else core.HOME

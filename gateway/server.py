@@ -766,6 +766,9 @@ class Handler(BaseHTTPRequestHandler):
             # model počítal dlouho, server ho má za pár vteřin. Token zařízení.
             if route == "/gw/hlas/prepis":
                 return self._gw_hlas(method)
+            # Chat z počítače na server (hub/prenos.py): token zařízení, balíček po kusech.
+            if route == "/gw/prenos/nahrat":
+                return self._gw_prenos(method)
 
             user = self._user()
 
@@ -1459,6 +1462,34 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- Claude na vlastním předplatném ----
     _hlas_slots = threading.BoundedSemaphore(2)   # přepisy naráz (paměť, procesor)
+
+    def _gw_prenos(self, method):
+        """Kus balíčku s chatem z počítače. Brána ho jen předá hubu v prostoru
+        uživatele (nástroj `prenos_prijmout`) — ten si chat zapíše sám, jako
+        svůj, takže ho Claude Code může dál doplňovat. Poslední kus chat
+        rozbalí a hub si ho ukáže k otevření."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length > 14 * 1024 * 1024:
+            self.close_connection = True
+            return self._json({"error": "Kus balíčku je moc velký."}, 413)
+        if method != "POST":
+            return self._json({"error": "Jen POST."}, 405)
+        user = self._bearer()
+        form = self._read_form()
+        if not user:
+            return self._json({"error": "Nepřihlášeno."}, 401)
+        try:
+            result = mcp._hub_call(self, user, "prenos_prijmout", {
+                "id": str(form.get("id") or ""), "part": form.get("part"),
+                "parts": form.get("parts"), "zip": str(form.get("zip") or ""),
+                "from": str(form.get("from") or "")[:80],
+                "title": str(form.get("title") or "")[:120]}, timeout=180)
+        except mcp.ToolError as exc:
+            return self._json({"ok": False, "error": str(exc)}, 400)
+        return self._json({"ok": True, **(result if isinstance(result, dict) else {})})
 
     def _gw_hlas(self, method):
         try:

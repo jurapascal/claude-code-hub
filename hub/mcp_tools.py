@@ -358,6 +358,62 @@ def sdilet_poslat(args):
     return {"odeslano": True}
 
 
+def prenos_prijmout(args):
+    """Kus balíčku s chatem z počítače (volá brána, hub/prenos.py). Kusy se
+    skládají v domově; s posledním se chat rozbalí do složky projektů tohoto
+    prostoru a ohlásí se k otevření. Zapisuje hub sám, takže soubory patří
+    jemu a Claude Code do chatu může dál psát."""
+    import base64
+    import time
+    from . import prenos
+    cid = str(args.get("id") or "")
+    if not prenos.SESSION_ID.fullmatch(cid):
+        raise ToolError("Chybí číslo chatu.")
+    try:
+        part, parts = int(args.get("part")), int(args.get("parts"))
+    except (TypeError, ValueError):
+        raise ToolError("Chybí pořadí kusu.") from None
+    if not (1 <= parts <= 8 and 1 <= part <= parts):
+        raise ToolError("Neplatné pořadí kusu.")
+    try:
+        body = base64.b64decode(str(args.get("zip") or ""), validate=True)
+    except ValueError:
+        raise ToolError("Kus balíčku je poškozený.") from None
+    tmp = os.path.join(core.CLAUDE_DIR, "prenos-tmp")
+    os.makedirs(tmp, exist_ok=True)
+    for name in os.listdir(tmp):                      # zapomenuté kusy po hodině pryč
+        full = os.path.join(tmp, name)
+        try:
+            if time.time() - os.path.getmtime(full) > 3600:
+                os.remove(full)
+        except OSError:
+            pass
+    with open(os.path.join(tmp, f"{cid}.{part}"), "wb") as fh:
+        fh.write(body)
+    chunks = [os.path.join(tmp, f"{cid}.{i}") for i in range(1, parts + 1)]
+    if not all(os.path.isfile(c) for c in chunks):
+        return {"hotovo": False}
+    data = b""
+    for c in chunks:
+        with open(c, "rb") as fh:
+            data += fh.read()
+    for c in chunks:
+        try:
+            os.remove(c)
+        except OSError:
+            pass
+    try:
+        meta = prenos.rozbal_na_disk(data, core.CLAUDE_DIR, core.HOME)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from None
+    if args.get("title"):
+        meta["title"] = " ".join(str(args["title"]).split())[:120]
+    meta["from"] = str(args.get("from") or "")[:80]
+    prenos.pridej_cekajici(core.CLAUDE_DIR, meta)
+    core.log(f"přenos: chat „{meta['title']}\" z počítače {meta['from']} je tu")
+    return {"hotovo": True, "id": meta["id"], "title": meta["title"]}
+
+
 TOOLS = {
     "projekty": projekty,
     "konverzace": konverzace,
@@ -372,6 +428,7 @@ TOOLS = {
     "prikaz": prikaz,
     "sdilet_cteni": sdilet_cteni,
     "sdilet_poslat": sdilet_poslat,
+    "prenos_prijmout": prenos_prijmout,
 }
 
 

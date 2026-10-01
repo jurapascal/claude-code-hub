@@ -33,7 +33,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (account, automodel, chats, clockify, connect, core, cteni, pocitac, predplatne,
-               prohlizec, pty_backend, qr, remote, restart, setup, stats, vzhled)
+               prenos, prenos_hub, prohlizec, pty_backend, qr, remote, restart, setup, stats, vzhled)
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -1156,6 +1156,29 @@ class Handler(BaseHTTPRequestHandler):
                     progress=lambda m: core.job_step("stats", m)))
                 return self._json({"running": True, "step": "počítám…"})
             return self._json({"running": False, **(cached.get("result") or {})})
+        if name == "prenos-stav":
+            # Chaty, které sem přišly z druhé strany a čekají na otevření.
+            return self._json({"cekajici": prenos.cekajici(core.CLAUDE_DIR),
+                               "ukoly": [u for u in pocitac.ukoly()
+                                         if u.get("kind") == "chat" and u.get("state") == "ceka"]
+                               if not core.on_gateway() else []})
+        if name == "prenos":
+            # Přenos chatu: počítač → server, server → počítač, souhlas s příjmem, hotovo.
+            akce = str((payload or {}).get("akce") or "")
+            chat = str((payload or {}).get("chat") or "")
+            try:
+                if akce == "na-server":
+                    return self._json(prenos_hub.na_server(chat, (payload or {}).get("titulek", "")))
+                if akce == "na-pocitac":
+                    return self._json(prenos_hub.na_pocitac(chat, (payload or {}).get("titulek", "")))
+                if akce == "prijmout":
+                    return self._json(prenos_hub.prijmout(str((payload or {}).get("id") or "")))
+                if akce == "hotovo":
+                    prenos.odeber_cekajici(core.CLAUDE_DIR, chat)
+                    return self._json({"ok": True})
+            except ValueError as exc:
+                return self._json({"ok": False, "error": str(exc)}, 400)
+            return self._json({"error": "Neznámá akce."}, 400)
         if name == "project-usage":
             # Tokeny a cena u každého projektu — z mezipaměti, bez čtení přepisů.
             usage = stats.project_usage()

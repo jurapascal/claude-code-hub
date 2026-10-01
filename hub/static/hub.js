@@ -1150,10 +1150,13 @@ function renderChats() {
     item.onclick = () => openChat(c);
     item.oncontextmenu = (ev) => {
       ev.preventDefault();
-      showMenu(ev.clientX, ev.clientY, [
+      const items = [
         {icon: 'i-terminal', label: 'Pokračovat v tabu', run: () => openChat(c)},
         {icon: 'i-note', label: 'Jen přečíst', run: () => readChat(c)},
-      ]);
+      ];
+      const p = prenosMoznost();
+      if (p) items.push({icon: 'i-up', label: p.label, run: () => prenosPoslat(c.id, c.title, true)});
+      showMenu(ev.clientX, ev.clientY, items);
     };
     box.appendChild(item);
   }
@@ -1196,7 +1199,7 @@ function readChat(c) {
 
 /* Pokračovat v konverzaci: tohle už je nový tab s Claude Code. `prompt` je
    zpráva napsaná v okně se čtením — Claude na ní začne dělat hned po startu. */
-function resumeChat(c, prompt) {
+function resumeChat(c, prompt, preneseny) {
   if (!c.exists) {
     toast('Složka téhle konverzace už není: ' + (c.cwd || '?'));
     return;
@@ -1205,7 +1208,8 @@ function resumeChat(c, prompt) {
   // jinde (terminál, jiné okno). Dva Claudy v jedné konverzaci by si
   // přepisovaly historii — otevře se proto její kopie.
   let fork = false;
-  if (Date.now() / 1000 - c.updated < 180) {
+  // Prave preneseny chat je cerstvy jen proto, ze jsme ho pred chvili zapsali - nikde jinde nebezi.
+  if (!preneseny && Date.now() / 1000 - c.updated < 180) {
     if (!confirm(`Konverzace „${c.title}" se změnila před chvílí — nejspíš ještě běží jinde.\n\n` +
                  'Otevřít její kopii? Původní konverzace zůstane, jak je.')) return;
     fork = true;
@@ -1303,6 +1307,99 @@ function showActionbar(tab) {
 let dulFiltr = '';                       // barva, podle které se poznámky v Průběhu filtrují
 let dulRazeni = 'cas';                   // cas | barva
 try { dulRazeni = localStorage.getItem('hub-dul-razeni') === 'barva' ? 'barva' : 'cas'; } catch (_) { /* nic */ }
+
+/* ── Přenos chatu mezi počítačem a serverem (hub/prenos.py) ──────────────────
+   Z počítače na server a ze serveru na počítač: chat se zabalí, pošle a na
+   druhé straně se dá otevřít a pokračovat v něm tam, kde skončil. */
+function prenosMoznost() {
+  const cfg = (STATE && STATE.config) || {};
+  if (onServer()) return {smer: 'na-pocitac', label: 'Poslat na počítač', pokracovat: 'Pokračovat na počítači'};
+  if (cfg.gw_server && cfg.gw_logged_in) {
+    return {smer: 'na-server', label: 'Poslat na server', pokracovat: 'Pokračovat na serveru'};
+  }
+  return null;
+}
+
+/* Okénko vpravo nahoře s tlačítky (stejný vzhled jako „Na serveru je nová verze"). */
+function prenosKarta({titulek, text, tlacitka}) {
+  const card = document.createElement('div');
+  card.className = 'srvupd prenos-karta';
+  card.innerHTML = `
+    <div class="srvupd-ico"><svg class="ico"><use href="#i-up"/></svg></div>
+    <div class="srvupd-body"><div class="srvupd-title"></div><div class="srvupd-text"></div>
+      <div class="srvupd-btns"></div></div>`;
+  card.querySelector('.srvupd-title').textContent = titulek;
+  card.querySelector('.srvupd-text').textContent = text || '';
+  const zavri = () => card.remove();
+  const box = card.querySelector('.srvupd-btns');
+  for (const t of tlacitka) {
+    const b = document.createElement('button');
+    b.className = 'btn ' + (t.primary ? 'primary' : 'ghost');
+    b.textContent = t.label;
+    b.onclick = async () => { b.disabled = true; try { await t.run(); } finally { zavri(); } };
+    box.appendChild(b);
+  }
+  // Víc karet najednou se neskládá přes sebe.
+  card.style.top = (54 + document.querySelectorAll('.prenos-karta').length * 150) + 'px';
+  document.body.appendChild(card);
+  return card;
+}
+
+async function prenosApi(body) {
+  const data = await api('prenos', body);
+  if (data.ok === false) throw new Error(data.error || 'Přenos se nepovedl.');
+  return data;
+}
+
+/* Otevře přenesený chat v tabu (po přijetí je v seznamu chatů jako každý jiný). */
+async function otevriPrenesenyChat(id) {
+  await loadChats();
+  const c = CHATS.find((x) => x.id === id);
+  if (!c) return toast('Chat se v seznamu ještě neukázal — zkus to za chvilku.');
+  resumeChat(c, '', true);
+}
+
+async function prenosPoslat(chat, titulek, jenPoslat) {
+  const p = prenosMoznost();
+  if (!p) return toast('Přenos je jen mezi počítačem a serverem — přihlas se k serveru v Nastavení → Účet.');
+  if (!chat) return toast('Tenhle chat se ještě nedá přenést — pošli v něm aspoň jednu zprávu.');
+  toast(p.smer === 'na-server' ? 'Posílám chat na server…' : 'Posílám chat na počítač…');
+  let res;
+  try {
+    res = await prenosApi({akce: p.smer, chat, titulek});
+  } catch (err) {
+    return toast(err.message);
+  }
+  if (p.smer === 'na-server') {
+    prenosKarta({titulek: 'Chat je na serveru', text: `„${res.title}“ — otevři ho na serveru a pokračuj tam.`,
+      tlacitka: [{label: 'Otevřít na serveru', primary: true, run: () => HubServer.go(hubIO())},
+                 {label: 'Zavřít', run: async () => {}}]});
+  } else {
+    toast(res.message || 'Chat čeká na počítači.');
+  }
+}
+
+let prenosZnamo = new Set();
+let prenosTimer = null;
+async function prenosPoll() {
+  let st;
+  try { st = await api('prenos-stav'); } catch (_) { return; }
+  for (const c of st.cekajici || []) {
+    if (prenosZnamo.has(c.id)) continue;
+    prenosZnamo.add(c.id);
+    prenosKarta({titulek: 'Chat z počítače je tady', text: `„${c.title}“${c.from ? ' (z ' + c.from + ')' : ''} — pokračuj v něm.`,
+      tlacitka: [{label: 'Otevřít', primary: true, run: async () => { await otevriPrenesenyChat(c.id); await prenosApi({akce: 'hotovo', chat: c.id}).catch(() => {}); }},
+                 {label: 'Později', run: async () => { await prenosApi({akce: 'hotovo', chat: c.id}).catch(() => {}); }}]});
+  }
+  for (const u of st.ukoly || []) {
+    if (prenosZnamo.has('u' + u.id)) continue;
+    prenosZnamo.add('u' + u.id);
+    prenosKarta({titulek: 'Server ti poslal chat', text: `„${u.title}“ — přijmout ho na tenhle počítač a pokračovat?`,
+      tlacitka: [{label: 'Přijmout a otevřít', primary: true, run: async () => {
+        try { const r = await prenosApi({akce: 'prijmout', id: u.id}); await otevriPrenesenyChat(r.chat); } catch (err) { toast(err.message); }
+      }}, {label: 'Zahodit', run: async () => { await api('pocitac', {action: 'ukol-zahodit', id: u.id}).catch(() => {}); }}]});
+  }
+}
 
 /* ── Sdílené chaty (gateway/relace.py) ──────────────────────────────────────
    Majitel sdílí rozběhnutý chat s kolegy; ti ho živě sledují (a když smí, píšou
@@ -1565,6 +1662,18 @@ function prehledHtml(tab, box) {
       btns.append(e, z);
       s.appendChild(btns);
     }
+    neco = true;
+  }
+  /* Přenos chatu na druhou stranu: počítač ↔ server (hub/prenos.py). */
+  const prenos = prenosMoznost();
+  if (prenos && (tab.chat || tab.resume)) {
+    const s = sekce('Přenos');
+    s.appendChild(mk('div', 'pr-napoveda', prenos.smer === 'na-server'
+      ? 'Pošli tenhle chat na server a pokračuj v něm tam.'
+      : 'Pošli tenhle chat na počítač a pokračuj v něm tam.'));
+    const b = mk('button', 'btn ghost pr-sdilet', prenos.pokracovat);
+    b.onclick = () => prenosPoslat(tab.chat || tab.resume, tab.title);
+    s.appendChild(b);
     neco = true;
   }
   if (p.todos && p.todos.length) {
@@ -2227,6 +2336,7 @@ async function reload() {
   markAdvanced();
   renderProjects($('search').value);
   if (!usageTimer && Date.now() - usageAt > 120000) loadUsage();
+  if (!prenosTimer) { prenosTimer = setInterval(() => { if (!document.hidden) prenosPoll(); }, 12000); setTimeout(prenosPoll, 3000); }
   if (onServer() && !relaceTimer) {
     relaceTimer = setInterval(() => { if (!document.hidden) loadRelace(); }, 5000);
     loadRelace();
@@ -3341,6 +3451,11 @@ function handle(msg) {
     if (!msg.list.length) restoreAfterRestart();
   } else if (msg.t === 'memory-saved') {
     memorySaved(msg);
+  } else if (msg.t === 'prenos-prijat') {
+    prenosKarta({titulek: 'Chat ze serveru je tady', text: `„${msg.title}“ — pokračuj v něm na počítači.`,
+      tlacitka: [{label: 'Otevřít', primary: true, run: () => otevriPrenesenyChat(msg.chat)}, {label: 'Později', run: async () => {}}]});
+  } else if (msg.t === 'prenos-ceka') {
+    prenosPoll();
   } else if (msg.t === 'pocitac-ukol') {
     // Úkol, který nechal Claude ze serveru (hub/pocitac.py): dorazil, nebo běží.
     HubPocitac.ukol(hubIO(), msg);

@@ -51,6 +51,7 @@ UKOL_TEXT = 8000
 UKOL_TITLE = 120
 UKOL_FILES = 20
 UKOL_BYTES = 15 * 1024 * 1024       # přílohy dohromady, jako jeden přenos mostem
+CHAT_BYTES = 45 * 1024 * 1024       # totéž u chatu z prostoru (hub/prenos.py, balíček po kusech)
 UKOL_WAITING = 20                   # nevyzvednutých úkolů na účet
 UKOL_KEEP = 30 * 86400              # nevyzvednutý úkol po měsíci propadne
 UKOL_HISTORY = 14 * 86400           # vyřízený se ukazuje ještě dva týdny
@@ -89,8 +90,9 @@ def file_name(raw):
     return "" if name in ("", ".", "..") else name
 
 
-def decode_files(raw):
+def decode_files(raw, limit=None):
     """Přílohy úkolu [{"name", "data" (base64)}] → ([(jméno, bajty)], chyba)."""
+    limit = limit or UKOL_BYTES
     if raw in (None, ""):
         return [], ""
     if not isinstance(raw, list):
@@ -106,8 +108,8 @@ def decode_files(raw):
             return None, "Příloha nemá platné jméno."
         encoded = str(item.get("data") or "")
         total += len(encoded) * 3 // 4
-        if total > UKOL_BYTES + 3:
-            return None, (f"Přílohy mají dohromady přes {UKOL_BYTES // (1024 * 1024)} MB — "
+        if total > limit + 3:
+            return None, (f"Přílohy mají dohromady přes {limit // (1024 * 1024)} MB — "
                           "zabal je nebo pošli jen to podstatné.")
         try:
             data = base64.b64decode(encoded, validate=True)
@@ -291,13 +293,14 @@ class Broker:
         args = args if isinstance(args, dict) else {}
         title = " ".join(str(args.get("title") or "").split())[:UKOL_TITLE]
         text = str(args.get("text") or "").strip()
+        kind = "chat" if args.get("kind") == "chat" else ""
         if not title or not text:
             return {"ok": False, "error": "Úkol potřebuje název i zadání."}
         if len(text) > UKOL_TEXT:
             return {"ok": False, "error": (
                 f"Zadání má {len(text)} znaků, vejde se nejvýš {UKOL_TEXT}. Zkrať ho, "
                 "nebo podrobnosti ulož do souboru a přilož ho.")}
-        files, error = decode_files(args.get("files"))
+        files, error = decode_files(args.get("files"), CHAT_BYTES if kind else None)
         if error:
             return {"ok": False, "error": error}
         now = time.time()
@@ -307,7 +310,7 @@ class Broker:
             return {"ok": False, "error": (
                 f"Na počítač už čeká {waiting} úkolů. Než přidáš další, počkej, až si je "
                 "vyzvedne, nebo nepotřebné zruš (zrusit_ukol).")}
-        record = {"id": secrets.token_hex(8), "title": title, "text": text,
+        record = {"id": secrets.token_hex(8), "title": title, "text": text, "kind": kind,
                   "folder": _text(args.get("folder"), 500),
                   "computer": _text(args.get("computer"), 80),
                   "files": [{"name": name, "size": len(data)} for name, data in files],
@@ -476,6 +479,7 @@ class Broker:
     @staticmethod
     def _public(record):
         return {"id": record["id"], "title": record["title"], "folder": record["folder"],
+                "kind": record.get("kind", ""),
                 "computer": record["computer"],
                 "files": [f["name"] for f in record["files"]],
                 "created": record["created"], "state": record["state"],
