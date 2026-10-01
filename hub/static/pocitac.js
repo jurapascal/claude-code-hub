@@ -424,7 +424,7 @@
   function ukolyNotice(io, list) {
     if (document.querySelector('.pc-ukol')) return;
     const now = Date.now() / 1000;
-    const u = (list || []).find((x) => (x.state === 'prevzato' || x.state === 'spusteno') &&
+    const u = (list || []).find((x) => x.kind !== 'chat' && (x.state === 'prevzato' || x.state === 'spusteno') &&
                                        now - x.changed < 30 * 60 && !seen(x.id + ':' + x.state));
     if (!u) return;
     markSeen(u.id + ':' + u.state);

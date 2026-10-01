@@ -77,8 +77,16 @@ def na_pocitac(chat, titulek=""):
     if not out.get("ok"):
         raise ValueError(out.get("error") or "Počítači se chat nepodařilo nechat.")
     core.log(f"přenos: chat „{meta['title']}\" nechán počítači ({len(data) // 1024} kB)")
+    # Chat se stěhuje, nekopíruje: na serveru zmizí ze seznamu. Přepis zůstane
+    # vedle jako `<id>.jsonl.preneseno`, kdyby se na cestě něco ztratilo.
+    stary, _sub = prenos.najdi(core.CLAUDE_DIR, meta["id"])
+    if stary:
+        try:
+            os.replace(stary, stary + ".preneseno")
+        except OSError:
+            pass
     return {"ok": True, "chat": meta["id"], "title": meta["title"],
-            "message": f"Chat „{meta['title']}“ čeká na počítači — otevře se tam, jakmile bude online."}
+            "message": f"Chat „{meta['title']}“ je na cestě na počítač a ze serveru zmizel — otevře se tam, jakmile bude online."}
 
 
 def prijmout(tid):

@@ -1376,6 +1376,10 @@ async function prenosPoslat(chat, titulek, jenPoslat) {
                  {label: 'Zavřít', run: async () => {}}]});
   } else {
     toast(res.message || 'Chat čeká na počítači.');
+    // Chat se stěhuje: tab na serveru se zavře a chat zmizí ze seznamu.
+    const tab = TABS.find((t) => (t.chat || t.resume) === chat);
+    if (tab) closeTab(tab);
+    loadChats();
   }
 }
 
