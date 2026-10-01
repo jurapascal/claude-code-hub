@@ -415,6 +415,9 @@ def add_custom(label, url, client_id="", client_secret=""):
     client_id, client_secret = (client_id or "").strip(), (client_secret or "").strip()
     if client_secret and not client_id:
         return {"ok": False, "detail": "K OAuth Client Secret patří i Client ID."}
+    if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", client_id):
+        return {"ok": False, "detail": "Do OAuth Client ID se dostal e-mail (nejspíš z "
+                "automatického vyplnění). Pole nech prázdné — server si klienta zaregistruje sám."}
     path = urllib.parse.urlparse(url).path.rstrip("/")
     argv = [claude, "mcp", "add", "--transport", "sse" if path.endswith("/sse") else "http",
             "-s", "user", name, url]

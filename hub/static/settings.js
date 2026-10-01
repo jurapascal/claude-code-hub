@@ -1299,6 +1299,11 @@
         optional.client_id = field(adv, 'OAuth Client ID (nepovinné)', '');
         optional.client_secret = field(adv, 'OAuth Client Secret (nepovinné)', '');
         optional.client_secret.type = 'password';
+        // Správce hesel jinak vyplní heslo do Secretu a e-mail do Client ID před ním.
+        optional.client_secret.autocomplete = 'new-password';
+        optional.client_id.autocomplete = 'off';
+        optional.client_id.setAttribute('data-lpignore', 'true');
+        optional.client_secret.setAttribute('data-lpignore', 'true');
         adv.appendChild(el('small', 'set-note',
           'Vyplň, jen když služba vydává vlastní přihlašovací klienty. ' +
           'Jako adresu pro přesměrování (redirect URI) jim zadej ' + (svc.redirect || '') + '.'));
