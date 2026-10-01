@@ -42,7 +42,7 @@
     const pomocnici = new Map();         // id → figurka
 
     function figurka(typ, barva, cls) {
-      const f = {el: el('cl-fig ' + (cls || '')), x: DOMOV, t: null, t2: null, konci: false, rec: null, recT: null};
+      const f = {el: el('cl-fig ' + (cls || '')), x: DOMOV, t: null, t2: null, konci: false, rec: null, recT: null, emoEl: null, emoT: null};
       f.el.style.setProperty('--ag', barva || 'var(--accent)');
       f.bublina = el('cl-bublina');
       const telo = el('cl-postava');
@@ -91,6 +91,41 @@
       cil.el.classList.add('trhne');
       setTimeout(() => { hlavni.el.classList.remove('bicuje'); cil.el.classList.remove('trhne'); b.remove(); }, 900);
     }
+    /* ── emoji nad hlavou: co Claudík právě dělá ─────────────────────────────
+       Přemýšlí 💭, čte 👀, píše ✍️, hledá 🔍, běží příkaz ⚡; hotovo ✅, chyba ❌,
+       čeká na odpověď ❓. Emoji se nenosí na místě — Claudík si s ním hraje
+       (přehazuje ho, jako když žongluje), ať je vidět, že žije. */
+    const EMO_NASTROJ = {
+      Read: '👀', Grep: '🔍', Glob: '🔍', Edit: '✍️', Write: '📝', NotebookEdit: '📝',
+      Bash: '⚡', WebFetch: '🌐', WebSearch: '🔎', Task: '📣', Agent: '📣', TodoWrite: '📋',
+      AskUserQuestion: '❓', Monitor: '📡', ScheduleWakeup: '⏰', SendMessage: '✉️',
+    };
+    const emoNastroje = (jmeno) => EMO_NASTROJ[jmeno] ||
+      (/^mcp__playwright__/.test(jmeno || '') ? '🧭' : /^mcp__/.test(jmeno || '') ? '🔌' : '⚙️');
+    /* `trida`: mysli (houpe se) · pinka (přehazuje) · hotovo (vyskočí) · chyba (zatřese se).
+       `ms` = jak dlouho; 0 = zůstane, dokud ho něco nevymění. */
+    function emo(f, znak, trida, ms, pak) {
+      if (!zivy) return;
+      clearTimeout(f.emoT);
+      if (f.emoEl) f.emoEl.remove();
+      f.emoEl = null;
+      f.el.classList.remove('ma-emo');
+      if (!znak) return;
+      f.emoEl = el('cl-emo ' + (trida || 'mysli'), znak);
+      f.el.appendChild(f.emoEl);
+      f.el.classList.add('ma-emo');
+      if (ms) {
+        f.emoT = setTimeout(() => {
+          if (f.emoEl) f.emoEl.remove();
+          f.emoEl = null;
+          f.el.classList.remove('ma-emo');
+          if (pak) pak();
+        }, ms);
+      }
+    }
+    // Co dělá hlavní, když zrovna nic jiného nehlásí: přemýšlí.
+    const premysli = () => { if (praceOn && !cekaOn) emo(hlavni, '💭', 'mysli', 0); };
+
     const TOKY = {
       zadani: ['Jdi na to!', 'Máš práci!', 'Pracovat!', 'Šup, šup!'],
       odpoved: ['Jasně, šéfe!', 'Už běžím!', 'Rozkaz!', 'Hned to bude!'],
@@ -241,9 +276,11 @@
         if (praceOn) {
           ukaz();
           hlavni.el.classList.remove('hotovo');
+          premysli();
           prechazej();
         } else {
           stuj(hlavni);
+          if (!cekaOn) emo(hlavni, '✅', 'hotovo', 2200);
           jdi(hlavni, DOMOV, () => {
             hlavni.el.classList.remove('vlevo');
             if (!cekaOn) { hlavni.el.classList.add('hotovo'); radost(hlavni); }
@@ -251,17 +288,36 @@
           moznaSchovat();
         }
       },
+      /* Claude spustil nástroj — emoji podle toho, co dělá, a pak zase přemýšlí. */
+      nastroj(jmeno) {
+        if (!zivy || !praceOn || cekaOn) return;
+        ukaz();
+        emo(hlavni, emoNastroje(jmeno), 'pinka', 2300, premysli);
+      },
+      /* Nástroj skončil chybou. */
+      chyba() {
+        if (!zivy) return;
+        ukaz();
+        hlavni.el.classList.remove('trese');
+        void hlavni.el.offsetWidth;
+        hlavni.el.classList.add('trese');
+        setTimeout(() => hlavni.el.classList.remove('trese'), 700);
+        emo(hlavni, '❌', 'chyba', 2400, premysli);
+        moznaSchovat();
+      },
       /* Claude čeká na odpověď — otazník nad hlavou, poskakuje. */
       ceka(on) {
         if (!zivy || cekaOn === !!on) return;
         cekaOn = !!on;
         hlavni.el.classList.toggle('ceka', cekaOn);
-        hlavni.bublina.textContent = cekaOn ? '?' : '';
         if (cekaOn) {
           ukaz();
           stuj(hlavni);
           hlavni.el.classList.remove('hotovo');
+          emo(hlavni, '❓', 'pinka', 0);
         } else {
+          emo(hlavni, '');
+          premysli();
           if (praceOn) prechazej();
           moznaSchovat();
         }
@@ -275,6 +331,7 @@
         f.el.style.left = f.x + '%';
         pomocnici.set(id, f);
         if (!tise) radost(hlavni);
+        emo(f, '💭', 'mysli', 0);
         // Hlavní Claudík pomocníkovi zadá práci, práskne bičem a ten odpoví.
         f.cekaNaZadani = !tise;
         setTimeout(() => {
@@ -301,6 +358,8 @@
         if (f.krokOd && ted - f.krokOd < 7000) return;
         f.krokOd = ted;
         mluv(f, zkrat(text, 30), 2400);
+        emo(f, emoNastroje(String(text).includes('Edit') ? 'Edit' : String(text).includes('grep') || String(text).includes('⌕') ? 'Grep' : 'Read'), 'pinka', 2000,
+            () => { if (!f.konci) emo(f, '💭', 'mysli', 0); });
       },
       /* Pomocník doběhl: s výsledkem k hlavnímu, s chybou jen odejde. */
       hotovo(id, stav, tise) {
@@ -317,6 +376,7 @@
           }, 500);
         };
         if (tise || !zivy) { f.el.remove(); pomocnici.delete(id); moznaSchovat(); return; }
+        emo(f, stav === 'hotovo' ? '✅' : stav === 'chyba' ? '❌' : '⏹️', stav === 'hotovo' ? 'hotovo' : stav === 'chyba' ? 'chyba' : 'mysli', 2600);
         if (stav !== 'hotovo') {
           f.el.classList.add(stav === 'chyba' ? 'chyba' : 'stop');
           if (stav === 'chyba') {
@@ -351,7 +411,7 @@
         clearTimeout(schovatTimer);
         clearTimeout(predavkaTimer);
         clearTimeout(kontrolaTimer);
-        for (const f of [hlavni, ...pomocnici.values()]) { stuj(f); clearTimeout(f.recT); }
+        for (const f of [hlavni, ...pomocnici.values()]) { stuj(f); clearTimeout(f.recT); clearTimeout(f.emoT); }
         box.remove();
         root.classList.remove('hriste-on');
       },

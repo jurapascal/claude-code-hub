@@ -926,8 +926,9 @@
         }
         // Zpráva do jiného chatu — na hřišti odletí obálka.
         if (udalost && b.name === 'SendMessage') udalost({co: 'dopis', smer: 'ven'});
-        // Nástroj Playwright = Claude chce prohlížeč: okno v appce vyskočí (prohlizec.js).
-        if (udalost && /^mcp__playwright__/.test(b.name || '')) udalost({co: 'nastroj', name: b.name});
+        // Každý nástroj: Claudík si ho přehodí jako emoji; Playwright navíc otevře
+        // okno prohlížeče (prohlizec.js to pozná podle jména).
+        if (udalost && b.name) udalost({co: 'nastroj', name: b.name});
         const box = udelejNastroj(b);
         box.classList.add('ceka');
         if (b.id) tools.set(b.id, box);
@@ -996,6 +997,7 @@
         if (!box) return;
         box.classList.remove('ceka');
         box.classList.toggle('chyba', !b.ok);
+        if (!b.ok && udalost) udalost({co: 'chyba'});
         const kus = [];
         if (box._meta.textContent) kus.push(box._meta.textContent);
         if (!b.ok) kus.push('chyba');
@@ -1132,7 +1134,9 @@
         // Prohlížeč v appce — jen živé nástroje, ne historie při otevření tabu.
         if (e.co === 'nastroj' && nacteno) {
           document.dispatchEvent(new CustomEvent('hub-tool', {detail: {name: e.name}}));
+          if (hriste) hriste.nastroj(e.name);
         }
+        if (e.co === 'chyba' && nacteno && hriste) hriste.chyba();
         if (!hriste) return;
         if (e.co === 'agent') hriste.pridej(e.id, e.typ, e.barva, !nacteno, e.ukol);
         else if (e.co === 'krok' && nacteno) hriste.krok(e.id, e.text);
