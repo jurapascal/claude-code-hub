@@ -32,7 +32,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import (account, automodel, chats, clockify, connect, core, cteni, pocitac, predplatne,
+from . import (account, automodel, chats, clockify, connect, core, cteni, jev, pocitac, predplatne,
                prenos, prenos_hub, prohlizec, pty_backend, qr, remote, restart, setup, stats, vzhled)
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -1040,6 +1040,17 @@ class Handler(BaseHTTPRequestHandler):
             if action == "choose":
                 return self._json(clockify.choose(path, payload.get("project") or ""))
             return self._json(clockify.status(path))
+        if name == "jev":
+            # Jev (TypeSafe) přes Cloudflare — údaje vyplněné v Nastavení → AI
+            # agenti. Uloží se jen ty, se kterými model doopravdy odpoví.
+            payload = payload or {}
+            action = payload.get("action") or ""
+            if action == "save":
+                res = jev.save(payload.get("account_id"), payload.get("api_token"))
+                return self._json(res, 200 if res.get("ok") else 400)
+            if action == "remove":
+                return self._json(jev.remove())
+            return self._json(jev.status())
         if name == "predplatne":
             # Claude v prostoru na vlastním předplatném: propojení přes
             # `claude setup-token` na tomhle počítači a stav u brány.

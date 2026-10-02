@@ -26,7 +26,8 @@
     // neřeší složky s projekty, zálohu paměti ani tlačítka nových tabů.
     ['projekty',   'Projekty',  'i-folder',   () => projekty(), 'dev'],
     ['taby',       'Taby',      'i-terminal', () => taby(), 'dev'],
-    ['agenti',     'AI agenti', 'i-hub',      () => agenti(), 'dev'],
+    // Bez vývojářského režimu jen modely přes API (Jev) — CLI agenti ne.
+    ['agenti',     'AI agenti', 'i-hub',      () => agenti()],
     ['pamet',      'Paměť',     'i-book',     () => pamet(), 'dev'],
     ['ucet',       'Účet',      'i-user',     () => ucet()],
     ['hlas',       'Hlas',      'i-mic',      () => hlas()],
@@ -573,6 +574,12 @@
   let agentsLast = null;
 
   function agenti() {
+    if (!advanced()) {
+      const only = section('AI agenti',
+        'Modely, které si Claude umí zavolat na pomoc. Vyplníš údaje a je napojeno.');
+      only.appendChild(jev());
+      return only;
+    }
     const box = section('AI agenti',
       'Každý tab se otevírá jedním z nich. Volba u projektu se pamatuje, ' +
       'takže e-shop může jezdit v Claudeovi a experiment v něčem jiném.');
@@ -679,7 +686,110 @@
 
     check.onclick = () => load(true);
     if (agentsLast) draw(agentsLast); else load(false);
+    box.appendChild(jev());
     return box;
+  }
+
+  /* Jev (TypeSafe) — model, ne agent: neotevírá se v tabu, volá ho Claude
+     na hromadná rozhodnutí (skill jev). Postup je u něj, ať ho každý najde
+     tam, kde se to vyplňuje; text kroků posílá server (hub/jev.py). */
+  function jev() {
+    const wrap = el('div', 'svc-card');
+    const head = el('div', 'onb-row');
+    const dot = el('span', 'set-dim', '○');
+    const col = el('span', 'onb-col');
+    col.appendChild(el('span', null, 'Jev · TypeSafe AI'));
+    const sub = el('small', null, 'načítám…');
+    col.appendChild(sub);
+    head.append(dot, col, el('span', 'spacer'));
+    const toggle = el('button', 'btn ghost', 'Nastavit');
+    const off = el('button', 'btn ghost', 'Odpojit');
+    off.hidden = true;
+    head.append(toggle, off);
+    const form = el('div', 'svc-form');
+    form.hidden = true;
+    wrap.append(head, form);
+
+    function input(label, placeholder, help) {
+      const row = el('label', 'mcp-field');
+      row.appendChild(el('span', null, label));
+      const i = el('input');
+      i.type = 'text';
+      i.placeholder = placeholder;
+      i.autocomplete = 'off';
+      i.spellcheck = false;
+      row.appendChild(i);
+      if (help) row.appendChild(el('small', null, help));
+      form.appendChild(row);
+      return i;
+    }
+
+    function draw(s) {
+      dot.className = s.configured ? 'set-ok' : 'set-dim';
+      dot.textContent = s.configured ? '●' : '○';
+      sub.textContent = s.configured
+        ? 'Napojeno přes Cloudflare (účet ' + s.account_id.slice(0, 6) + '…, token ' +
+          s.token_hint + '). Claude ho volá na hromadné třídění — stačí mu to říct.'
+        : 'Levný model na hromadná rozhodnutí (ano/ne, kategorie, skóre). ' +
+          'Claude si ho zavolá třeba na třídění stovek e-mailů.';
+      toggle.textContent = s.configured ? 'Změnit údaje' : 'Nastavit';
+      off.hidden = !s.configured;
+
+      form.textContent = '';
+      const steps = el('ol', 'mcp-steps');
+      for (const step of s.setup || []) {
+        const li = el('li', 'mcp-step');
+        const h = el('div', 'mcp-step-head');
+        h.appendChild(el('strong', null, step.title));
+        if (step.url) {
+          h.appendChild(el('span', 'spacer'));
+          const go = el('button', 'btn ghost', step.button || 'Otevřít');
+          go.onclick = () => io.open(step.url);
+          h.appendChild(go);
+        }
+        li.appendChild(h);
+        li.appendChild(el('div', 'set-note', step.text));
+        steps.appendChild(li);
+      }
+      form.appendChild(steps);
+      const acc = input('Account ID', '32 znaků, např. 0123456789abcdef…');
+      acc.value = s.account_id || '';
+      const tok = input('API token', s.configured ? 'nech prázdné = token zůstane' : 'token z Cloudflare',
+        'Uloží se jen k tobě do ~/.claude/jev.json, do prohlížeče se už nevrací.');
+      tok.type = 'password';
+      const status = el('div', 'set-note');
+      const go = el('button', 'btn primary', 'Ověřit a napojit');
+      go.onclick = async () => {
+        go.disabled = true;
+        status.className = 'set-note';
+        status.textContent = 'Ověřuju — posílám Jevovi zkušební otázku…';
+        try {
+          const r = await io.api('jev', {action: 'save', account_id: acc.value,
+                                         api_token: tok.value});
+          io.toast(r.message || 'Napojeno.');
+          form.hidden = true;
+          draw(r);
+        } catch (err) {
+          status.className = 'set-warn';
+          status.textContent = err.message;
+          go.disabled = false;
+        }
+      };
+      tok.onkeydown = (ev) => { if (ev.key === 'Enter') go.click(); };
+      form.append(go, status);
+    }
+
+    toggle.onclick = () => {
+      form.hidden = !form.hidden;
+      if (!form.hidden) (form.querySelector('input') || {focus() {}}).focus();
+    };
+    off.onclick = async () => {
+      if (!confirm('Odpojit Jev? Údaje se z tohohle počítače smažou.')) return;
+      try { draw(await io.api('jev', {action: 'remove'})); }
+      catch (err) { io.toast(err.message); }
+    };
+    io.api('jev').then(draw).catch((err) => { sub.textContent = 'nepodařilo se zjistit: ' + err.message; });
+    return wrap;
   }
 
   /* Účet na serveru.
