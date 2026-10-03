@@ -1243,7 +1243,10 @@ class Handler(BaseHTTPRequestHandler):
             if not co and (query.get("jen") or [""])[0] == "napojeni":
                 return self._json(pluginy.napojeni_katalog((query.get("q") or [""])[0]))
             if not co and (query.get("jen") or [""])[0] == "skilly":
-                return self._json(pluginy.skilly(bool(query.get("refresh"))))
+                return self._json(pluginy.skilly((query.get("zdroj") or [""])[0], bool(query.get("refresh"))))
+            if not co and (query.get("jen") or [""])[0] == "skill":
+                return self._json(pluginy.skill_detail((query.get("zdroj") or [""])[0], (query.get("name") or [""])[0],
+                                                       (query.get("kde") or [""])[0]))
             if not co:
                 obnovit = bool(query.get("refresh"))
                 return self._json({"cc": pluginy.katalog(obnovit), "appka": pluginy.appka_seznam()})

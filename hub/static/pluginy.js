@@ -323,70 +323,191 @@
   /* Skilly: co Claude umí. Moje příkazy (slash), ze zapnutých pluginů a
      postupy v Obsidian Brainu, které si Claude načte, když je potřebuje. */
   const ZDROJE = [['moje', 'Moje příkazy', 'i-bolt'], ['plugin', 'Z pluginů', 'i-plus'], ['obsidian', 'Z Obsidianu', 'i-book']];
+  const ZDROJ_JMENO = {moje: 'moje příkazy', plugin: 'plugin', obsidian: 'Obsidian'};
+  const stari = (ts) => {
+    if (!ts) return '';
+    const d = Math.floor((Date.now() / 1000 - ts) / 86400);
+    return d < 1 ? 'dnes' : d === 1 ? 'včera' : d < 30 ? 'před ' + d + ' dny' : new Date(ts * 1000).toLocaleDateString('cs-CZ');
+  };
+  const velikost = (n) => n < 1024 ? n + ' B' : Math.round(n / 1024) + ' kB';
+
   function skilly() {
     const wrap = el('div');
-    wrap.appendChild(el('div', 'set-note',
+    const seznamBox = el('div');
+    const detailBox = el('div');
+    detailBox.hidden = true;
+    wrap.append(seznamBox, detailBox);
+
+    /* Detail skillu jako v claude.ai: popis, obsah (soubory), vyzkoušet v chatu. */
+    async function detail(x) {
+      seznamBox.hidden = true;
+      detailBox.hidden = false;
+      detailBox.textContent = '';
+      const zpet = el('button', 'plg-zpet');
+      zpet.innerHTML = svg('i-chevron') + '<span>Skilly</span>';
+      zpet.onclick = () => { detailBox.hidden = true; seznamBox.hidden = false; };
+      detailBox.appendChild(zpet);
+      const hlava = el('div', 'plg-detail-hlava');
+      hlava.appendChild(ikonka(x.name, (ZDROJE.find((z) => z[0] === x.source) || [])[2]));
+      const jm = el('div', 'plg-info');
+      jm.appendChild(el('b', 'plg-detail-nazev', x.source === 'moje' ? '/' + x.name : x.name));
+      const meta = el('span', 'plg-meta plg-detail-meta', 'z ' + ZDROJ_JMENO[x.source] + (x.plugin ? ' ' + x.plugin : '') + (x.category ? ' · ' + x.category : ''));
+      jm.appendChild(meta);
+      hlava.appendChild(jm);
+      const vyzkouset = tlacitko('Vyzkoušet v chatu', async () => {
+        const text = x.source === 'moje' ? '/' + x.name : 'Použij skill „' + x.name + '“.';
+        if (!io.posli(text)) io.toast('Nejdřív otevři chat, ve kterém to má Claude zkusit.');
+        else io.toast('Poslal jsem to Claudovi do aktivního chatu.');
+      }, 'primary');
+      hlava.appendChild(vyzkouset);
+      detailBox.appendChild(hlava);
+      const tabs = el('div', 'plg-detail-tabs');
+      const telo = el('div', 'plg-detail-telo');
+      detailBox.append(tabs, telo);
+      telo.appendChild(el('div', 'set-note', 'Načítám…'));
+      let d;
+      try {
+        d = await io.api('pluginy?jen=skill&zdroj=' + encodeURIComponent(x.source) + '&name=' + encodeURIComponent(x.name) +
+                         '&kde=' + encodeURIComponent(x.plugin || x.category || ''));
+      } catch (err) { telo.textContent = 'Detail se nenačetl: ' + err.message; return; }
+      if (d.error) { telo.textContent = d.error; return; }
+      if (d.updated) meta.textContent += ' · upraveno ' + stari(d.updated);
+      const prehled = () => {
+        telo.textContent = '';
+        const sloupce = el('div', 'plg-detail-sloupce');
+        const levy = el('div');
+        levy.appendChild(el('div', 'plg-detail-stitek', 'Popis'));
+        levy.appendChild(el('div', 'plg-detail-popis', d.description || 'Skill nemá popis.'));
+        const pravy = el('div', 'plg-detail-bok');
+        pravy.appendChild(el('div', 'plg-detail-stitek', 'Zdroj'));
+        pravy.appendChild(el('div', '', ZDROJ_JMENO[x.source][0].toUpperCase() + ZDROJ_JMENO[x.source].slice(1) + (x.plugin ? ' · ' + x.plugin : '') + (x.category ? ' · ' + x.category : '')));
+        pravy.appendChild(el('div', 'plg-detail-stitek', 'Jak se používá'));
+        pravy.appendChild(el('div', 'set-note', x.source === 'moje' ? 'Napiš /' + x.name + ' do chatu.' : 'Claude si ho vezme sám, když se hodí — nebo ho zmiň v chatu.'));
+        sloupce.append(levy, pravy);
+        telo.appendChild(sloupce);
+      };
+      const obsah = () => {
+        telo.textContent = '';
+        for (const f of d.files) {
+          const r = el('div', 'plg-soubor');
+          r.append(el('span', '', f.path), el('span', 'plg-meta', velikost(f.size)));
+          telo.appendChild(r);
+        }
+        telo.appendChild(el('div', 'plg-detail-stitek', 'SKILL.md'));
+        const pre = el('pre', 'plg-detail-kod');
+        pre.textContent = d.text;
+        telo.appendChild(pre);
+      };
+      for (const [id, text, fn] of [['p', 'Přehled', prehled], ['o', 'Obsah · ' + d.files.length, obsah]]) {
+        const b = el('button', 'plg-detail-tab', text);
+        b.onclick = () => { for (const t of tabs.children) t.classList.toggle('on', t === b); fn(); };
+        tabs.appendChild(b);
+      }
+      tabs.firstChild.click();
+    }
+
+    seznamBox.appendChild(el('div', 'set-note',
       'Skilly jsou návody, podle kterých Claude dělá konkrétní práci. Moje příkazy spustíš lomítkem ' +
-      '(třeba /push), ostatní si Claude vezme sám, když se hodí.'));
+      '(třeba /push), ostatní si Claude vezme sám, když se hodí. Klikni na skill pro detail.'));
+    const hledat = el('input', 'set-input plg-hledat');
+    hledat.placeholder = 'Hledat skill — třeba „newsletter", „seo", „deploy"…';
+    const filtry = el('div', 'plg-filtry');
+    const chipy = el('div', 'plg-chipy');
+    filtry.appendChild(chipy);
+    const seznam = el('div', 'plg-seznam');
+    seznamBox.append(hledat, filtry, seznam);
+
+    const vse = [];                       // co už se načetlo
+    const zobrazene = new Set();          // skilly, které už mají řádek
+    let zdroj = '';
+    let fronta = [];                      // řádky čekající na zobrazení (po jednom)
+    let bezi = false, tik = 0;
+    const pocty = {};
+    const chip = (id, text, ico) => {
+      const c = el('button', 'plg-chip' + (zdroj === id ? ' on' : ''));
+      c.innerHTML = (ico ? svg(ico) : '') + '<span></span>';
+      c.dataset.k = id;
+      c.onclick = () => { zdroj = id; for (const x of chipy.children) x.classList.toggle('on', x.dataset.k === id); prekresli(); };
+      chipy.appendChild(c);
+      return c;
+    };
+    const chipy_ = {'': chip('', 'Vše')};
+    for (const [id, , ico] of ZDROJE) { chipy_[id] = chip(id, '', ico); chipy_[id].hidden = true; }
+    const popisky = () => {
+      chipy_[''].querySelector('span').textContent = 'Vše · ' + vse.length;
+      for (const [id, text] of ZDROJE) {
+        const n = vse.filter((x) => x.source === id).length;
+        chipy_[id].querySelector('span').textContent = text + ' · ' + n;
+        chipy_[id].hidden = !n;
+      }
+    };
+    popisky();
+
+    const shoda = (x) => {
+      const q = hledat.value.trim().toLowerCase();
+      return (!zdroj || x.source === zdroj) &&
+        (!q || (x.name + ' ' + x.description + ' ' + (x.plugin || '') + ' ' + (x.category || '')).toLowerCase().includes(q));
+    };
+    let skupina = null;
+    const rada = (x) => {
+      const nadpis = x.source === 'obsidian' ? 'Obsidian · ' + (x.category || '')
+        : x.source === 'plugin' ? 'Plugin ' + (x.plugin || '') : 'Moje příkazy';
+      if (nadpis !== skupina) {
+        skupina = nadpis;
+        seznam.appendChild(el('div', 'set-title plg-podnadpis plg-vstup', nadpis));
+      }
+      const {r} = radek(x.source === 'moje' ? '/' + x.name : x.name, x.description, '',
+                        (ZDROJE.find((z) => z[0] === x.source) || [])[2]);
+      r.classList.add('plg-vstup', 'plg-klik');
+      r.onclick = () => detail(x);
+      seznam.appendChild(r);
+    };
+    // Řádky naskakují po jednom, hned jak je skill načtený (i když zbytek ještě nedorazil).
+    const dalsi = (mine) => {
+      if (mine !== tik) return;
+      const x = fronta.shift();
+      if (!x) { bezi = false; return; }
+      if (shoda(x) && seznam.querySelectorAll('.plg-radek').length < 300) rada(x);
+      setTimeout(() => dalsi(mine), 12);
+    };
+    const spust = () => { if (!bezi) { bezi = true; dalsi(tik); } };
+    const razene = () => vse.slice().sort((a, b) =>
+      ZDROJE.findIndex((z) => z[0] === a.source) - ZDROJE.findIndex((z) => z[0] === b.source) ||
+      (a.category || a.plugin || '').localeCompare(b.category || b.plugin || '', 'cs') || a.name.localeCompare(b.name, 'cs'));
+    function prekresli() {
+      tik++;
+      bezi = false;
+      skupina = null;
+      seznam.textContent = '';
+      fronta = razene().filter(shoda);
+      if (!fronta.length && stav.isConnected) { /* čeká se na načtení */ }
+      spust();
+    }
     const stav = el('div', 'set-note', 'Načítám skilly…');
-    wrap.appendChild(stav);
-    io.api('pluginy?jen=skilly').then((d) => {
-      const vse = d.skills || [];
-      stav.remove();
-      const hledat = el('input', 'set-input plg-hledat');
-      hledat.placeholder = 'Hledat skill — třeba „newsletter", „seo", „deploy"…';
-      const filtry = el('div', 'plg-filtry');
-      const chipy = el('div', 'plg-chipy');
-      let zdroj = '';
-      const mk = (id, text, ico) => {
-        const pocet = id ? vse.filter((x) => x.source === id).length : vse.length;
-        if (id && !pocet) return;
-        const c = el('button', 'plg-chip' + (zdroj === id ? ' on' : ''));
-        c.innerHTML = (ico ? svg(ico) : '') + '<span></span>';
-        c.querySelector('span').textContent = text + ' · ' + pocet;
-        c.dataset.k = id;
-        c.onclick = () => { zdroj = id; for (const x of chipy.children) x.classList.toggle('on', x.dataset.k === id); vypis(); };
-        chipy.appendChild(c);
-      };
-      mk('', 'Vše');
-      for (const [id, text, ico] of ZDROJE) mk(id, text, ico);
-      filtry.appendChild(chipy);
-      const seznam = el('div', 'plg-seznam');
-      wrap.append(hledat, filtry, seznam);
-      let tik = 0;
-      const vypis = () => {
-        const q = hledat.value.trim().toLowerCase();
-        const mine = ++tik;
-        const hit = vse.filter((x) => (!zdroj || x.source === zdroj) &&
-          (!q || (x.name + ' ' + x.description + ' ' + (x.plugin || '') + ' ' + (x.category || '')).toLowerCase().includes(q)))
-          .sort((a, b) => ZDROJE.findIndex((z) => z[0] === a.source) - ZDROJE.findIndex((z) => z[0] === b.source) ||
-                          (a.category || '').localeCompare(b.category || '', 'cs') || a.name.localeCompare(b.name, 'cs'));
-        seznam.textContent = '';
-        if (!hit.length) { seznam.appendChild(el('div', 'set-note', 'Nic takového tu není.')); return; }
-        const celkem = Math.min(hit.length, 150);
-        let i = 0, skupina = null;
-        const dalsi = () => {
-          if (mine !== tik) return;
-          const x = hit[i++];
-          const nadpis = x.source === 'obsidian' ? 'Obsidian · ' + (x.category || '')
-            : x.source === 'plugin' ? 'Plugin ' + (x.plugin || '') : 'Moje příkazy';
-          if (nadpis !== skupina) {
-            skupina = nadpis;
-            seznam.appendChild(el('div', 'set-title plg-podnadpis plg-vstup', nadpis));
-          }
-          const ico = (ZDROJE.find((z) => z[0] === x.source) || [])[2];
-          const {r} = radek(x.source === 'moje' ? '/' + x.name : x.name, x.description, '', ico);
-          r.classList.add('plg-vstup');
-          seznam.appendChild(r);
-          if (i < celkem) setTimeout(dalsi, 15);
-          else if (hit.length > celkem) seznam.appendChild(el('div', 'set-note', 'A dalších ' + (hit.length - celkem) + ' — upřesni hledání.'));
-        };
-        dalsi();
-      };
-      let t = null;
-      hledat.oninput = () => { clearTimeout(t); t = setTimeout(vypis, 150); };
-      vypis();
-    }, (err) => { stav.textContent = 'Skilly se nenačetly: ' + err.message; });
+    seznamBox.insertBefore(stav, seznam);
+    let t = null;
+    hledat.oninput = () => { clearTimeout(t); t = setTimeout(prekresli, 150); };
+
+    /* Zdroje se načítají jeden po druhém a každý se ukáže, jakmile dorazí:
+       nejdřív moje příkazy, pak pluginy, nakonec Obsidian (571 postupů). */
+    (async () => {
+      for (const [id, text] of ZDROJE) {
+        try {
+          const d = await io.api('pluginy?jen=skilly&zdroj=' + id);
+          const nove = d.skills || [];
+          vse.push(...nove);
+          popisky();
+          stav.textContent = 'Načítám… ' + vse.length + ' skillů (zbývá ' + (ZDROJE.length - ZDROJE.findIndex((z) => z[0] === id) - 1) + ' zdroje)';
+          // Nové se přidají na konec fronty, jen pokud sedí do filtru a nerozbijí řazení
+          // (skupiny po zdrojích jdou za sebou, takže nové zdroje patří na konec).
+          fronta.push(...nove.sort((a, b) => (a.category || a.plugin || '').localeCompare(b.category || b.plugin || '', 'cs') ||
+                                              a.name.localeCompare(b.name, 'cs')).filter(shoda));
+          spust();
+        } catch (err) { stav.textContent = text + ' se nenačetly: ' + err.message; }
+      }
+      stav.hidden = true;
+      if (!vse.length) { stav.hidden = false; stav.textContent = 'Žádné skilly se nenašly.'; }
+    })();
     return wrap;
   }
 

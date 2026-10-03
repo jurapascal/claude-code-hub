@@ -312,31 +312,83 @@ def _skill_dir(base, zdroj, extra=None):
         f = os.path.join(base, n, "SKILL.md")
         if os.path.isfile(f):
             name, desc = _frontmatter(f)
-            out.append({"name": name or n, "description": desc, "source": zdroj, **(extra or {})})
+            out.append({"name": name or n, "description": desc, "source": zdroj, "_dir": os.path.join(base, n),
+                        **(extra or {})})
     return out
 
 
-def skilly(obnovit=False):
+def _skilly_zdroj(zdroj):
+    """Skilly jednoho zdroje (moje | plugin | obsidian) — ať se dají načítat po částech."""
+    if zdroj == "moje":
+        return _skill_dir(core.SKILLS_DIR, "moje")
+    out = []
+    if zdroj == "plugin":
+        # Jen uživatelsky zapnuté pluginy (projektové platí jen ve své složce).
+        rc, raw, _ = _cli(["list", "--json"], timeout=60)
+        for p in (_json_z(raw) or []) if rc == 0 else []:
+            if not isinstance(p, dict) or not p.get("enabled") or p.get("scope") != "user":
+                continue
+            plugin = (p.get("id") or "").split("@")[0]
+            out += _skill_dir(os.path.join(p.get("installPath") or "", "skills"), "plugin", {"plugin": plugin})
+    elif zdroj == "obsidian":
+        brain = os.path.join(core.BRAIN, "skills")
+        if os.path.isdir(brain):
+            for kat in sorted(os.listdir(brain)):
+                if os.path.isdir(os.path.join(brain, kat)) and not kat.startswith((".", "_")):
+                    out += _skill_dir(os.path.join(brain, kat), "obsidian", {"category": kat})
+    return out
+
+
+_SKILLY_KESH = {}
+
+
+def skilly(zdroj="", obnovit=False):
     """Skilly, které Claude umí: moje příkazy (~/.claude/skills), ze zapnutých
-    pluginů Claude Code a postupy v Obsidian Brainu (načítá se na požádání)."""
-    if not obnovit and _SKILLY["data"] and time.time() - _SKILLY["at"] < 120:
-        return _SKILLY["data"]
-    out = _skill_dir(core.SKILLS_DIR, "moje")
-    # Pluginy: jen uživatelsky zapnuté (projektové platí jen ve své složce).
-    rc, raw, _ = _cli(["list", "--json"], timeout=60)
-    for p in (_json_z(raw) or []) if rc == 0 else []:
-        if not isinstance(p, dict) or not p.get("enabled") or p.get("scope") != "user":
-            continue
-        plugin = (p.get("id") or "").split("@")[0]
-        out += _skill_dir(os.path.join(p.get("installPath") or "", "skills"), "plugin", {"plugin": plugin})
-    brain = os.path.join(core.BRAIN, "skills")
-    if os.path.isdir(brain):
-        for kat in sorted(os.listdir(brain)):
-            if os.path.isdir(os.path.join(brain, kat)) and not kat.startswith((".", "_")):
-                out += _skill_dir(os.path.join(brain, kat), "obsidian", {"category": kat})
-    data = {"skills": out}
-    _SKILLY.update(at=time.time(), data=data)
-    return data
+    pluginů Claude Code a postupy v Obsidian Brainu (načítá se na požádání).
+    Po zdrojích, aby se v appce ukazovaly postupně, jak se načtou."""
+    zdroje = [zdroj] if zdroj in ("moje", "plugin", "obsidian") else ["moje", "plugin", "obsidian"]
+    out = []
+    for z in zdroje:
+        hit = _SKILLY_KESH.get(z)
+        if obnovit or not hit or time.time() - hit[0] > 120:
+            hit = (time.time(), _skilly_zdroj(z))
+            _SKILLY_KESH[z] = hit
+        out += hit[1]
+    return {"skills": [{k: v for k, v in x.items() if k != "_dir"} for x in out]}
+
+
+def skill_detail(zdroj, name, kde=""):
+    """Celý popis skillu, SKILL.md a seznam souborů — složku si hledá server
+    sám podle jména (klient žádnou cestu neposílá)."""
+    skilly(zdroj)
+    for x in _SKILLY_KESH.get(zdroj, (0, []))[1]:
+        if x["name"] == name and (not kde or kde in (x.get("plugin"), x.get("category"))):
+            base = x["_dir"]
+            try:
+                with open(os.path.join(base, "SKILL.md"), encoding="utf-8", errors="replace") as fh:
+                    text = fh.read(80000)
+            except OSError:
+                text = ""
+            files = []
+            for root, dirs, names in os.walk(base):
+                dirs[:] = [d for d in dirs if not d.startswith(".") and d != "node_modules"]
+                for n in sorted(names):
+                    full = os.path.join(root, n)
+                    if os.path.islink(full):
+                        continue
+                    try:
+                        files.append({"path": os.path.relpath(full, base).replace(os.sep, "/"),
+                                      "size": os.path.getsize(full)})
+                    except OSError:
+                        pass
+                    if len(files) >= 200:
+                        break
+            try:
+                updated = max(os.path.getmtime(os.path.join(base, f["path"])) for f in files) if files else 0
+            except OSError:
+                updated = 0
+            return {k: v for k, v in x.items() if k != "_dir"} | {"text": text, "files": files, "updated": updated}
+    return {"error": "Takový skill tu není."}
 
 
 # ── Pluginy appky ────────────────────────────────────────────────────────────
