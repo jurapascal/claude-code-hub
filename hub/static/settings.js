@@ -809,6 +809,34 @@
    * Přechod mezi nimi je přechod celého okna, ne nová záložka: appka si
    * pamatuje, kde jsi byl naposledy, a příště se otevře tam.
    */
+  /* Účet claude.ai, pod kterým je Claude Code přihlášený. Na něm visí
+     konektory z claude.ai (Gmail, Drive…) — jiný účet = jiné konektory. */
+  function claudeUcet() {
+    const wrap = el('div', 'acc-claude');
+    wrap.appendChild(el('div', 'set-title plg-podnadpis', 'Claude Code'));
+    const radek = el('div', 'mcp-acct');
+    radek.appendChild(el('span', 'set-dim', 'Zjišťuji účet…'));
+    wrap.appendChild(radek);
+    io.api('claude-ucet').then(({account: a}) => {
+      radek.textContent = '';
+      const col = el('span', 'onb-col');
+      if (a && a.email) {
+        col.appendChild(el('span', null, a.name ? a.name + ' · ' + a.email : a.email));
+        col.appendChild(el('small', null, ['konektory z claude.ai patří k tomuhle účtu', a.plan, a.org].filter(Boolean).join(' · ')));
+      } else {
+        col.appendChild(el('span', 'set-warn', 'Claude Code není přihlášený'));
+        col.appendChild(el('small', null, 'Bez přihlášení Claude nepracuje a konektory z claude.ai nejsou vidět.'));
+      }
+      radek.appendChild(col);
+      radek.appendChild(el('span', 'spacer'));
+      const swap = el('button', 'btn ghost', a && a.email ? 'Přepnout účet' : 'Přihlásit');
+      swap.title = 'Přihlásí Claude k jinému účtu. Jiný účet = jiné konektory (třeba druhá gmailová schránka).';
+      swap.onclick = () => { close(); io.login(); };
+      radek.appendChild(swap);
+    }, () => { radek.textContent = ''; radek.appendChild(el('span', 'set-warn', 'Účet se nepodařilo zjistit.')); });
+    return wrap;
+  }
+
   function ucet() {
     // Na serverovou instanci píše brána údaje o uživateli do konfigurace,
     // takže se pozná podle nich — ne podle adresy, ta může být za proxy jaká chce.
@@ -822,6 +850,7 @@
 
     const body = el('div');
     box.appendChild(body);
+    box.appendChild(claudeUcet());
 
     function busy(text) {
       body.textContent = '';
@@ -1701,6 +1730,21 @@
   /* Napojení (MCP): nahoře služby naklikáním (účty, přihlášení, sdílení na
      serveru), pod nimi ostatní MCP servery, které žádná služba nemá —
      z pluginů, z účtu claude.ai, ručně přidané. Nic se neukazuje dvakrát. */
+  /* Napojení, která jsou součástí appky (hub je zakládá a spravuje sám). */
+  function soucastAppky(s) {
+    const t = s.target || '';
+    if (s.name === 'playwright' && /playwright_bridge/.test(t)) {
+      return {nazev: 'Prohlížeč pro Clauda', ico: 'i-globe', popis: 'vestavěný prohlížeč, který vidíš v appce'};
+    }
+    if (s.name === 'pocitac' || /pocitac_mcp/.test(t)) {
+      return {nazev: 'Spojení s počítačem', ico: 'i-laptop', popis: 'Claude ze serveru sahá na tvůj počítač'};
+    }
+    if (/^sdilene-/.test(s.name) || /sdilene_mcp/.test(t)) {
+      return {nazev: 'Sdílené: ' + s.name.replace(/^sdilene-/, ''), ico: 'i-user', popis: 'napojení, které s tebou sdílí kolega'};
+    }
+    return null;
+  }
+
   function napojeni() {
     const box = el('div');
     box.appendChild(el('div', 'set-note',
@@ -1714,15 +1758,25 @@
       sluzbyServery = new Set(d.servers || []);
       if (mcpLast) draw(mcpLast);
     }));
+    // Přidat další: konektory z claude.ai a katalog MCP serverů z registru.
+    if (window.HubPluginy) {
+      box.appendChild(el('div', 'set-title plg-podnadpis', 'Přidat další napojení'));
+      box.appendChild(HubPluginy.katalogNapojeni(() => {
+        // Nové vlastní napojení: překreslit karty služeb, ať jde hned přihlásit.
+        const stare = box.querySelector('.svc-list');
+        if (stare) stare.replaceWith(sluzby((d) => { sluzbyServery = new Set(d.servers || []); }));
+      }));
+    }
     box.appendChild(el('div', 'set-title plg-podnadpis', 'Ostatní napojení'));
-    const acct = el('div', 'mcp-acct');
     const summary = el('div', 'set-row');
     const list = el('div', 'onb-list');
     const btns = el('div', 'onb-btns');
     const check = el('button', 'actionbtn', 'Zkontrolovat znovu');
     btns.appendChild(check);
     const tech = el('div');
-    tech.append(acct, summary, list, btns);
+    const appBox = el('div', 'mcp-appka');
+    appBox.hidden = true;
+    tech.append(summary, list, appBox, btns);
     box.appendChild(tech);
 
     function busy(text) {
@@ -1731,59 +1785,51 @@
       check.disabled = true;
     }
 
-    /* Konektory „claude.ai …" v seznamu visely bez souvislosti: nejsou v žádném
-       souboru, patří k účtu. Druhá schránka (další Gmail) se k nim nepřidá
-       vedle první — napojí se v claude.ai pod tím účtem, nebo se přepne účet
-       celý. Tady je proto vidět, o který jde, a odsud se dá přepnout. */
-    function drawAccount(a) {
-      acct.textContent = '';
-      const col = el('span', 'onb-col');
-      if (a && a.email) {
-        col.appendChild(el('span', null, a.name ? a.name + ' · ' + a.email : a.email));
-        const meta = ['konektory z účtu patří sem'];
-        if (a.plan) meta.push(a.plan);
-        if (a.org) meta.push(a.org);
-        col.appendChild(el('small', null, meta.join(' · ')));
-      } else {
-        col.appendChild(el('span', 'set-warn', 'Nikdo přihlášený'));
-        col.appendChild(el('small', null,
-          'Bez přihlášení nejsou konektory z účtu claude.ai vidět.'));
-      }
-      acct.appendChild(col);
-      acct.appendChild(el('span', 'spacer'));
-      const swap = el('button', 'btn ghost', a && a.email ? 'Přepnout účet' : 'Přihlásit');
-      swap.title = 'Přihlásí Claude k jinému účtu. Jiný účet = jiné konektory ' +
-                   '(třeba druhá gmailová schránka).';
-      swap.onclick = () => { close(); io.login(); };
-      acct.appendChild(swap);
-    }
-
     function draw(data) {
       check.disabled = false;
       mcpLast = data;
-      drawAccount(data.account);
       const servers = data.servers || [];
       const c = data.counts || {};
 
-      summary.textContent = '';
       if (!data.ok && data.detail) {
+        summary.textContent = '';
         summary.appendChild(el('span', 'set-warn', data.detail));
-      } else {
-        summary.appendChild(el('span', 'set-ok',
-          (c.ok || 0) + ' z ' + (c.total || 0) + ' připojeno'));
-        const rest = [];
-        if (c.auth) rest.push(c.auth + '× chce přihlásit');
-        if (c.fail) rest.push(c.fail + '× nepřipojeno');
-        if (c.local) rest.push(c.local + '× jen v projektu');
-        if (rest.length) summary.appendChild(el('small', null, rest.join(' · ')));
       }
-
       list.textContent = '';
       if (!servers.length) list.appendChild(el('div', 'empty', '(žádné napojení)'));
       // Funkční nahoře, pak co chce přihlásit, pak zbytek; uvnitř podle abecedy.
       const PORADI = {ok: 0, auth: 1, local: 2};
-      const ostatni = sluzbyServery ? servers.filter((x) => !sluzbyServery.has(x.name)) : servers;
-      if (!ostatni.length && servers.length) list.appendChild(el('div', 'set-note', 'Všechna napojení jsou mezi službami výš.'));
+      const mimoSluzby = sluzbyServery ? servers.filter((x) => !sluzbyServery.has(x.name)) : servers;
+      const appky = mimoSluzby.filter((x) => soucastAppky(x));
+      const ostatni = mimoSluzby.filter((x) => !soucastAppky(x));
+      // Počty jen za to, co je tady vidět (služby mají stav ve svých kartách).
+      summary.textContent = '';
+      if (data.ok !== false && ostatni.length) {
+        const ok = ostatni.filter((x) => x.state === 'ok').length;
+        summary.appendChild(el('span', 'set-ok', ok + ' z ' + ostatni.length + ' připojeno'));
+      }
+      if (!ostatni.length && servers.length) list.appendChild(el('div', 'set-note', 'Žádná další napojení — všechna jsou mezi službami výš.'));
+      // Součást appky: prohlížeč, spojení s počítačem, sdílená napojení od
+      // kolegů. Spravuje je hub sám — odebrat nejdou, rozbilo by to appku.
+      if (appky.length) {
+        appBox.textContent = '';
+        appBox.hidden = false;
+        appBox.appendChild(el('div', 'set-title plg-podnadpis', 'Součást appky'));
+        for (const x of appky) {
+          const info = soucastAppky(x);
+          const [cls, dot] = MCP_STATES[x.state] || MCP_STATES.unknown;
+          const row = el('div', 'onb-row mcp-row');
+          row.appendChild(window.HubPluginy ? HubPluginy.ikonka(info.nazev, info.ico) : el('span'));
+          row.appendChild(Object.assign(el('span', 'mcp-dot ' + cls), {textContent: dot}));
+          const col = el('span', 'onb-col');
+          col.appendChild(el('span', null, info.nazev));
+          col.appendChild(el('small', null, info.popis + (x.state !== 'ok' && x.status ? ' · ' + x.status : '')));
+          row.appendChild(col);
+          appBox.appendChild(row);
+        }
+      } else {
+        appBox.hidden = true;
+      }
       const serazene = ostatni.slice().sort((a, b) =>
         ((PORADI[a.state] ?? 3) - (PORADI[b.state] ?? 3)) ||
         a.name.replace(/^claude\.ai /, '').localeCompare(b.name.replace(/^claude\.ai /, ''), 'cs'));
@@ -1827,8 +1873,7 @@
       let data;
       try {
         data = await io.api('mcp' + (refresh ? '?refresh=1' : ''));
-        drawAccount(data.account);
-      } catch (err) {
+        } catch (err) {
         summary.textContent = '';
         summary.appendChild(el('span', 'set-warn', 'Nepovedlo se: ' + err.message));
         check.disabled = false;
@@ -1836,8 +1881,7 @@
       }
       while (data.running) {
         busy('Zjišťuji, která napojení odpovídají… (každé se ptá zvlášť, chvíli to trvá)');
-        drawAccount(data.account);
-        await new Promise(r => setTimeout(r, 1200));
+          await new Promise(r => setTimeout(r, 1200));
         try {
           data = await io.api('mcp');
         } catch (err) {

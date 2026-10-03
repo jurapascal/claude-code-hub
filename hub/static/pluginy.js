@@ -392,6 +392,65 @@
     return wrap;
   }
 
+  /* Katalog napojení: oficiální registr MCP serverů (přes 7 000). Bez hledání
+     doporučená oficiální napojení firem, s hledáním výsledky z registru.
+     Přidání = vlastní napojení (adresa serveru); přihlásí se v jeho kartě. */
+  function katalogNapojeni(poPridani) {
+    const wrap = el('div', 'plg-kat-napojeni');
+    const claudeAi = el('div', 'plg-radek');
+    claudeAi.appendChild(ikonka('claude.ai', 'i-globe'));
+    const info = el('div', 'plg-info');
+    info.appendChild(el('b', '', 'Konektory z claude.ai'));
+    info.appendChild(el('div', 'plg-popis', 'Gmail, Kalendář, Drive, Notion, Slack a další z oficiálního adresáře claude.ai. ' +
+      'Co tam zapneš, objeví se tu samo — pod účtem z Nastavení → Účet.'));
+    claudeAi.appendChild(info);
+    const btns = el('div', 'plg-btns');
+    const otevrit = el('button', 'btn ghost', 'Otevřít adresář');
+    otevrit.onclick = () => io.open('https://claude.ai/settings/connectors');
+    btns.appendChild(otevrit);
+    claudeAi.appendChild(btns);
+    wrap.appendChild(claudeAi);
+
+    const hledat = el('input', 'set-input plg-hledat');
+    hledat.placeholder = 'Hledat v katalogu MCP serverů — třeba „slack", „jira", „shopify"…';
+    const stav = el('div', 'set-note', 'Načítám doporučená napojení…');
+    const seznam = el('div', 'plg-seznam');
+    wrap.append(hledat, stav, seznam);
+    let tik = 0;
+    async function nacti() {
+      const q = hledat.value.trim();
+      const mine = ++tik;
+      stav.hidden = false;
+      stav.textContent = q ? 'Hledám v katalogu…' : 'Načítám doporučená napojení…';
+      let d;
+      try { d = await io.api('pluginy?jen=napojeni' + (q ? '&q=' + encodeURIComponent(q) : '')); }
+      catch (err) { if (mine === tik) stav.textContent = 'Katalog se nenačetl: ' + err.message; return; }
+      if (mine !== tik) return;
+      seznam.textContent = '';
+      stav.textContent = d.error || (q ? '' : 'Oficiální napojení firem:');
+      stav.hidden = !stav.textContent;
+      if (!d.items.length && !d.error) { stav.hidden = false; stav.textContent = 'Nic takového v katalogu není.'; }
+      d.items.forEach((x, i) => setTimeout(() => {
+        if (mine !== tik) return;
+        const {r, tlacitka} = radek(x.title, x.description, (x.official ? 'oficiální · ' : '') + x.url.replace(/^https?:\/\//, ''));
+        r.classList.add('plg-vstup');
+        tlacitka.appendChild(tlacitko('Přidat', async () => {
+          try {
+            const out = await io.api('connect', {action: 'add', service: 'vlastni', label: x.title, account: x.url});
+            if (out.ok === false) throw new Error(out.detail || 'Nepovedlo se.');
+            io.toast(x.title + ' přidané — přihlas se u něj v kartě Vlastní napojení.');
+            if (poPridani) poPridani();
+          } catch (err) { io.toast(err.message); }
+        }, 'primary'));
+        seznam.appendChild(r);
+      }, i * 35));
+    }
+    let t = null;
+    hledat.oninput = () => { clearTimeout(t); t = setTimeout(nacti, 350); };
+    nacti();
+    return wrap;
+  }
+
   let vypnutoNekdy = false;       // vypnutý plugin zmizí až po obnovení okna
 
   function appka() {
@@ -474,7 +533,7 @@
 
   global.HubPluginy = {
     start, registruj, sekce, ikonka,
-    claudeCode, skilly, appka,
+    claudeCode, skilly, appka, katalogNapojeni,
     akce: () => akceSeznam.slice(),
   };
 })(window);

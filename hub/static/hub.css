@@ -3806,3 +3806,5 @@ button.pr-radek:hover { background: var(--card-hover); color: var(--fg-bright); 
 .mcp-row .plg-ikona .ico { width: 14px; height: 14px; }
 .plg-varovani { display: flex; gap: 8px; align-items: flex-start; }
 .plg-varovani .ico { flex: none; width: 15px; height: 15px; color: var(--accent); margin-top: 2px; }
+.acc-claude { margin-top: 16px; }
+.mcp-appka .mcp-row { opacity: .92; }

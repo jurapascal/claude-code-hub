@@ -176,6 +176,102 @@ def _hotovo(co):
             }.get(co, "Hotovo.")
 
 
+# ── Katalog napojení (oficiální registr MCP serverů) ─────────────────────────
+REGISTR = "https://registry.modelcontextprotocol.io/v0/servers"
+# Oficiální napojení firem (ověřená jména v registru). Co v registru zrovna
+# není, se tiše vynechá — seznam jde rozšiřovat bez rizika.
+DOPORUCENE = [
+    "com.notion/mcp", "app.linear/linear", "com.atlassian/atlassian-mcp-server", "com.figma.mcp/mcp",
+    "com.canva.mcp/mcp", "com.stripe/mcp", "com.paypal.mcp/mcp", "com.supabase/mcp", "com.neon/mcp",
+    "com.airtable/mcp", "net.todoist/mcp", "com.monday/monday.com", "com.gitlab/mcp",
+    "io.github.github/github-mcp-server", "com.asana/mcp", "io.sentry/mcp", "com.hubspot/mcp",
+    "com.intercom/mcp", "com.webflow/mcp", "com.wix/mcp", "com.zapier/mcp", "com.make/mcp-server",
+    "io.github.zoom/zoom-meetings", "com.postman/postman-mcp-server", "com.cloudflare.mcp/mcp",
+    "io.prisma/mcp", "io.github.grafana/mcp-grafana", "com.apify/apify-mcp-server",
+    "io.github.firecrawl/firecrawl-mcp-server", "ai.exa/exa", "co.huggingface/hf-mcp-server",
+    "com.microsoft/microsoft-learn-mcp", "com.close/close-mcp",
+]
+_NAPOJENI = {"at": 0.0, "data": None}
+
+
+def _registr(url, timeout=15):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "claude-code-hub"})
+    with urllib.request.urlopen(req, timeout=timeout) as res:
+        return json.loads(res.read().decode("utf-8", "replace") or "{}")
+
+
+def _polozka(server, oficialni=False):
+    """Jedno napojení z registru → co ukáže appka; None bez použitelné adresy."""
+    remotes = [r for r in server.get("remotes") or []
+               if r.get("type") in ("streamable-http", "sse") and r.get("url") and "{" not in r["url"]]
+    if not remotes:
+        return None
+    remotes.sort(key=lambda r: r.get("type") != "streamable-http")   # http má přednost
+    name = server.get("name", "")
+    ns = name.split("/")[0].split(".")
+    # com.notion → Notion, io.github.zoom → Zoom (u GitHubu je firma až třetí)
+    firma = ns[2] if ns[:2] == ["io", "github"] and len(ns) > 2 else (ns[1] if len(ns) > 1 else ns[0])
+    title = server.get("title") or firma.capitalize()
+    return {"name": name, "title": title[:60], "description": (server.get("description") or "")[:300],
+            "url": remotes[0]["url"], "official": oficialni}
+
+
+def _cache_napojeni():
+    return os.path.join(core.CLAUDE_DIR, "hub-mcp-katalog.json")
+
+
+def napojeni_katalog(hledat=""):
+    """Doporučená oficiální napojení, nebo výsledky hledání v registru."""
+    import concurrent.futures
+    import urllib.parse
+    hledat = str(hledat or "").strip()[:80]
+    if hledat:
+        # Registr hledá jedno slovo v názvu — pošle se nejdelší, zbytek se
+        # dofiltruje tady (i v popisu), ať „microsoft learn" najde, co má.
+        slova = [w for w in re.split(r"\s+", hledat.lower()) if w]
+        try:
+            d = _registr(f"{REGISTR}?version=latest&limit=100&search={urllib.parse.quote(max(slova, key=len))}")
+        except Exception as exc:
+            return {"error": f"Katalog teď neodpovídá: {exc}", "items": []}
+        doporucene = set(DOPORUCENE)
+        items = [_polozka(x.get("server") or {}, (x.get("server") or {}).get("name") in doporucene)
+                 for x in d.get("servers") or []]
+        items = [i for i in items if i and all(
+            w in (i["name"] + " " + i["title"] + " " + i["description"]).lower() for w in slova)]
+        items.sort(key=lambda i: not i["official"])
+        return {"items": items[:40]}
+    if _NAPOJENI["data"] and time.time() - _NAPOJENI["at"] < 86400:
+        return _NAPOJENI["data"]
+    try:
+        with open(_cache_napojeni(), encoding="utf-8") as fh:
+            cached = json.load(fh)
+        if time.time() - cached.get("at", 0) < 86400 and cached.get("items"):
+            _NAPOJENI.update(at=cached["at"], data={"items": cached["items"]})
+            return _NAPOJENI["data"]
+    except (OSError, ValueError):
+        pass
+
+    def jedno(name):
+        try:
+            return _polozka((_registr(f"{REGISTR}/{urllib.parse.quote(name, safe='')}/versions/latest")
+                             .get("server") or {}), True)
+        except Exception:
+            return None
+    with concurrent.futures.ThreadPoolExecutor(12) as ex:
+        items = [i for i in ex.map(jedno, DOPORUCENE) if i]
+    items.sort(key=lambda i: i["title"].lower())
+    if not items:
+        return {"error": "Katalog napojení teď neodpovídá — zkus to za chvíli.", "items": []}
+    _NAPOJENI.update(at=time.time(), data={"items": items})
+    try:
+        with open(_cache_napojeni(), "w", encoding="utf-8") as fh:
+            json.dump({"at": time.time(), "items": items}, fh)
+    except OSError:
+        pass
+    return _NAPOJENI["data"]
+
+
 # ── Skilly ───────────────────────────────────────────────────────────────────
 _SKILLY = {"at": 0.0, "data": None}
 

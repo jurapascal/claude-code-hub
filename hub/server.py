@@ -1240,6 +1240,8 @@ class Handler(BaseHTTPRequestHandler):
             co = payload.get("akce") or ""
             if not co and (query.get("jen") or [""])[0] == "appka":
                 return self._json(pluginy.appka_seznam())
+            if not co and (query.get("jen") or [""])[0] == "napojeni":
+                return self._json(pluginy.napojeni_katalog((query.get("q") or [""])[0]))
             if not co and (query.get("jen") or [""])[0] == "skilly":
                 return self._json(pluginy.skilly(bool(query.get("refresh"))))
             if not co:
@@ -1258,6 +1260,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({**out, "appka": pluginy.appka_seznam()}, 200 if out.get("ok") else 400)
             out = pluginy.akce(co, payload.get("id", ""), payload.get("sha", ""), payload.get("zdroj", ""))
             return self._json(out, 200 if out.get("ok") or out.get("potvrdit") else 400)
+        if name == "claude-ucet":
+            # Pod jakým účtem claude.ai je Claude Code přihlášený (Nastavení → Účet).
+            return self._json({"account": core.claude_account()})
         if name == "plugin-soubor":
             # Soubory zapnutého pluginu appky (JS, CSS, obrázky) — jen s tokenem.
             from . import pluginy

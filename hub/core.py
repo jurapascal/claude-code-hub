@@ -3565,7 +3565,8 @@ def mcp_list():
         servers.append({"name": name, "target": target.strip(),
                         "state": state, "status": label,
                         "scope": scope, "where": where,
-                        "removable": scope == "user"})
+                        "removable": scope == "user" and name not in ("playwright", "pocitac")
+                        and not name.startswith("sdilene-")})
 
     seen = {s["name"] for s in servers}
     for entry in mcp_project_files():
@@ -3670,6 +3671,10 @@ def mcp_remove(name, scope="user", path=""):
     claude = shutil.which("claude")
     if not claude:
         return {"ok": False, "detail": "Claude Code CLI (claude) není v PATH."}
+    # Součást appky (prohlížeč, spojení s počítačem, sdílená napojení) —
+    # spravuje je hub sám, odebráním by se rozbil.
+    if name in ("playwright", "pocitac") or str(name).startswith("sdilene-"):
+        return {"ok": False, "detail": "Tohle napojení je součást appky — odebrat nejde."}
     if scope == "project":
         cwd = os.path.expanduser(path or "")
         if not os.path.isdir(cwd):
