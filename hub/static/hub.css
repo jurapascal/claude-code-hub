@@ -3811,3 +3811,15 @@ button.pr-radek:hover { background: var(--card-hover); color: var(--fg-bright); 
 .roz-hlava { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 6px 0 12px; }
 .roz-hlava .plg-tabs { margin: 0; }
 .roz-moje[hidden] { display: none; }
+/* Karty v Účtu: obsah nesmí vyjet z bloku ven (dlouhé úkoly, e-maily). */
+.acc-cards { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.acc-card { min-width: 0; overflow: hidden; overflow-wrap: anywhere; }
+.acc-card .pc-row { flex-wrap: wrap; gap: 2px 8px; }
+.acc-card .pc-what, .acc-card .pc-op { min-width: 0; }
+@media (max-width: 640px) { .acc-cards { grid-template-columns: minmax(0, 1fr); } }
+.pd-ucet { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.pd-ucet:empty { display: none; }
+.pd-ucet-r { display: flex; gap: 10px; font-size: 12.5px; }
+.pd-ucet-k { flex: none; width: 82px; color: var(--dim); }
+.pd-ucet-v { color: var(--fg-bright); min-width: 0; overflow-wrap: anywhere; }
+.set-panel { overflow-x: hidden; }

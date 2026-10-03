@@ -852,8 +852,8 @@
 
     const body = el('div');
     box.appendChild(body);
-    const claudeBox = claudeUcet();
-    box.appendChild(claudeBox);
+    // Na serveru je účet a předplatné uvnitř bloku Claude (predplatne.js); na počítači samostatně.
+    if (!naServeru) box.appendChild(claudeUcet());
 
     function busy(text) {
       body.textContent = '';
@@ -925,7 +925,6 @@
       acts.appendChild(out);
       prof.appendChild(acts);
       body.appendChild(prof);
-      body.appendChild(claudeBox);      // účet a předplatné hned pod profilem
 
       const cards = el('div', 'acc-cards');
       cards.appendChild(card(HubPredplatne.serverBlock(io), 'i-hub'));

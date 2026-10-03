@@ -314,6 +314,16 @@
           (st.expiring ? 'Brzy vyprší — připoj ho znovu z aplikace na počítači. ' : '') +
           'Platí do ' + date(st.expires) + '.'));
       }
+      // Kdo je přihlášený a jaké má předplatné (e-mail, tarif, organizace).
+      const ucet = el('div', 'pd-ucet');
+      body.appendChild(ucet);
+      if (io.api) io.api('claude-ucet').then(({account: a}) => {
+        if (!a || !a.email) return;
+        const radek = (k, v) => { const r = el('div', 'pd-ucet-r'); r.append(el('span', 'pd-ucet-k', k), el('span', 'pd-ucet-v', v)); ucet.appendChild(r); };
+        radek('E-mail', a.email);
+        radek('Předplatné', a.plan || 'neznámé');
+        if (a.org) radek('Organizace', a.org);
+      }).catch(() => {});
       if (oldApp && st.mode !== 'ucet') body.appendChild(global.HubServer.oldAppNote());
       if (st.mode === 'zadne' && !fromApp && !oldApp) {
         body.appendChild(el('div', 'set-note',
