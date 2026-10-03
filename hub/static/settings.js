@@ -17,6 +17,8 @@
   let state = null;
   let root = null;
   let active = localStorage.getItem('hub-set-tab') || 'vzhled';
+  // Propojené služby a Pluginy jsou od 2.57.2 jedna sekce.
+  if (active === 'napojeni' || active === 'pluginy') active = 'rozsireni';
 
   // Pořadí je i pořadím v panelu vlevo: napřed to, co se mění nejčastěji,
   // servis (aktualizace, logy) až na konci.
@@ -31,8 +33,8 @@
     ['pamet',      'Paměť',     'i-book',     () => pamet(), 'dev'],
     ['ucet',       'Účet',      'i-user',     () => ucet()],
     ['hlas',       'Hlas',      'i-mic',      () => hlas()],
-    ['napojeni',   'Propojené služby', 'i-hub', () => napojeni()],   // MCP — Claude Code
-    ['pluginy',    'Pluginy',   'i-plus',     () => (window.HubPluginy ? HubPluginy.sekce() : section('Pluginy'))],
+    // Všechno, čím se Claude rozšiřuje — služby, pluginy, skilly, MCP, pluginy appky.
+    ['rozsireni',  'Napojení a pluginy', 'i-hub', () => rozsireni()],
     ['aktualizace','Aktualizace', 'i-up',     () => aktualizace()],
     ['logy',       'Logy',      'i-status',   () => logy(), 'dev'],
     ['ostatni',    'Ostatní',   'i-gear',     () => ostatni()],
@@ -55,6 +57,7 @@
   async function open(opts) {
     io = opts;
     state = opts.state;
+    if (opts.tab === 'napojeni' || opts.tab === 'pluginy') opts.tab = 'rozsireni';
     if (opts.tab && SECTIONS.some(([id]) => id === opts.tab)) active = opts.tab;
     root = el('div', 'onb set-modal');
     root.innerHTML = `
@@ -1653,22 +1656,66 @@
     return wrap;
   }
 
-  function napojeni() {
-    const box = section('Propojené služby',
-      'Služby, se kterými Claude umí pracovat — e-mail, kalendář, úkoly… ' +
-      'Přidáš je tlačítkem u služby a přihlásíš se jako obvykle.');
+  /* Napojení a pluginy: jedna sekce se záložkami. Co do které patří:
+       Služby (Freelo, Google… naklikáním), Pluginy Claude Code (katalog),
+       Skilly (co Claude umí — moje příkazy, z pluginů, z Obsidianu),
+       MCP servery (všechna napojení technicky, se stavem) a Pro appku. */
+  const ROZ_TABS = [
+    ['sluzby', 'Služby', '🔗'], ['pluginy', 'Pluginy', '🧩'], ['skilly', 'Skilly', '📜'],
+    ['mcp', 'MCP servery', '🔌'], ['appka', 'Pro appku', '🛠️'],
+  ];
+  function rozsireni() {
+    const box = section('Napojení a pluginy',
+      'Všechno, čím se Claude rozšiřuje: služby, pluginy, dovednosti (skilly) a napojení.');
+    const tabs = el('div', 'plg-tabs roz-tabs');
+    const telo = el('div', 'roz-telo');
+    let kde = localStorage.getItem('hub-roz-tab') || 'sluzby';
+    if (!ROZ_TABS.some(([id]) => id === kde)) kde = 'sluzby';
+    const P = window.HubPluginy;
+    const kresli = (id) => {
+      kde = id;
+      try { localStorage.setItem('hub-roz-tab', id); } catch (_) { /* soukromé okno */ }
+      for (const b of tabs.children) b.classList.toggle('on', b.dataset.k === id);
+      telo.textContent = '';
+      const obsah = id === 'sluzby' ? napojeni('sluzby')
+        : id === 'mcp' ? napojeni('mcp')
+        : !P ? el('div', 'set-note', 'Načítám…')
+        : id === 'pluginy' ? P.claudeCode()
+        : id === 'skilly' ? P.skilly()
+        : P.appka();
+      telo.appendChild(obsah);
+    };
+    for (const [id, text, ico] of ROZ_TABS) {
+      const b = el('button', 'plg-tab', ico + ' ' + text);
+      b.dataset.k = id;
+      b.onclick = () => kresli(id);
+      tabs.appendChild(b);
+    }
+    box.append(tabs, telo);
+    kresli(kde);
+    return box;
+  }
 
+  function napojeni(mode) {
+    const box = el('div');
+    if (mode === 'sluzby') {
+      box.appendChild(el('div', 'set-note',
+        'Služby, se kterými Claude umí pracovat — e-mail, kalendář, úkoly… ' +
+        'Přidáš je tlačítkem u služby a přihlásíš se jako obvykle.'));
+      box.appendChild(sluzby());
+      return box;
+    }
+    // MCP servery: všechna napojení Claude Code se stavem (i z účtu claude.ai).
+    box.appendChild(el('div', 'set-note',
+      'Všechna napojení, která Claude Code má — i ta z pluginů a z účtu claude.ai. ' +
+      'Funkční jsou nahoře.'));
     const acct = el('div', 'mcp-acct');
     const summary = el('div', 'set-row');
     const list = el('div', 'onb-list');
     const btns = el('div', 'onb-btns');
     const check = el('button', 'actionbtn', 'Zkontrolovat znovu');
     btns.appendChild(check);
-    box.appendChild(sluzby());
-    // Technický přehled (všechny MCP servery, katalog) jen pro pokročilé.
     const tech = el('div');
-    tech.hidden = !advanced();
-    tech.appendChild(el('div', 'set-title svc-tech', 'Všechna napojení'));
     tech.append(acct, summary, list, btns);
     box.appendChild(tech);
 
@@ -1727,12 +1774,21 @@
 
       list.textContent = '';
       if (!servers.length) list.appendChild(el('div', 'empty', '(žádné napojení)'));
-      for (const s of servers) {
+      // Funkční nahoře, pak co chce přihlásit, pak zbytek; uvnitř podle abecedy.
+      const PORADI = {ok: 0, auth: 1, local: 2};
+      const serazene = servers.slice().sort((a, b) =>
+        ((PORADI[a.state] ?? 3) - (PORADI[b.state] ?? 3)) ||
+        a.name.replace(/^claude\.ai /, '').localeCompare(b.name.replace(/^claude\.ai /, ''), 'cs'));
+      const tik = ++drawTik;
+      serazene.forEach((s, i) => setTimeout(() => {
+        if (tik !== drawTik) return;       // mezitím přišel novější výsledek
         const [cls, dot, fallback] = MCP_STATES[s.state] || MCP_STATES.unknown;
-        const row = el('div', 'onb-row mcp-row');
+        const row = el('div', 'onb-row mcp-row plg-vstup');
+        const jmeno = s.name.replace(/^claude\.ai /, '');
+        row.appendChild(window.HubPluginy ? HubPluginy.ikonka(jmeno, s.name.startsWith('claude.ai ') ? '☁️' : '') : el('span'));
         row.appendChild(Object.assign(el('span', 'mcp-dot ' + cls), {textContent: dot}));
         const col = el('span', 'onb-col');
-        col.appendChild(el('span', null, s.name));
+        col.appendChild(el('span', null, jmeno + (s.name.startsWith('claude.ai ') ? '  · z účtu claude.ai' : '')));
         const where = [s.status || fallback];
         if (s.where) where.push(s.where);
         col.appendChild(el('small', null, where.join(' · ')));
@@ -1754,9 +1810,10 @@
           row.appendChild(del);
         }
         list.appendChild(row);
-      }
+      }, i * 45));
     }
 
+    let drawTik = 0;
     async function load(refresh) {
       busy(refresh ? 'Ptám se serverů…' : 'Načítám…');
       let data;

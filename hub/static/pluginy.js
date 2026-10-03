@@ -149,7 +149,7 @@
     const info = el('div', 'plg-info');
     info.appendChild(el('b', '', nazev));
     if (meta) info.appendChild(el('span', 'plg-meta', meta));
-    if (popis) info.appendChild(el('div', 'plg-popis', popis));
+    if (popis) { const d = el('div', 'plg-popis', popis); d.title = popis; info.appendChild(d); }
     r.appendChild(info);
     const tlacitka = el('div', 'plg-btns');
     r.appendChild(tlacitka);
@@ -296,12 +296,6 @@
       let t = null;
       hledat.oninput = () => { clearTimeout(t); t = setTimeout(vypis, 150); };
       vypis();
-      // Napojení (MCP servery) — ostatní, které nejsou pluginy
-      obsah.appendChild(el('div', 'set-title plg-podnadpis', 'Napojení (MCP servery)'));
-      const mcpBox = el('div');
-      obsah.appendChild(mcpBox);
-      mcpBox.appendChild(el('div', 'set-note', 'Zjišťuji napojení…'));
-      nactiMcp(mcpBox);
       // Marketplace
       obsah.appendChild(el('div', 'set-title plg-podnadpis', 'Katalogy (marketplace)'));
       for (const m of data.marketplaces) {
@@ -319,28 +313,72 @@
     return wrap;
   }
 
-  /* MCP servery z Claude Code (Propojené služby): ukážou se po jednom, jak se
-     ke kterému hub dozví stav — zjišťování trvá, každý server se ptá zvlášť. */
-  async function nactiMcp(box) {
-    let res = null;
-    for (let i = 0; i < 40; i++) {
-      try { res = await io.api('mcp'); } catch (_) { break; }
-      if (!res.running) break;
-      await new Promise((r) => setTimeout(r, 1500));
-    }
-    box.textContent = '';
-    const servery = ((res && res.servers) || []).slice().sort((a, b) =>
-      (a.state === 'ok' ? 0 : 1) - (b.state === 'ok' ? 0 : 1) || a.name.localeCompare(b.name));
-    if (!servery.length) { box.appendChild(el('div', 'set-note', 'Žádná napojení se nenašla.')); return; }
-    servery.forEach((m, i) => setTimeout(() => {
-      const nazev = m.name.replace(/^claude\.ai /, '');
-      const {r, tlacitka} = radek(nazev, '', (m.where || '') + (m.status ? ' · ' + m.status : ''), '🔌');
-      r.classList.add('plg-vstup');
-      tlacitka.appendChild(el('span', m.state === 'ok' ? 'set-ok' : 'set-warn', m.state === 'ok' ? '✓ Funguje' : '! ' + (m.status || 'Nefunguje')));
-      box.appendChild(r);
-    }, i * 60));
-    const pozn = el('div', 'set-note', 'Přidat a nastavit napojení jde v Nastavení → Propojené služby.');
-    box.appendChild(pozn);
+  /* Skilly: co Claude umí. Moje příkazy (slash), ze zapnutých pluginů a
+     postupy v Obsidian Brainu, které si Claude načte, když je potřebuje. */
+  const ZDROJE = [['moje', 'Moje příkazy', '⚡'], ['plugin', 'Z pluginů', '🧩'], ['obsidian', 'Z Obsidianu', '📚']];
+  function skilly() {
+    const wrap = el('div');
+    wrap.appendChild(el('div', 'set-note',
+      'Skilly jsou návody, podle kterých Claude dělá konkrétní práci. Moje příkazy spustíš lomítkem ' +
+      '(třeba /push), ostatní si Claude vezme sám, když se hodí.'));
+    const stav = el('div', 'set-note', 'Načítám skilly…');
+    wrap.appendChild(stav);
+    io.api('pluginy?jen=skilly').then((d) => {
+      const vse = d.skills || [];
+      stav.remove();
+      const hledat = el('input', 'set-input plg-hledat');
+      hledat.placeholder = 'Hledat skill — třeba „newsletter", „seo", „deploy"…';
+      const filtry = el('div', 'plg-filtry');
+      const chipy = el('div', 'plg-chipy');
+      let zdroj = '';
+      const mk = (id, text) => {
+        const pocet = id ? vse.filter((x) => x.source === id).length : vse.length;
+        if (id && !pocet) return;
+        const c = el('button', 'plg-chip' + (zdroj === id ? ' on' : ''), text + ' · ' + pocet);
+        c.dataset.k = id;
+        c.onclick = () => { zdroj = id; for (const x of chipy.children) x.classList.toggle('on', x.dataset.k === id); vypis(); };
+        chipy.appendChild(c);
+      };
+      mk('', 'Vše');
+      for (const [id, text, ico] of ZDROJE) mk(id, ico + ' ' + text);
+      filtry.appendChild(chipy);
+      const seznam = el('div', 'plg-seznam');
+      wrap.append(hledat, filtry, seznam);
+      let tik = 0;
+      const vypis = () => {
+        const q = hledat.value.trim().toLowerCase();
+        const mine = ++tik;
+        const hit = vse.filter((x) => (!zdroj || x.source === zdroj) &&
+          (!q || (x.name + ' ' + x.description + ' ' + (x.plugin || '') + ' ' + (x.category || '')).toLowerCase().includes(q)))
+          .sort((a, b) => ZDROJE.findIndex((z) => z[0] === a.source) - ZDROJE.findIndex((z) => z[0] === b.source) ||
+                          (a.category || '').localeCompare(b.category || '', 'cs') || a.name.localeCompare(b.name, 'cs'));
+        seznam.textContent = '';
+        if (!hit.length) { seznam.appendChild(el('div', 'set-note', 'Nic takového tu není.')); return; }
+        const celkem = Math.min(hit.length, 150);
+        let i = 0, skupina = null;
+        const dalsi = () => {
+          if (mine !== tik) return;
+          const x = hit[i++];
+          const nadpis = x.source === 'obsidian' ? '📚 ' + (x.category || 'Obsidian')
+            : x.source === 'plugin' ? '🧩 Plugin ' + (x.plugin || '') : '⚡ Moje příkazy';
+          if (nadpis !== skupina) {
+            skupina = nadpis;
+            seznam.appendChild(el('div', 'set-title plg-podnadpis plg-vstup', nadpis));
+          }
+          const ico = (ZDROJE.find((z) => z[0] === x.source) || [])[2];
+          const {r} = radek(x.source === 'moje' ? '/' + x.name : x.name, x.description, '', ico);
+          r.classList.add('plg-vstup');
+          seznam.appendChild(r);
+          if (i < celkem) setTimeout(dalsi, 15);
+          else if (hit.length > celkem) seznam.appendChild(el('div', 'set-note', 'A dalších ' + (hit.length - celkem) + ' — upřesni hledání.'));
+        };
+        dalsi();
+      };
+      let t = null;
+      hledat.oninput = () => { clearTimeout(t); t = setTimeout(vypis, 150); };
+      vypis();
+    }, (err) => { stav.textContent = 'Skilly se nenačetly: ' + err.message; });
+    return wrap;
   }
 
   let vypnutoNekdy = false;       // vypnutý plugin zmizí až po obnovení okna
@@ -423,7 +461,8 @@
   }
 
   global.HubPluginy = {
-    start, registruj, sekce,
+    start, registruj, sekce, ikonka,
+    claudeCode, skilly, appka,
     akce: () => akceSeznam.slice(),
   };
 })(window);

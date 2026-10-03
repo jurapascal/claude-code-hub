@@ -1240,6 +1240,8 @@ class Handler(BaseHTTPRequestHandler):
             co = payload.get("akce") or ""
             if not co and (query.get("jen") or [""])[0] == "appka":
                 return self._json(pluginy.appka_seznam())
+            if not co and (query.get("jen") or [""])[0] == "skilly":
+                return self._json(pluginy.skilly(bool(query.get("refresh"))))
             if not co:
                 obnovit = bool(query.get("refresh"))
                 return self._json({"cc": pluginy.katalog(obnovit), "appka": pluginy.appka_seznam()})
@@ -1613,6 +1615,15 @@ def _zahrat_doctor():
     for fn, co in ((core.doctor, "doctor()"), (core.get_projects, "projektů"),
                    (core.has_obsidian, "Obsidianu"), (core.get_memory, "paměti")):
         threading.Thread(target=jedno, args=(fn, co), daemon=True).start()
+
+    # Katalog pluginů (~2 s přes `claude plugin list`) a skilly až po chvíli,
+    # ať nezdržují start — v Nastavení jsou pak hned.
+    def pozdeji():
+        time.sleep(8)
+        from . import pluginy
+        jedno(pluginy.katalog, "katalogu pluginů")
+        jedno(pluginy.skilly, "skillů")
+    threading.Thread(target=pozdeji, daemon=True).start()
 
 
 def start():

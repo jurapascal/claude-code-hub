@@ -3794,3 +3794,8 @@ button.pr-radek:hover { background: var(--card-hover); color: var(--fg-bright); 
 .plg-vstup { animation: plg-vstup .28s ease-out both; }
 @keyframes plg-vstup { from { opacity: 0; transform: translateY(6px); } }
 @media (prefers-reduced-motion: reduce) { .plg-vstup { animation: none; } }
+/* Napojení a pluginy — záložky a MCP řádky s ikonkou. */
+.roz-tabs { flex-wrap: wrap; border-radius: 14px; }
+.mcp-row { align-items: center; gap: 10px; }
+.mcp-row .plg-ikona { width: 30px; height: 30px; font-size: 14px; border-radius: 8px; }
+.plg-popis { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

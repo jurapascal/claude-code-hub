@@ -176,6 +176,73 @@ def _hotovo(co):
             }.get(co, "Hotovo.")
 
 
+# ── Skilly ───────────────────────────────────────────────────────────────────
+_SKILLY = {"at": 0.0, "data": None}
+
+
+def _frontmatter(path):
+    """(name, description) z hlavičky SKILL.md — jen to, co je potřeba."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read(6000)
+    except OSError:
+        return "", ""
+    if not text.startswith("---"):
+        return "", ""
+    head = text[3:].split("\n---", 1)[0]
+    out, key, buf = {}, None, []
+    for line in head.splitlines():
+        m = re.match(r"^([A-Za-z_-]+):\s*(.*)$", line)
+        if m and not line.startswith((" ", "\t")):
+            if key:
+                out[key] = " ".join(buf).strip()
+            key, val = m.group(1).lower(), m.group(2).strip()
+            buf = [] if val in (">", "|", ">-", "|-") else [val]
+        elif key:
+            buf.append(line.strip())
+    if key:
+        out[key] = " ".join(buf).strip()
+    clean = lambda v: str(v or "").strip().strip('"').strip("'")
+    return clean(out.get("name")), clean(out.get("description"))[:500]
+
+
+def _skill_dir(base, zdroj, extra=None):
+    out = []
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return out
+    for n in names:
+        f = os.path.join(base, n, "SKILL.md")
+        if os.path.isfile(f):
+            name, desc = _frontmatter(f)
+            out.append({"name": name or n, "description": desc, "source": zdroj, **(extra or {})})
+    return out
+
+
+def skilly(obnovit=False):
+    """Skilly, které Claude umí: moje příkazy (~/.claude/skills), ze zapnutých
+    pluginů Claude Code a postupy v Obsidian Brainu (načítá se na požádání)."""
+    if not obnovit and _SKILLY["data"] and time.time() - _SKILLY["at"] < 120:
+        return _SKILLY["data"]
+    out = _skill_dir(core.SKILLS_DIR, "moje")
+    # Pluginy: jen uživatelsky zapnuté (projektové platí jen ve své složce).
+    rc, raw, _ = _cli(["list", "--json"], timeout=60)
+    for p in (_json_z(raw) or []) if rc == 0 else []:
+        if not isinstance(p, dict) or not p.get("enabled") or p.get("scope") != "user":
+            continue
+        plugin = (p.get("id") or "").split("@")[0]
+        out += _skill_dir(os.path.join(p.get("installPath") or "", "skills"), "plugin", {"plugin": plugin})
+    brain = os.path.join(core.BRAIN, "skills")
+    if os.path.isdir(brain):
+        for kat in sorted(os.listdir(brain)):
+            if os.path.isdir(os.path.join(brain, kat)) and not kat.startswith((".", "_")):
+                out += _skill_dir(os.path.join(brain, kat), "obsidian", {"category": kat})
+    data = {"skills": out}
+    _SKILLY.update(at=time.time(), data=data)
+    return data
+
+
 # ── Pluginy appky ────────────────────────────────────────────────────────────
 def slozka():
     return os.path.join(core.CLAUDE_DIR, "hub-plugins")
