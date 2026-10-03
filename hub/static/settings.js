@@ -1853,7 +1853,7 @@
         const [cls, dot, fallback] = MCP_STATES[s.state] || MCP_STATES.unknown;
         const row = el('div', 'onb-row mcp-row plg-vstup');
         const jmeno = s.name.replace(/^claude\.ai /, '');
-        row.appendChild(window.HubPluginy ? HubPluginy.ikonka(jmeno, s.name.startsWith('claude.ai ') ? 'i-globe' : 'i-hub') : el('span'));
+        row.appendChild(window.HubPluginy ? HubPluginy.ikonka(jmeno, s.name.startsWith('claude.ai ') ? 'i-globe' : 'i-hub', HubPluginy.logoZUrl(s.target || '')) : el('span'));
         row.appendChild(Object.assign(el('span', 'mcp-dot ' + cls), {textContent: dot}));
         const col = el('span', 'onb-col');
         col.appendChild(el('span', null, jmeno + (s.name.startsWith('claude.ai ') ? '  · z účtu claude.ai' : '')));

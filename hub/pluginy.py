@@ -76,6 +76,20 @@ def _json_z(text):
     return None
 
 
+def _logo_zdroje(source):
+    """Klíč loga vydavatele pluginu: avatar jeho účtu na GitHubu (`gh:owner`)."""
+    # Plugin uložený v repozitáři marketplace Anthropicu (`anthropics/…`) nemusí
+    # být od Anthropicu (třeba context7 od Upstash) — jeho logo by lhalo,
+    # proto tam zůstane ikonka. Logo jen tam, kde repozitář patří vydavateli.
+    if not isinstance(source, dict):
+        return ""
+    m = re.search(r"github\.com[/:]([A-Za-z0-9-]+)/", source.get("url") or "") or \
+        re.match(r"([A-Za-z0-9-]+)/", source.get("repo") or "")
+    if not m or m.group(1).lower() in ("anthropics", "anthropic"):
+        return ""
+    return "gh:" + m.group(1)
+
+
 def katalog(obnovit=False):
     """{"installed": [...], "available": [...], "marketplaces": [...]}
     — dostupných je přes dva tisíce, proto se drží v paměti 10 minut."""
@@ -102,7 +116,8 @@ def katalog(obnovit=False):
     dostupne = []
     for p in data.get("available") or []:
         pid = p.get("pluginId") or ""
-        dostupne.append({"id": pid, "name": p.get("name") or pid.split("@")[0],
+        dostupne.append({"id": pid, "logo": _logo_zdroje(p.get("source")),
+                         "name": p.get("name") or pid.split("@")[0],
                          "description": (p.get("description") or "")[:400],
                          "marketplace": p.get("marketplaceName", ""),
                          "installs": int(p.get("installCount") or 0),
@@ -176,6 +191,110 @@ def _hotovo(co):
             }.get(co, "Hotovo.")
 
 
+# ── Loga ─────────────────────────────────────────────────────────────────────
+# Skutečná loga vydavatelů: avatar účtu na GitHubu (pluginy) a ikonka webu
+# služby z jejího vlastního webu (napojení). Hub je stáhne sám, uloží na disk
+# (~/.claude/hub-logos/) a vydává stránce — prohlížeč nesahá na cizí servery
+# a nikdo se nedozví, co si prohlížíš. Jen rastrové obrázky, žádné SVG.
+LOGO_RE = re.compile(r"^(gh:[A-Za-z0-9-]{1,39}|d:[a-z0-9.-]{3,80})$")
+_LOGO_PRAZDNE = b""
+
+
+def logo_domeny(url):
+    """`d:notion.com` z adresy MCP serveru (mcp.notion.com → notion.com)."""
+    import urllib.parse
+    host = (urllib.parse.urlparse(str(url or "")).hostname or "").lower()
+    labels = host.split(".")
+    if len(labels) > 2:
+        labels = labels[-3:] if labels[-2] in ("co", "com", "org", "net") and len(labels[-1]) == 2 else labels[-2:]
+    dom = ".".join(labels)
+    return "d:" + dom if re.fullmatch(r"[a-z0-9.-]{3,80}", dom) and "." in dom else ""
+
+
+def _logo_slozka():
+    return os.path.join(core.CLAUDE_DIR, "hub-logos")
+
+
+def _obrazek(data):
+    """Typ obrázku podle prvních bajtů (jen rastr), nebo ''."""
+    for magic, typ in ((b"\x89PNG", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"GIF8", "image/gif"),
+                       (b"\x00\x00\x01\x00", "image/x-icon")):
+        if data.startswith(magic):
+            return typ
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return ""
+
+
+def _stahni(url, limit=400_000, timeout=8):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 claude-code-hub"})
+    with urllib.request.urlopen(req, timeout=timeout) as res:
+        return res.read(limit + 1)[:limit], res.geturl()
+
+
+def _ikonka_webu(domena):
+    """Adresa ikonky z HTML webu služby (apple-touch-icon má přednost), nebo /favicon.ico."""
+    import urllib.parse
+    base = "https://" + domena + "/"
+    kandidati = []
+    for host in (domena, "www." + domena):
+        try:
+            html, konec = _stahni("https://" + host + "/", 250_000)
+            text = html.decode("utf-8", "replace")
+            nalezene = []
+            for tag in re.findall(r"<link\b[^>]*>", text, re.I):
+                rel = re.search(r"rel=[\"']([^\"']+)[\"']", tag, re.I)
+                href = re.search(r"href=[\"']([^\"']+)[\"']", tag, re.I)
+                if rel and href and "icon" in rel.group(1).lower() and not href.group(1).lower().split("?")[0].endswith(".svg"):
+                    nalezene.append((0 if "apple" in rel.group(1).lower() else 1, urllib.parse.urljoin(konec, __import__("html").unescape(href.group(1)))))
+            kandidati += [u for _, u in sorted(nalezene)]
+            break
+        except Exception:
+            continue
+    return kandidati + [base + "favicon.ico", "https://www." + domena + "/favicon.ico"]
+
+
+def logo(klic):
+    """(bajty, content-type) loga, nebo None. Výsledek (i „žádné logo") se drží
+    na disku — služba se nezkouší pořád dokola."""
+    if not LOGO_RE.match(str(klic or "")):
+        return None
+    os.makedirs(_logo_slozka(), exist_ok=True)
+    cesta = os.path.join(_logo_slozka(), klic.replace(":", "_"))
+    try:
+        age = time.time() - os.path.getmtime(cesta)
+        with open(cesta, "rb") as fh:
+            data = fh.read()
+        if data or age < 7 * 86400:                # prázdný soubor = „nemá logo", zkusí se za týden znovu
+            return (data, _obrazek(data)) if data else None
+    except OSError:
+        pass
+    data = b""
+    try:
+        if klic.startswith("gh:"):
+            data, _ = _stahni(f"https://github.com/{klic[3:]}.png?size=96")
+        else:
+            for url in _ikonka_webu(klic[2:]):
+                try:
+                    got, _ = _stahni(url)
+                except Exception:
+                    continue
+                if _obrazek(got) and len(got) > 100:
+                    data = got
+                    break
+    except Exception:
+        data = b""
+    if data and not _obrazek(data):
+        data = b""
+    try:
+        with open(cesta, "wb") as fh:
+            fh.write(data)
+    except OSError:
+        pass
+    return (data, _obrazek(data)) if data else None
+
+
 # ── Katalog napojení (oficiální registr MCP serverů) ─────────────────────────
 REGISTR = "https://registry.modelcontextprotocol.io/v0/servers"
 # Oficiální napojení firem (ověřená jména v registru). Co v registru zrovna
@@ -214,7 +333,7 @@ def _polozka(server, oficialni=False):
     firma = ns[2] if ns[:2] == ["io", "github"] and len(ns) > 2 else (ns[1] if len(ns) > 1 else ns[0])
     title = server.get("title") or firma.capitalize()
     return {"name": name, "title": title[:60], "description": (server.get("description") or "")[:300],
-            "url": remotes[0]["url"], "official": oficialni}
+            "url": remotes[0]["url"], "official": oficialni, "logo": logo_domeny(remotes[0]["url"])}
 
 
 def _cache_napojeni():
@@ -247,6 +366,8 @@ def napojeni_katalog(hledat=""):
         with open(_cache_napojeni(), encoding="utf-8") as fh:
             cached = json.load(fh)
         if time.time() - cached.get("at", 0) < 86400 and cached.get("items"):
+            for i in cached["items"]:
+                i.setdefault("logo", logo_domeny(i.get("url")))   # starší cache loga neměla
             _NAPOJENI.update(at=cached["at"], data={"items": cached["items"]})
             return _NAPOJENI["data"]
     except (OSError, ValueError):

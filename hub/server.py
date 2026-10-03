@@ -1266,6 +1266,13 @@ class Handler(BaseHTTPRequestHandler):
         if name == "claude-ucet":
             # Pod jakým účtem claude.ai je Claude Code přihlášený (Nastavení → Účet).
             return self._json({"account": core.claude_account()})
+        if name == "logo":
+            from . import pluginy
+            hit = pluginy.logo((query.get("k") or [""])[0])
+            if not hit:
+                return self._send(404, b"", "text/plain", {"Cache-Control": "private, max-age=3600"})
+            return self._send(200, hit[0], hit[1], {"Cache-Control": "private, max-age=604800",
+                                                    "Content-Security-Policy": "default-src 'none'"})
         if name == "plugin-soubor":
             # Soubory zapnutého pluginu appky (JS, CSS, obrázky) — jen s tokenem.
             from . import pluginy

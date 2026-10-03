@@ -143,9 +143,9 @@
     return box;
   }
 
-  function radek(nazev, popis, meta, ico) {
+  function radek(nazev, popis, meta, ico, logo) {
     const r = el('div', 'plg-radek');
-    r.appendChild(ikonka(nazev, ico));
+    r.appendChild(ikonka(nazev, ico, logo));
     const info = el('div', 'plg-info');
     info.appendChild(el('b', '', nazev));
     if (meta) info.appendChild(el('span', 'plg-meta', meta));
@@ -178,14 +178,29 @@
   const katInfo = (id) => KATEGORIE.find((k) => k[0] === id) || ['ostatni', 'Ostatní', 'i-star'];
   /* Ikonka řádku: barevný čtvereček (barva z názvu) s ikonkou appky
      (`i-…` ze sady v index.html), nebo s prvním písmenem názvu. */
-  function ikonka(nazev, ico) {
+  function ikonka(nazev, ico, logo) {
     let h = 0;
     for (const c of nazev) h = (h * 31 + c.charCodeAt(0)) % 360;
     const i = el('span', 'plg-ikona');
     if (ico && ico.startsWith('i-')) i.innerHTML = '<svg class="ico"><use href="#' + ico + '"/></svg>';
     else i.textContent = (nazev.replace(/^[^A-Za-zÀ-ž0-9]+/, '')[0] || '?').toUpperCase();
     i.style.background = 'hsl(' + h + ' 45% 32%)';
+    // Skutečné logo vydavatele / služby (hub ho stáhne a uloží); bez něj zůstává ikonka.
+    if (logo && io && io.token) {
+      const img = el('img', 'plg-logo');
+      img.alt = '';
+      img.onload = () => { i.classList.add('s-logem'); i.textContent = ''; i.appendChild(img); };
+      img.src = '/api/logo?k=' + encodeURIComponent(logo) + '&t=' + encodeURIComponent(io.token);
+    }
     return i;
+  }
+  /* Klíč loga z adresy serveru (mcp.notion.com → d:notion.com), stejně jako v hub/pluginy.py. */
+  function logoZUrl(url) {
+    let host = '';
+    try { host = new URL(/^https?:/.test(url) ? url : 'https://' + url).hostname.toLowerCase(); } catch (_) { return ''; }
+    const l = host.split('.');
+    const dom = l.length > 2 ? (['co', 'com', 'org', 'net'].includes(l[l.length - 2]) && l[l.length - 1].length === 2 ? l.slice(-3) : l.slice(-2)).join('.') : host;
+    return /^[a-z0-9.-]{3,80}$/.test(dom) && dom.includes('.') ? 'd:' + dom : '';
   }
   const svg = (ico) => '<svg class="ico"><use href="#' + ico + '"/></svg>';
 
@@ -239,7 +254,7 @@
         const vKatalogu = data.available.find((a) => a.id === p.id);
         const {r, tlacitka} = radek(jmeno, vKatalogu ? vKatalogu.description : '', (trh || '') + (p.scope === 'project' ? ' · jen v projektu ' + (p.projectPath || '').split(/[\\/]/).pop() : '') +
                                     (p.enabled ? ' · zapnutý' : ' · vypnutý'),
-                                    katInfo(vKatalogu ? kategorie(vKatalogu) : 'ostatni')[2]);
+                                    katInfo(vKatalogu ? kategorie(vKatalogu) : 'ostatni')[2], vKatalogu && vKatalogu.logo);
         if (p.scope === 'user') {
           tlacitka.appendChild(tlacitko(p.enabled ? 'Vypnout' : 'Zapnout', () => akce({akce: p.enabled ? 'disable' : 'enable', id: p.id})));
           tlacitka.appendChild(tlacitko('Aktualizovat', () => akce({akce: 'update', id: p.id})));
@@ -299,7 +314,7 @@
           if (mine !== token) return;
           const dalsiHit = hit[i++];
           const {r, tlacitka} = radek(dalsiHit.name, dalsiHit.description, dalsiHit.marketplace + ' · ' + kolik(dalsiHit.installs) + ' instalací',
-                                      katInfo(kategorie(dalsiHit))[2]);
+                                      katInfo(kategorie(dalsiHit))[2], dalsiHit.logo);
           r.classList.add('plg-vstup');
           if (data.installed.some((x) => x.id === dalsiHit.id && x.scope === 'user')) {
             tlacitka.appendChild(el('span', 'set-ok', '✓ Nainstalováno'));
@@ -551,7 +566,7 @@
       if (!d.items.length && !d.error) { stav.hidden = false; stav.textContent = 'Nic takového v katalogu není.'; }
       d.items.forEach((x, i) => setTimeout(() => {
         if (mine !== tik) return;
-        const {r, tlacitka} = radek(x.title, x.description, (x.official ? 'oficiální · ' : '') + x.url.replace(/^https?:\/\//, ''));
+        const {r, tlacitka} = radek(x.title, x.description, (x.official ? 'oficiální · ' : '') + x.url.replace(/^https?:\/\//, ''), null, x.logo);
         r.classList.add('plg-vstup');
         tlacitka.appendChild(tlacitko('Přidat', async () => {
           try {
@@ -651,7 +666,7 @@
   }
 
   global.HubPluginy = {
-    start, registruj, sekce, ikonka,
+    start, registruj, sekce, ikonka, logoZUrl,
     claudeCode, skilly, appka, katalogNapojeni,
     akce: () => akceSeznam.slice(),
   };
