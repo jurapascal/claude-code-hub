@@ -499,6 +499,23 @@ setup_prohlizec() {
     fi
 }
 
+install_agenti() {
+    step "AI agenti pro prostory (Codex, Gemini, opencode, aider)"
+    # Pod /usr / /usr/local, ať je prostory vidí (sandbox je čte jen ke čtení).
+    # Ollama ne: modely by na sdíleném serveru snědly paměť všem.
+    local ok=""
+    for pkg in @openai/codex @google/gemini-cli opencode-ai; do
+        if quiet npm install -g "$pkg"; then ok="$ok ${pkg##*/}"; else warn "$pkg se nenainstaloval — podrobnosti v $LOG"; fi
+    done
+    if command -v uv >/dev/null 2>&1; then
+        if quiet env UV_TOOL_DIR=/usr/local/lib/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin \
+                uv tool install --force --python python3 --with pip aider-chat@latest; then
+            chmod -R a+rX /usr/local/lib/uv-tools 2>/dev/null; ok="$ok aider-chat"
+        else warn "aider se nenainstaloval — podrobnosti v $LOG"; fi
+    fi
+    [ -n "$ok" ] && ok "nainstalováno:$ok"
+}
+
 install_gh() {
     step "GitHub CLI"
     if command -v gh >/dev/null 2>&1; then
@@ -836,6 +853,7 @@ main() {
     setup_company_skills
     setup_hlas
     setup_prohlizec
+    install_agenti
     install_gh
     setup_service
     setup_updater

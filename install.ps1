@@ -730,6 +730,30 @@ if (-not $Update) {
     }
 }
 
+# ── 11c. Další AI agenti a lokální modely ────────────────────────────────────
+# Codex, Gemini, opencode, aider, Ollama (+ základní modely ~7 GB) — stejný
+# katalog jako v appce (tools/install_agents.py). Instalace přes -App, jinak otázka.
+if (-not $Update -and -not (Test-Path variable:Minimal)) {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        if ($App -or (Ask-YesNo 'Nainstalovat i další AI agenty (Codex, Gemini, opencode, aider, Ollama) a lokální modely (~7 GB)?')) {
+            Write-Info 'instaluju další AI agenty a modely (může to trvat několik minut)…'
+            & $Python (Join-Path $ClaudeDir 'tools\install_agents.py') 2>&1 | ForEach-Object {
+                if     ($_ -match '^ok: ')                    { Write-Ok ($_ -replace '^ok: ', '') }
+                elseif ($_ -match '^(chyba|přeskočeno): ')    { Write-Warn ($_ -replace '^[^:]+: ', '') }
+                elseif ($_ -match '^(instaluju|stahuju): ')   { Write-Info ($_ -replace '^[^:]+: ', '') }
+            }
+        } else {
+            Write-Info 'další agenti přeskočeni — jdou doinstalovat v Nastavení → AI agenti'
+        }
+    } catch {
+        Write-Warn "další agenti: $($_.Exception.Message)"
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+}
+
 # ── 11b. Clockify MCP (volitelné) ────────────────────────────────────────────
 # Výkazy času a projekty z Clockify přímo v Claude Code. HTTP server ověřovaný
 # hlavičkou x-api-key. Klíč se bere jen tady a zapíše si ho Claude Code do

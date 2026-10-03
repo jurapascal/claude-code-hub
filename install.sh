@@ -733,6 +733,25 @@ else
     info "hlas přeskočen — jde doinstalovat v Nastavení → Hlas"
 fi
 
+# ── 8c. Další AI agenti a lokální modely ─────────────────────────────────────
+# Codex, Gemini, opencode, aider, Ollama (+ základní modely do Ollamy ~7 GB)
+# — tools/install_agents.py, ze stejného katalogu, který ukazuje appka.
+echo ""
+if $MINIMAL || $UPDATE; then
+    :
+elif $APP || ask "Nainstalovat i další AI agenty (Codex, Gemini, opencode, aider, Ollama) a lokální modely (~7 GB)?"; then
+    info "instaluju další AI agenty a modely ${D}(může to trvat několik minut)${R}…"
+    while IFS= read -r line; do
+        case "$line" in
+            ok:*)         ok "${line#ok: }" ;;
+            chyba:*|přeskočeno:*) warn "${line#*: }" ;;
+            instaluju:*|stahuju:*) info "${line#*: }" ;;
+        esac
+    done < <("$PY" "$CLAUDE_DIR/tools/install_agents.py" 2>&1)
+else
+    info "další agenti přeskočeni — jdou doinstalovat v Nastavení → AI agenti"
+fi
+
 # ── 8b. Clockify MCP (volitelné) ─────────────────────────────────────────────
 # Výkazy času a projekty z Clockify přímo v Claude Code. HTTP server, ověřuje
 # se hlavičkou x-api-key — klíč se bere jen tady, do repa ani do logu se
