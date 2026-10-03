@@ -1504,8 +1504,8 @@
     if (io.sdilenyMenu || io.novySdileny) {
       prepinac.hidden = false;
       if (io.sdilenyMenu) {
-        const m = node('button', 'vault-trezor ghost', '⋯');
-        m.title = 'Kdo tyhle poznámky vidí, odejít, smazat';
+        const m = node('button', 'vault-trezor ghost', 'Spravovat sdílené');
+        m.title = 'Sdílené poznámky: kdo je vidí, odejít, smazat';
         m.onclick = () => { const r = m.getBoundingClientRect(); io.sdilenyMenu(r.left, r.bottom); };
         prepinac.appendChild(m);
       }

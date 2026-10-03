@@ -479,6 +479,43 @@ setup_company_skills() {
     fi
 }
 
+setup_prohlizec() {
+    step "Prohlížeč pro Clauda (Playwright Chromium)"
+    # Jeden Chromium pro všechny prostory pod /usr (sandbox ho vidí jen ke
+    # čtení), verze přesně pro Playwright MCP, který pouští most
+    # (tools/playwright_bridge.py), a systémové knihovny, bez kterých se
+    # vůbec nespustí (nss, atk, cups, gbm, pango…) — ty tu jednou chyběly.
+    # Fonty: bez nich má stránka místo písmen čtverečky a chybí diakritika.
+    local dir=/usr/local/share/ms-playwright
+    quiet apt-get install -y -q fonts-liberation fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji
+    ok "fonty (Liberation, DejaVu, Noto + emoji)"
+    install -d -m 0755 "$dir"
+    if (cd "$REPO_DIR" && PLAYWRIGHT_BROWSERS_PATH="$dir" python3 tools/playwright_bridge.py --install --deps) >>"$LOG" 2>&1; then
+        chmod -R a+rX "$dir"
+        ok "Chromium a jeho knihovny ($dir)"
+    else
+        # Bez prohlížeče brána jede dál — jen Claude v prostorech nebude mít web.
+        warn "prohlížeč se nenainstaloval — podrobnosti v $LOG"
+    fi
+}
+
+install_gh() {
+    step "GitHub CLI"
+    if command -v gh >/dev/null 2>&1; then
+        ok "gh $(gh --version | head -n1 | cut -d' ' -f3)"
+        return
+    fi
+    install -d -m 0755 /etc/apt/keyrings
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    chmod a+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        >/etc/apt/sources.list.d/github-cli.list
+    quiet apt-get update -q
+    if quiet apt-get install -y -q gh; then ok "gh $(gh --version | head -n1 | cut -d' ' -f3)"
+    else warn "gh se nenainstaloval — podrobnosti v $LOG"; fi
+}
+
 setup_hlas() {
     step "Hlas (diktování a předčítání česky)"
     # Whisper a Piper jednou pro všechny prostory, pod /usr — sandbox ho vidí
@@ -798,6 +835,8 @@ main() {
     install_admin_tool
     setup_company_skills
     setup_hlas
+    setup_prohlizec
+    install_gh
     setup_service
     setup_updater
     setup_ucty

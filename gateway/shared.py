@@ -21,6 +21,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import threading
 import time
 import unicodedata
@@ -87,7 +88,7 @@ def _label(uid):
     return (u.get("name") or u["email"]) if u else ""
 
 
-def _public(slug, entry, uid):
+def _public(slug, entry, uid, admin=False):
     members = []
     for mid in entry.get("members", []):
         u = _account(mid)
@@ -96,14 +97,30 @@ def _public(slug, entry, uid):
     owner = _account(entry.get("owner"))
     return {"slug": slug, "name": entry.get("name") or slug, "path": vault_dir(slug),
             "owner": owner["email"] if owner else "", "is_owner": entry.get("owner") == uid,
+            # Spravovat (členové, smazat) smí zakladatel a správce — i trezor,
+            # jehož zakladatel už účet nemá.
+            "can_manage": entry.get("owner") == uid or admin,
+            "is_member": uid in entry.get("members", []),
             "members": members}
 
 
 def vaults_for(user):
     """Sdílené Obsidiany, jejichž je uživatel členem (jen ty se mu svážou)."""
     uid = int(user["id"])
-    return [_public(slug, entry, uid) for slug, entry in sorted(_load().items())
+    admin = user.get("role") == "admin"
+    return [_public(slug, entry, uid, admin) for slug, entry in sorted(_load().items())
             if uid in entry.get("members", []) and os.path.isdir(vault_dir(slug))]
+
+
+def spravovane(user):
+    """Pro správce: sdílené Obsidiany, ve kterých není členem — ať je může
+    smazat nebo jim změnit členy (třeba po člověku, který odešel). Obsah
+    tím nevidí, jen název a lidi."""
+    if user.get("role") != "admin":
+        return []
+    uid = int(user["id"])
+    return [_public(slug, entry, uid, True) for slug, entry in sorted(_load().items())
+            if uid not in entry.get("members", [])]
 
 
 def all_vaults():
@@ -265,23 +282,37 @@ def leave(user, slug):
                        "Z prostoru zmizí po jeho restartu."}
 
 
-def delete(user, slug):
+def _smaz_strom(path):
+    """Smaže složku trezoru natrvalo — jen uvnitř SHARED_DIR a bez odkazů ven."""
+    root = os.path.realpath(config.SHARED_DIR)
+    real = os.path.realpath(path)
+    if os.path.islink(path) or os.path.commonpath([root, real]) != root or real == root:
+        raise ValueError("Tuhle složku smazat nejde.")
+    shutil.rmtree(real)
+
+
+def delete(user, slug, natrvalo=False):
+    """Smaže sdílený Obsidian. Soubory se odloží stranou (`_smazany-…`), nebo
+    s `natrvalo` smažou úplně — uvolní místo na disku serveru."""
     with _locked():
         vaults = _load()
         slug, entry = _entry(vaults, slug)
         if not _can_manage(user, entry):
-            raise ValueError("Smazat ho může jen ten, kdo ho založil.")
+            raise ValueError("Smazat ho může jen ten, kdo ho založil, nebo správce.")
         stamp = time.strftime("%Y%m%d-%H%M%S")
         if os.path.isdir(vault_dir(slug)):
-            os.rename(vault_dir(slug), os.path.join(config.SHARED_DIR, f"_smazany-{slug}-{stamp}"))
+            if natrvalo:
+                _smaz_strom(vault_dir(slug))
+            else:
+                os.rename(vault_dir(slug), os.path.join(config.SHARED_DIR, f"_smazany-{slug}-{stamp}"))
         members = list(entry.get("members", []))
         del vaults[slug]
         _save(vaults)
-    _log(user, "smazat", slug)
+    _log(user, "smazat", slug, natrvalo=bool(natrvalo))
     others = [m for m in members if m != int(user["id"])]
     return {"ok": True, "slug": slug, "affected": members, "revoked": others,
-            "message": f"Sdílený Obsidian „{entry.get('name') or slug}“ je smazaný. "
-                       "Soubory zůstaly na serveru stranou."}
+            "message": f"Sdílený Obsidian „{entry.get('name') or slug}“ je smazaný" +
+                       (" i se soubory." if natrvalo else ". Soubory zůstaly na serveru stranou.")}
 
 
 def forget_user(uid):

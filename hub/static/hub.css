@@ -342,6 +342,15 @@ body { display: flex; flex-direction: column; }
   color: var(--agent-color, var(--accent));
 }
 .tab.exited .tab-agent { opacity: .45; }
+/* Ikonka prohlížeče u tabu, jehož chat má v prohlížeči karty (prohlizec.js). */
+.tab-br {
+  flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px;
+  border-radius: 5px; color: var(--dim); cursor: pointer;
+}
+.tab-br[hidden] { display: none; }
+.tab-br .ico { width: 12px; height: 12px; }
+.tab-br:hover { background: var(--card-hover); color: var(--accent); }
+.tab-br.pomoc { color: #fff; background: var(--accent); animation: ceka-pulz 1.3s ease-in-out infinite; }
 .tab-title { overflow: hidden; text-overflow: ellipsis; flex: 1; text-align: left; }
 .tab-title input {
   width: 100%; background: var(--bg); color: var(--fg-bright);
@@ -2915,6 +2924,19 @@ html:has(> body.is-app.is-touch), body.is-app.is-touch { height: var(--app-h, 10
 /* Claudík — postavička pomocníka na kartě agenta (cteni.js claudik). */
 .ag-avatar .claudik { width: 31px; height: 23px; margin-top: 1px; color: var(--ag); overflow: visible; }
 .claudik .cl-usmev, .claudik .cl-krizky { display: none; }
+/* Oblečení podle úsilí (cteni.js OBLECENI): jen hlavní Claudík, podle data-effort. */
+.claudik .cl-obl { display: none; }
+[data-effort="low"] .claudik .cl-obl-low, [data-effort="medium"] .claudik .cl-obl-medium,
+[data-effort="high"] .claudik .cl-obl-high, [data-effort="xhigh"] .claudik .cl-obl-xhigh,
+[data-effort="max"] .claudik .cl-obl-max { display: inline; }
+.claudik .cl-jiskra { animation: cl-jiskra 1.4s steps(1) infinite; }
+.claudik .cl-jiskra.b { animation-delay: .7s; }
+@keyframes cl-jiskra { 50% { opacity: 0; } }
+.claudik .cl-bambule { animation: cl-bambule 2.4s ease-in-out infinite; transform-box: fill-box; transform-origin: top; }
+@keyframes cl-bambule { 50% { transform: translateY(1px); } }
+.cl-fig.prevlek .cl-postava { animation: cl-prevlek .5s ease-out 1; }
+@keyframes cl-prevlek { 0% { transform: scale(1); } 40% { transform: scale(1.25) rotate(-8deg); } 100% { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .claudik .cl-jiskra, .claudik .cl-bambule, .cl-fig.prevlek .cl-postava { animation: none; } }
 .ag.hotovo .claudik .cl-oci, .ag.chyba .claudik .cl-oci { display: none; }
 .ag.hotovo .claudik .cl-usmev { display: inline; }
 .ag.chyba .claudik .cl-krizky { display: inline; }
@@ -3377,7 +3399,6 @@ button.pr-radek:hover { background: var(--card-hover); color: var(--fg-bright); 
 }
 .pr-ico.ceka { background: var(--accent); border-color: var(--accent); animation: ceka-pulz 1.3s ease-in-out infinite; }
 .pr-agent .pr-ico.bezi { border-top-color: var(--ag); }
-.pr-agent .pr-ico.hotovo { background: var(--ag); border-color: var(--ag); }
 @keyframes pr-toc { to { transform: rotate(360deg); } }
 .pr-ceka {
   padding: 9px 10px; border-radius: var(--radius); cursor: pointer; text-align: left;
@@ -3501,6 +3522,31 @@ button.pr-radek:hover { background: var(--card-hover); color: var(--fg-bright); 
 .br-pilulka .ico { width: 15px; height: 15px; color: var(--accent); }
 .br-pilulka:hover { background: var(--card-hover); }
 .br-pilulka.br-mrk { border-color: var(--accent); animation: ceka-pulz 1.3s ease-in-out 3; }
+/* Přepínač chatů v záhlaví: každý chat má v prohlížeči své karty. */
+.br-chaty { display: inline-flex; gap: 3px; margin-left: 10px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.br-chaty::-webkit-scrollbar { display: none; }
+.br-chat {
+  flex: none; max-width: 150px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px;
+  background: none; color: var(--dim); font: inherit; font-size: 11.5px; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.br-chat:hover { color: var(--fg-bright); background: var(--card-hover); }
+.br-chat.on { color: var(--fg-bright); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.br-chat.br-chat-pomoc { border-color: var(--accent); animation: ceka-pulz 1.3s ease-in-out infinite; }
+.br-tab.br-tab-pomoc .br-tab-t::before { content: "● "; color: var(--accent); }
+/* Pruh „Claude potřebuje tvou pomoc“ nad stránkou. */
+.br-pomoc {
+  position: absolute; left: 50%; top: 10px; transform: translateX(-50%); z-index: 3;
+  display: flex; align-items: center; gap: 12px; max-width: calc(100% - 24px);
+  padding: 8px 8px 8px 14px; border-radius: 10px; font-size: 13px; color: var(--fg-bright);
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-card)); border: 1px solid var(--accent);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .35);
+}
+.br-pomoc[hidden] { display: none; }
+.br-pomoc-ok {
+  flex: none; padding: 4px 12px; border: none; border-radius: 7px; cursor: pointer;
+  background: var(--accent); color: #fff; font: inherit; font-size: 12.5px; font-weight: 600;
+}
 @media (max-width: 820px) {
   .br-okno { left: 6px !important; top: auto !important; bottom: 6px; width: calc(100vw - 12px) !important; height: min(70vh, 560px) !important; }
   .br-okno.br-cela { top: 6px !important; height: calc(100vh - 12px) !important; }
@@ -3704,3 +3750,38 @@ button.pr-radek:hover { background: var(--card-hover); color: var(--fg-bright); 
 .cl-fig.trese .cl-postava { animation: cl-trese .6s ease-in-out 1; }
 @keyframes cl-trese { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-3px); } 40% { transform: translateX(3px); } 60% { transform: translateX(-2px); } 80% { transform: translateX(2px); } }
 @media (prefers-reduced-motion: reduce) { .cl-emo { animation: none !important; } }
+
+/* Passkey v Nastavení → Účet → Zabezpečení. */
+.acc-pk { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.acc-pk-radek { align-items: center; gap: 10px; flex-wrap: wrap; }
+.acc-pk-jmeno { color: var(--fg-bright); font-weight: 600; }
+.acc-pk > .btn { align-self: flex-start; }
+
+/* Správa sdílených poznámek (hub.js sharedManage / sharedDelete). */
+.sm-list { display: flex; flex-direction: column; gap: 6px; }
+.sm-radek { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); }
+.sm-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sm-info b { color: var(--fg-bright); font-weight: 600; }
+.sm-info small { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sd-volby { display: flex; flex-direction: column; gap: 10px; }
+.sd-volba { display: flex; gap: 10px; align-items: flex-start; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; }
+.sd-volba small { color: var(--dim); }
+.btn.danger { background: var(--red); border-color: var(--red); color: #fff; }
+
+/* Nastavení → Pluginy (pluginy.js). */
+.plg-tabs { display: inline-flex; gap: 4px; padding: 3px; margin: 6px 0 12px; border: 1px solid var(--border); border-radius: 999px; }
+.plg-tab { border: none; background: none; color: var(--dim); padding: 5px 14px; border-radius: 999px; cursor: pointer; font: inherit; font-size: 13px; }
+.plg-tab.on { background: var(--accent); color: #fff; }
+.plg-podnadpis { margin-top: 16px; }
+.plg-radek { display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--border); border-radius: var(--radius); margin: 6px 0; }
+.plg-info { flex: 1; min-width: 0; }
+.plg-info b { color: var(--fg-bright); }
+.plg-meta { margin-left: 8px; color: var(--dim); font-size: 12px; }
+.plg-popis { color: var(--dim); font-size: 12.5px; margin-top: 3px; line-height: 1.4; }
+.plg-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
+.plg-hledat { width: 100%; margin: 6px 0; }
+.plg-varovani { border-left: 3px solid var(--accent); padding-left: 10px; }
+.plg-nastaveni { display: flex; flex-direction: column; gap: 8px; padding: 10px; margin: -2px 0 8px; border: 1px dashed var(--border); border-radius: var(--radius); }
+@media (max-width: 640px) { .plg-radek { flex-direction: column; } .plg-btns { justify-content: flex-start; } }
+.plg .set-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.plg .set-row .set-input { flex: 1; min-width: 220px; }

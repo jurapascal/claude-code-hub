@@ -250,7 +250,8 @@ def main():
             core.save_config({"server_mode": False})
 
     httpd, url = server.start()
-    core.log(f"start: port {httpd.server_address[1]}, platforma {core.doctor()['platform']}")
+    # Celý doctor() tu nevolat — ptá se agentů (CLI) a okno by na to čekalo.
+    core.log(f"start: port {httpd.server_address[1]}, platforma {sys.platform}")
     if core.CONFIG.get("remote_enabled"):
         # Tailscale se ptáme přes CLI, což trvá — okno na to nesmí čekat.
         threading.Thread(target=server.start_remote, daemon=True).start()

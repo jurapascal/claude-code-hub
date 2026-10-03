@@ -12,6 +12,7 @@ stojí, a ať je z čeho vyjít při další změně.
 | **Token na každý požadavek** | 24 bajtů z `secrets.token_urlsafe`, porovnává se `compare_digest`; stránka ho dostane v URL při startu |
 | **Websocket navíc kontroluje `Origin`** | když hlavičku pošle prohlížeč, musí sedět na adresu, na kterou listener odpovídá |
 | **Nic se neposílá ven** | jediné spojení do světa je kontrola verze na GitHubu a stažení aktualizace |
+| **Bezpečnostní hlavičky** | `nosniff`, `X-Frame-Options: SAMEORIGIN` (cizí stránka hub nezarámuje), `Referrer-Policy: same-origin` (adresa s tokenem neodejde v Refereru) |
 
 Token je celá obrana: bez něj vrací každý endpoint 403. Cizí stránka v prohlížeči
 na port dosáhne, ale token neuhodne a odpověď si kvůli CORS stejně nepřečte.
@@ -175,6 +176,39 @@ obsahu se nesahá — blok je ohraničený značkami a jen se vyměňuje.
   25 MB, cíl vždy `~/.claude/hub-images`.
 - **`hub-projects.json`** se zapisuje s právy `600` — briefingy bývají
   o klientech.
+
+## Vestavěný prohlížeč
+
+Sdílený Chromium (`hub/prohlizec.py`) má ladicí port jen na `127.0.0.1` a od
+2.57 **bez `--remote-allow-origins`**: webová stránka posílá `Origin` vždycky,
+takže ji Chromium odmítne (403); Playwright ani hub `Origin` neposílají.
+Každá session Claude Code jde přes vlastní proxy (`hub/prohlizec_proxy.py`)
+na adrese s náhodným tokenem: vidí a ovládá jen karty, které si sama otevřela,
+a `Browser.close` nepustí — jedna session nezavře prohlížeč ostatním.
+Profil (přihlášení, cookies) je společný všem sessions na tomhle účtu.
+
+## Passkey na bráně (2.57)
+
+Passkey (WebAuthn) je **druhý krok** přihlášení vedle kódu z aplikace — přidat
+jde jen s už zapnutým kódem, takže kód a záložní kódy zůstávají jako záloha
+(a pro hub na počítači, který se přihlašuje přes JSON). Ověření je jen ze
+standardní knihovny (`gateway/webauthn.py`): ES256, RS256 a Ed25519, výzva
+32 B na jeden pokus, kontrola `origin` a `rpIdHash` podle adresy brány,
+příznak přítomnosti uživatele, počítadlo podpisů, které nesmí couvnout.
+Neúspěšný podpis se počítá do stejných zámků jako špatný kód. Reset 2FA
+správcem (`claude-hub-admin 2fa`, ztracený telefon) smaže i passkeye.
+
+## Pluginy (2.57)
+
+- **Pluginy Claude Code** instaluje `claude plugin install` — hub jen předá
+  název. Plugin, který se instaluje spuštěním příkazu z marketplace, se bez
+  ukázání příkazu člověku a jeho souhlasu (`--accept-command <sha256>`)
+  nenainstaluje.
+- **Pluginy appky** (`~/.claude/hub-plugins/`) běží v okně appky se stejnými
+  právy jako ona — po přidání jsou vypnuté, zapnutí chce potvrzení
+  s varováním. Soubory se vydávají jen zapnutým pluginům, jen s tokenem,
+  jen z jejich složky a jen bezpečné typy (JS, CSS, obrázky, fonty). Na
+  serveru je správce může vypnout všem (`HUB_PLUGINS=0`).
 
 ## Co hub záměrně smí
 

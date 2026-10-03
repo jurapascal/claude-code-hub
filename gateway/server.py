@@ -17,6 +17,7 @@ Jak to drží pohromadě:
 TLS terminuje nginx před bránou, takže brána poslouchá na loopbacku. Bez
 izolace (`none`) se pustí jen tam — `isolation.check()` to hlídá.
 """
+import hashlib
 import html
 import http.client
 import json
@@ -31,6 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from hub import __version__, qr
 
+from . import webauthn
 from . import (config, isolation, mcp, mcp_sdilene, pocitac, poznamky, relace, safefs, shared, slozky, totp,
                workspace)
 from .accounts import Accounts
@@ -104,6 +106,9 @@ def tries_left(left):
     if left == 1:
         return f"Zbývá 1 pokus, pak se přihlášení na {_duration(config.LOGIN_LOCK)} zablokuje."
     return f"Zbývají {left} pokusy." if 1 < left < 5 else f"Zbývá {left} pokusů."
+
+
+_pk_reg = {}       # user_id → (výzva pro přidání passkeye, platí do)
 
 
 def _ticket_new(uid, label="", secret=""):
@@ -538,12 +543,53 @@ def login_page(error=""):
 </form>""")
 
 
-def code_page(ticket, error=""):
-    """Druhý krok přihlášení: kód z aplikace (nebo záložní kód)."""
+PASSKEY_JS = """<script>
+(() => {
+  const b64d = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+  const b64e = (b) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+  const btn = document.getElementById('pk');
+  const err = document.getElementById('pkerr');
+  if (!btn) return;
+  if (!window.PublicKeyCredential) { btn.hidden = true; return; }
+  const ticket = btn.dataset.ticket;
+  const post = (body) => fetch('/login/passkey', {method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}).then((r) => r.json());
+  async function overit() {
+    err.textContent = '';
+    btn.disabled = true;
+    try {
+      const o = await post({ticket, step: 'options'});
+      if (o.error) throw new Error(o.error);
+      const c = await navigator.credentials.get({publicKey: {challenge: b64d(o.challenge), rpId: o.rpId,
+        allowCredentials: o.allow.map((id) => ({type: 'public-key', id: b64d(id)})),
+        userVerification: 'preferred', timeout: 60000}});
+      const v = await post({ticket, step: 'verify', id: c.id, clientData: b64e(c.response.clientDataJSON),
+        authData: b64e(c.response.authenticatorData), signature: b64e(c.response.signature)});
+      if (v.error) throw new Error(v.error);
+      location.href = v.redirect || '/';
+    } catch (e) {
+      err.textContent = e && e.name === 'NotAllowedError' ? 'Ověření bylo zrušené — zkus to znovu, nebo opiš kód.'
+                                                          : (e && e.message) || 'Ověření nevyšlo.';
+      btn.disabled = false;
+    }
+  }
+  btn.onclick = (ev) => { ev.preventDefault(); overit(); };
+})();
+</script>"""
+
+
+def code_page(ticket, error="", passkey=False):
+    """Druhý krok přihlášení: passkey (když ho účet má), kód z aplikace,
+    nebo záložní kód."""
     err = f'<div class=err>{html.escape(error)}</div>' if error else ''
+    pk = (f'<button type=button id=pk data-ticket="{html.escape(ticket)}">Ověřit passkey</button>'
+          '<div class=err id=pkerr></div>'
+          '<p class=hint>Otisk prstu, obličej, PIN nebo bezpečnostní klíč. Nebo opiš kód níž.</p>'
+          ) if passkey else ''
     return _page("Ověření — Claude Hub", f"""
 <form class=card method=post action="/login/2fa">
 <h1>Ověření</h1>
+{pk}
 <p class=sub>Opiš šesticiferný kód z aplikace v mobilu
 (Google Authenticator, Microsoft Authenticator…).</p>
 <input type=hidden name=ticket value="{html.escape(ticket)}">
@@ -553,7 +599,7 @@ def code_page(ticket, error=""):
 <button type=submit>Ověřit</button>
 <p class=hint>Nemáš u sebe telefon? Zadej jeden ze záložních kódů.</p>
 {err}
-</form>""")
+</form>{PASSKEY_JS if passkey else ""}""")
 
 
 def setup_page(ticket, secret, email, error=""):
@@ -736,6 +782,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._logout()
             if route == "/login/2fa":
                 return self._login_second(method)
+            if route == "/login/passkey":
+                return self._login_passkey(method)
             # Rozhraní pro hub běžící na počítači: ověřuje se tokenem
             # v hlavičce, ne cookie, a nikdy se neproxuje do instance.
             if route == "/gw/info":
@@ -794,6 +842,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._gw_password(method, user)
             if route == "/gw/2fa/recovery":
                 return self._gw_recovery(method, user)
+            if route == "/gw/passkey":
+                return self._gw_passkey(method, user)
             if route == "/gw/sdilene":
                 if method == "POST":
                     return self._gw_shared_change(user)
@@ -1102,7 +1152,7 @@ class Handler(BaseHTTPRequestHandler):
             ticket = _ticket_new(user["id"], label)
             if self._wants_json():
                 return self._json({"need": "totp", "ticket": ticket})
-            return self._send(200, code_page(ticket), HTML)
+            return self._send(200, code_page(ticket, passkey=state["passkeys"] > 0), HTML)
         # Ověřování ještě nemá: tajemství vznikne teď a do účtu se zapíše, až
         # ho člověk potvrdí prvním kódem z aplikace.
         secret = totp.new_secret()
@@ -1201,11 +1251,109 @@ class Handler(BaseHTTPRequestHandler):
             if not left:
                 return self._send(200, login_page(message), HTML)
             page = (setup_page(ticket_id, ticket["secret"], user["email"], message)
-                    if ticket["secret"] else code_page(ticket_id, message))
+                    if ticket["secret"] else
+                    code_page(ticket_id, message, passkey=self.accounts.twofa(user["id"])["passkeys"] > 0))
             return self._send(200, page, HTML)
         _ticket_drop(ticket_id)
         token = self.accounts.issue_token(user, ticket["label"], mfa=True)
         return self._login_done(token, user, recovery)
+
+    # ---- passkey (WebAuthn) ----
+    def _rp(self):
+        """(rp_id, origin) podle adresy, na které stránku člověk má."""
+        host = self._public_host()
+        proto = "https" if self._https() else "http"
+        rp_id = host[1:host.index("]")] if host.startswith("[") else host.rsplit(":", 1)[0]
+        return rp_id, f"{proto}://{host}"
+
+    def _login_passkey(self, method):
+        """Druhý krok přihlášení passkeyem: výzva (`options`), pak ověření
+        podpisu (`verify`). Lístek z prvního kroku (heslo) je podmínka."""
+        if method != "POST" or not self._same_origin():
+            return self._json({"error": "Jen ze stránky přihlášení."}, 403)
+        form = self._read_form()
+        ticket_id = str(form.get("ticket") or "")
+        ticket = _ticket_get(ticket_id)
+        user = self.accounts.by_id(ticket["uid"]) if ticket else None
+        if not user:
+            return self._json({"error": "Přihlášení vypršelo — zadej znovu e-mail a heslo."}, 401)
+        keys = self._fail_keys(user["email"])
+        wait = self.accounts.fail_wait(keys)
+        if wait:
+            _ticket_drop(ticket_id)
+            return self._json({"error": too_many(wait)}, 429)
+        rp_id, origin = self._rp()
+        if form.get("step") == "options":
+            allow = [k["id"] for k in self.accounts.passkeys(user["id"])]
+            if not allow:
+                return self._json({"error": "Účet nemá žádný passkey."}, 400)
+            ticket["pk_challenge"] = os.urandom(32)
+            return self._json({"challenge": webauthn.b64e(ticket["pk_challenge"]), "rpId": rp_id,
+                               "allow": allow})
+        challenge = ticket.pop("pk_challenge", None)
+        cred = self.accounts.passkey(str(form.get("id") or ""))
+        try:
+            if not challenge or not cred or cred["user_id"] != user["id"]:
+                raise webauthn.Chyba("neznámý klíč nebo chybí výzva")
+            count = webauthn.prihlaseni(
+                webauthn.b64d(form.get("clientData")), webauthn.b64d(form.get("authData")),
+                webauthn.b64d(form.get("signature")), challenge, origin, rp_id,
+                cred["public_key"], cred["sign_count"])
+        except (webauthn.Chyba, ValueError, TypeError, KeyError) as exc:
+            _errlog("passkey přihlášení", exc)
+            locked, left = self._failed(keys)
+            left = min(left, _ticket_miss(ticket_id))
+            return self._json({"error": "Passkey nesedí. " + (locked or tries_left(left))}, 401)
+        _ticket_drop(ticket_id)
+        self.accounts.passkey_used(cred["id"], count)
+        self.accounts.fail_clear(keys[0][0])
+        token = self.accounts.issue_token(user, ticket["label"], mfa=True)
+        return self._send(200, json.dumps({"ok": True, "redirect": "/"}),
+                          "application/json; charset=utf-8", {"Set-Cookie": self._set_cookie(token)})
+
+    def _gw_passkey(self, method, user):
+        """Nastavení → Účet: seznam passkeyů, přidání (výzva + ověření) a odebrání.
+        Přidat jde jen s kódem z aplikace — passkey je jeho pohodlnější náhrada,
+        hub na počítači a záložní kódy dál jedou přes kód."""
+        if method == "GET":
+            return self._json({"passkeys": self.accounts.passkeys(user["id"])})
+        if method != "POST" or not self._account_post_ok():
+            return self._json({"error": "Passkey jde spravovat jen v nastavení aplikace."}, 403)
+        form = self._read_form()
+        action = form.get("action")
+        rp_id, origin = self._rp()
+        if action == "options":
+            if not self.accounts.twofa(user["id"])["enabled"]:
+                return self._json({"error": "Nejdřív si zapni ověření kódem z aplikace."}, 400)
+            challenge = os.urandom(32)
+            with _ticket_lock:
+                _pk_reg[user["id"]] = (challenge, time.time() + 300)
+            return self._json({
+                "challenge": webauthn.b64e(challenge),
+                "rp": {"id": rp_id, "name": "Claude Hub"},
+                "user": {"id": webauthn.b64e(hashlib.sha256(f"claude-hub:{user['id']}".encode()).digest()),
+                         "name": user["email"], "displayName": user.get("name") or user["email"]},
+                "algs": list(webauthn.ALGS),
+                "exclude": [k["id"] for k in self.accounts.passkeys(user["id"])]})
+        if action == "register":
+            with _ticket_lock:
+                challenge, exp = _pk_reg.pop(user["id"], (None, 0))
+            if not challenge or exp < time.time():
+                return self._json({"error": "Výzva vypršela, zkus to znovu."}, 400)
+            try:
+                cred = webauthn.registrace(webauthn.b64d(form.get("clientData")),
+                                           webauthn.b64d(form.get("attestation")), challenge, origin, rp_id)
+            except (webauthn.Chyba, ValueError, TypeError) as exc:
+                _errlog("passkey registrace", exc)
+                return self._json({"error": "Passkey se nepodařilo přidat."}, 400)
+            if self.accounts.passkey(cred["id"]):
+                return self._json({"error": "Tenhle passkey už je přidaný."}, 400)
+            self.accounts.passkey_add(user["id"], cred, str(form.get("name") or "")[:60])
+            return self._json({"ok": True, "passkeys": self.accounts.passkeys(user["id"])})
+        if action == "delete":
+            ok = self.accounts.passkey_delete(user["id"], str(form.get("id") or ""))
+            return self._json({"ok": ok, "passkeys": self.accounts.passkeys(user["id"])})
+        return self._json({"error": "Neznámá akce."}, 400)
 
     def _account_post_ok(self):
         """Změny účtu jen z vlastní stránky a s hlavičkou, kterou cizí web nepošle."""
@@ -1270,7 +1418,11 @@ class Handler(BaseHTTPRequestHandler):
             v.pop("path", None)
             v["needs_restart"] = bound is not None and v["slug"] not in bound
         gone = sorted(bound - {v["slug"] for v in vaults}) if bound else []
-        return self._json({"vaults": vaults, "people": shared.people(), "gone": gone})
+        cizi = shared.spravovane(user)
+        for v in cizi:
+            v.pop("path", None)
+        return self._json({"vaults": vaults, "people": shared.people(), "gone": gone,
+                           "spravovane": cizi})
 
     def _gw_relace(self, route, method, user):
         """Sdílené relace: chat jednoho člověka živě u dalších (gateway/relace.py).
@@ -1359,7 +1511,7 @@ class Handler(BaseHTTPRequestHandler):
             elif action == "odejit":
                 result = shared.leave(user, form.get("slug"))
             elif action == "smazat":
-                result = shared.delete(user, form.get("slug"))
+                result = shared.delete(user, form.get("slug"), natrvalo=bool(form.get("natrvalo")))
             else:
                 return self._json({"error": "Neznámá akce."}, 400)
         except ValueError as exc:

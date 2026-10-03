@@ -161,6 +161,53 @@
   /* Claudík: malá pixelová postavička v barvě pomocníka (currentColor).
      Oči se mění podle stavu (CSS: .ag.hotovo úsměv, .ag.chyba křížky),
      Průzkumník nese lupu, Plánovač papír s tužkou, Rádce čepici. */
+  /* Oblečení hlavního Claudíka podle úsilí (effort), se kterým Claude jede.
+     Kreslí se do každé postavičky a CSS ukáže jen to, které sedí na
+     `data-effort` u předka (claudici.js, Claudík visící z tabu):
+       low     — pyžamo a noční čepice (pohodička)
+       medium  — kšiltovka
+       high    — stavební helma a reflexní vesta
+       xhigh   — superhrdina: plášť a čelenka
+       max     — kouzelník: špičatý klobouk s hvězdami a plášť */
+  const PLAST = (barva) => `<rect x="1" y="5" width="14" height="6" fill="${barva}"/>` +
+    `<rect x="0" y="8" width="2" height="5" fill="${barva}"/><rect x="14" y="8" width="2" height="5" fill="${barva}"/>` +
+    `<rect x="-1" y="11" width="1" height="2" fill="${barva}"/><rect x="16" y="11" width="1" height="2" fill="${barva}"/>`;
+  const OBLECENI_ZA =
+    `<g class="cl-obl cl-obl-xhigh">${PLAST('#da3633')}</g>` +
+    `<g class="cl-obl cl-obl-max">${PLAST('#6e40c9')}</g>`;
+  const OBLECENI =
+    '<g class="cl-obl cl-obl-low">' +
+      '<rect x="3" y="3" width="10" height="1" fill="#f0f6fc"/>' +
+      '<rect x="5" y="2" width="7" height="1" fill="#5b8def"/><rect x="8" y="1" width="5" height="1" fill="#5b8def"/>' +
+      '<rect x="12" y="2" width="2" height="1" fill="#5b8def"/>' +
+      '<rect class="cl-bambule" x="14" y="2" width="2" height="2" fill="#f0f6fc"/>' +
+      '<rect x="3" y="9" width="10" height="1" fill="#5b8def" opacity=".55"/>' +
+    '</g>' +
+    '<g class="cl-obl cl-obl-medium">' +
+      '<rect x="4" y="2" width="8" height="2" fill="#e5534b"/><rect x="7" y="1" width="2" height="1" fill="#e5534b"/>' +
+      '<rect x="12" y="3" width="4" height="1" fill="#b62324"/>' +
+    '</g>' +
+    '<g class="cl-obl cl-obl-high">' +
+      '<rect x="5" y="1" width="6" height="1" fill="#f2cc60"/><rect x="4" y="2" width="8" height="1" fill="#f2cc60"/>' +
+      '<rect x="2" y="3" width="12" height="1" fill="#d4a72c"/><rect x="7" y="1" width="2" height="2" fill="#fff3b0"/>' +
+      '<rect x="3" y="9" width="10" height="1" fill="#c6f432"/><rect x="5" y="8" width="1" height="3" fill="#c6f432"/>' +
+      '<rect x="10" y="8" width="1" height="3" fill="#c6f432"/>' +
+    '</g>' +
+    '<g class="cl-obl cl-obl-xhigh">' +
+      '<rect x="3" y="4" width="10" height="1" fill="#da3633"/><rect x="13" y="3" width="2" height="1" fill="#da3633"/>' +
+      '<rect x="15" y="2" width="1" height="1" fill="#da3633"/>' +
+      '<rect x="7" y="9" width="2" height="1" fill="#f2cc60"/>' +
+    '</g>' +
+    '<g class="cl-obl cl-obl-max">' +
+      '<rect x="3" y="3" width="10" height="1" fill="#6e40c9"/><rect x="5" y="2" width="6" height="1" fill="#8957e5"/>' +
+      '<rect x="6" y="1" width="4" height="1" fill="#8957e5"/><rect x="7" y="0" width="2" height="1" fill="#8957e5"/>' +
+      '<rect x="8" y="-1" width="2" height="1" fill="#8957e5"/><rect x="10" y="-2" width="1" height="1" fill="#8957e5"/>' +
+      '<rect class="cl-jiskra" x="6" y="2" width="1" height="1" fill="#f2cc60"/>' +
+      '<rect class="cl-jiskra b" x="8" y="0" width="1" height="1" fill="#f2cc60"/>' +
+      '<rect class="cl-jiskra" x="15" y="0" width="1" height="1" fill="#f2cc60"/>' +
+      '<rect class="cl-jiskra b" x="0" y="3" width="1" height="1" fill="#f2cc60"/>' +
+    '</g>';
+
   function claudik(typ) {
     const doplnek = {
       Explore: '<g class="cl-dopl"><rect x="13" y="3" width="3" height="1"/><rect x="12" y="4" width="1" height="3"/>' +
@@ -171,6 +218,7 @@
       'claude-code-guide': '<g class="cl-dopl"><rect x="4" y="1" width="8" height="2"/><rect x="3" y="3" width="10" height="1"/></g>',
     }[typ] || '';
     return `<svg class="claudik" viewBox="0 1 18 13" shape-rendering="crispEdges" aria-hidden="true">
+      ${OBLECENI_ZA}
       <g class="cl-telo" fill="currentColor">
         <rect x="3" y="4" width="10" height="7"/>
         <rect x="1" y="6" width="2" height="2"/><rect x="13" y="6" width="2" height="2"/>
@@ -178,6 +226,7 @@
         <rect class="cl-noha a" x="9" y="11" width="1" height="2"/><rect class="cl-noha b" x="11" y="11" width="1" height="2"/>
         ${doplnek}
       </g>
+      ${OBLECENI}
       <g class="cl-oci" fill="#1b1b1b">
         <rect class="cl-oko" x="5" y="6" width="1" height="2"/><rect class="cl-oko" x="10" y="6" width="1" height="2"/>
       </g>
@@ -1133,7 +1182,7 @@
       udalost: (e) => {
         // Prohlížeč v appce — jen živé nástroje, ne historie při otevření tabu.
         if (e.co === 'nastroj' && nacteno) {
-          document.dispatchEvent(new CustomEvent('hub-tool', {detail: {name: e.name}}));
+          document.dispatchEvent(new CustomEvent('hub-tool', {detail: {name: e.name, tab: tab.id || ''}}));
           if (hriste) hriste.nastroj(e.name);
         }
         if (e.co === 'chyba' && nacteno && hriste) hriste.chyba();
@@ -1223,7 +1272,7 @@
           clearTimeout(timer);
           // Tab, na který není vidět, se doptává zvolna — přibýt v něm může
           // hodně, ale nikdo to zrovna nečte.
-          const rychle = prazdnych < KLID_PO && (!io.aktivni || io.aktivni());
+          const rychle = !document.hidden && prazdnych < KLID_PO && (!io.aktivni || io.aktivni());
           timer = setTimeout(tik, rychle ? POLL : POLL_KLID);
         }
       }
@@ -1240,6 +1289,8 @@
     return {
       hriste,
       prehled: () => proud.prehled(),
+      // Je v konverzaci už něco? (automatika modelu podle toho pozná navázání)
+      prazdny: () => proud.prazdny(),
       release() {
         zivy = false;
         clearTimeout(timer);

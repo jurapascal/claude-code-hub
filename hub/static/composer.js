@@ -702,9 +702,12 @@
     let stupen = -1;         // stupeň, na kterém tab jede (-1 = nevíme)
     let pracuje = false;     // Claude zrovna pracuje (sledujPraci)
     let spinner = false;     // na obrazovce se točí (i hooky, i po /model)
+    let pracovalAt = 0;      // kdy naposledy bylo vidět, že pracuje
+    const KLID_PO_PRACI_MS = 2500;   // mezi kroky práce spinner na chvilku zmizí
     const nazory = new Map();   // text zprávy → odpověď Haiku
     let nazorTimer = null;
     const autoPrikazy = new Set();   // co z fronty poslala automatika
+    let predAuto = null;             // stav před posledním přepnutím (kdyby se zahodilo)
 
     function stupenPravidly(text) {
       const t = text.toLowerCase();
@@ -744,14 +747,34 @@
       }, 1200);
     }
 
-    /* Před odesláním: přepnout model a effort, když je potřeba. Jen když
-       Claude nepracuje — zpráva poslaná během práce čeká ve frontě a přepnutí
-       by se zapsalo doprostřed rozdělaného kroku. */
+    /* Smí automatika přepnout model? Jen když člověk píše novou zprávu do
+       klidu: Claude nepracuje (ani mezi dvěma kroky, kdy spinner na chvilku
+       zmizí), na obrazovce není dialog ani otázka (schválení plánu,
+       oprávnění, AskUserQuestion) a nic dalšího nečeká ve frontě. Claude Code
+       totiž `/model` poslaný během práce zařadí do fronty a provede hned po
+       dalším kroku — zbytek rozdělané práce by pak jel na jiném modelu
+       (naměřeno na serveru: přepnutí mezi dvěma nástroji bez zprávy člověka). */
+    function klidProAuto(sFrontou) {
+      if (pracuje || codePrompt || tab.ceka || tab.exited) return false;
+      if (spinner && !hookBezi) return false;
+      if (Date.now() - pracovalAt < KLID_PO_PRACI_MS) return false;
+      if (dialogDole()) return false;
+      if (!sFrontou && fronta.length) return false;
+      return true;
+    }
+
+    /* Před odesláním: přepnout model a effort, když je potřeba — jen pro
+       zprávu, kterou napsal člověk, a jen když Claude nepracuje. */
     function autoPredOdeslanim(text) {
-      if (!auto || !AG.full || pracuje || codePrompt || !text.trim() || text.trim().startsWith('/')) return;
+      if (!auto || !AG.full || !text.trim() || text.trim().startsWith('/')) return;
+      if (!klidProAuto()) return;
       // Tab se ještě rozjíždí: zpráva počká na prompt (submit → cekaZprava),
       // `/model` poslaný teď by se ztratil ve startu. Přepne se u další zprávy.
       if (tab.cteni && (!tab.id || !everIdle)) return;
+      const slov = text.trim().split(/\s+/).length;
+      // Krátká odpověď („ano", „pokračuj", „to první") navazuje na rozdělanou
+      // práci — model se kvůli ní nemění, jinak by zbytek dojel na Haiku.
+      if (slov <= 8 && (stupen >= 0 || tab.resume || (tab.cteni && tab.cteni.prazdny && !tab.cteni.prazdny()))) return;
       let cil = stupenZ(nazory.get(text.trim()));
       if (cil < 0) cil = stupenPravidly(text);
       if (stupen >= 0 && cil < stupen && stupen - cil < 2) cil = stupen;
@@ -764,6 +787,7 @@
       const poslat = jinyModel || stupen < 0 || e !== effort;
       // Výchozí pro nové chaty (settings.json) se tím měnit nemá — hub ho vrátí.
       if (poslat && io.autoKeep) io.autoKeep().catch(() => {});
+      if (poslat) predAuto = {model, actual, effort, stupen};
       if (jinyModel) {
         autoPrikazy.add('/model ' + m);
         doruc('/model ' + m);
@@ -856,6 +880,18 @@
           await dokud(() => konec() || (tab.id && online()));
           if (konec()) break;
           const poslano = fronta[0];
+          /* Automatický /model nebo /effort čekal ve frontě a Claude se mezitím
+             rozběhl (nebo vyskočil dialog): přepnutí se zahodí, zpráva jde dál
+             na tom modelu, na kterém Claude právě jede. */
+          if (autoPrikazy.has(poslano) && !klidProAuto(true)) {
+            for (let i = fronta.length - 1; i >= 0; i--) {
+              if (autoPrikazy.has(fronta[i])) { autoPrikazy.delete(fronta[i]); fronta.splice(i, 1); }
+            }
+            if (predAuto) ({model, actual, effort, stupen} = predAuto);
+            predAuto = null;
+            syncModel();
+            continue;
+          }
           await posliJednu(poslano);
           fronta.shift();
           // Přepnutí modelu se občas ptá (kontext, účtování) — potvrdí se samo.
@@ -968,6 +1004,8 @@
     function submit(text, opts = {}) {
       const body = text.replace(/\r/g, '');
       if (!body.trim()) return;
+      const ef = /^\/effort\s+(low|medium|high|xhigh|max)\b/i.exec(body.trim());
+      if (ef) { effort = ef[1].toLowerCase(); syncModel(); }
       /* Tab právě vznikl a Claude Code se ještě rozjíždí. Co by se teď poslalo
          do terminálu, by se ztratilo v jeho startu — zpráva proto počká a
          odejde sama, jakmile se objeví prompt. */
@@ -1000,6 +1038,7 @@
       const body = files ? (text ? files + ' ' + text : files) : text;
       if (!body.trim()) return;
       autoPredOdeslanim(input.value);
+      document.dispatchEvent(new CustomEvent('hub-odeslano', {detail: {tab: tab.id, text: input.value.trim()}}));
       submit(body, {text: input.value.trim(), atts: atts.slice()});
       input.value = '';
       atts.length = 0;
@@ -1081,6 +1120,12 @@
     }
 
     function syncModel() {
+      // Claudík se převlékne podle úsilí (claudici.js) — i ten visící z tabu.
+      if (tab.effort !== effort) {
+        tab.effort = effort;
+        if (tab.cteni && tab.cteni.hriste) tab.cteni.hriste.effort(effort);
+        if (tab.visi) tab.visi.dataset.effort = effort || '';
+      }
       modelChip.textContent = AG.models.length
         ? (auto ? 'Auto · ' + shownModel() + (effort ? ' · ' + effort : '') : shownModel() + (effort ? ' · ' + effort : ''))
         : (AG.modelCmd || '').replace('{model}', '').trim();
@@ -2060,6 +2105,7 @@
     /* Co Claude zrovna dělá — pro čtení, kde terminál není vidět a jinak by
        se nepoznalo, jestli pracuje, nebo čeká. Hlásí se jen změna. */
     let pracSig = '';
+    let hookBezi = false;
     let zabitVidet = false;
     function sledujPraci() {
       if (io.upozorni && AG.full) {
@@ -2081,8 +2127,11 @@
           const zavorka = (spin && spin[2]) || '';
           const sek = /(\d+)\s*s\b/.exec(zavorka);
           const tok = /↓\s*([\d.,]+\s*k?)\s*tokens/i.exec(zavorka);
+          /* Stop hooky („Auto-saving… 0/3 · 7s") — jen podle textu: samotné
+             „… 2/5 ·" ukazuje Claude Code i u rozdělaných úkolů uprostřed práce. */
+          const radek = (spin && spin[0]) || '';
           stav = {on: true, sloveso: spin ? spin[1] : '',
-                  hook: /…\s*\d+\/\d+\s*·/.test(zavorka),
+                  hook: /…\s*\d+\/\d+\s*·/.test(zavorka) && /(auto-?sav|hook|hlídám|ukládám)/i.test(radek + ' ' + zavorka),
                   sekund: sek ? Number(sek[1]) : null,
                   tokeny: tok ? tok[1].replace(/\s/g, '') : ''};
         }
@@ -2092,6 +2141,8 @@
          příkazy se zařadí do fronty před zprávu a proběhnou, až hooky doběhnou. */
       pracuje = !!stav.on && !stav.hook;
       spinner = !!stav.on;
+      hookBezi = !!stav.hook;
+      if (pracuje) pracovalAt = Date.now();
       const sig = JSON.stringify(stav);
       if (sig === pracSig) return;
       pracSig = sig;

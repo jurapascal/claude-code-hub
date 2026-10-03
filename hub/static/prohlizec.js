@@ -8,8 +8,13 @@
  * přihlásit se, vyřešit captchu.
  *
  * Okno jde přesunout za záhlaví, změnit mu velikost za pravý dolní roh,
- * minimalizovat do lišty „Prohlížeč“ a zavřít. Když Claude prohlížeč zase
- * potřebuje (spustí nástroj Playwright), okno samo vyskočí.
+ * minimalizovat do lišty „Prohlížeč“ a zavřít. Když Claude prohlížeč použije,
+ * okno zůstane jen jako lišta; samo se otevře, až je potřeba člověk —
+ * přihlášení, kód z SMS/e-mailu, captcha — a po vyřízení se zase složí.
+ *
+ * Každý chat má své karty (hub/prohlizec_proxy.py), profil je společný.
+ * Tab chatu, který má v prohlížeči karty, dostane ikonku; klik na ni
+ * ukáže prohlížeč s kartami toho chatu. V záhlaví okna se mezi chaty přepíná.
  *
  * Obraz a vstup jdou přes websocket hubu (hub/prohlizec.py): server posílá
  * snímky stránky, tady se kreslí a zpátky jde myš, kolečko a klávesy.
@@ -35,6 +40,17 @@
   let info = {pages: [], active: '', url: '', back: false, fwd: false, loading: false};
   let sizeTimer = null, odeslanaVelikost = '';
   const taby = new Map();            // id karty → její prvek
+  let tabTitle = () => '';           // sid tabu hubu → jeho název (hub.js)
+  let vyber = null;                  // sid chatu, jehož karty okno ukazuje (null = všechny)
+  let chatyEl = null, pomocEl = null;
+  let samo = false;                  // okno otevřela potřeba člověka (po vyřízení se zase složí)
+  const odbyto = new Set();          // „id:důvod“ — člověk okno při té potřebě sám zavřel
+  let posledniTaby = '';
+  const DUVODY = {
+    heslo: 'Claude potřebuje, aby ses tu přihlásil.',
+    kod: 'Claude potřebuje ověřovací kód — opiš ho sem.',
+    captcha: 'Tady je potřeba vyřešit ověření „nejsem robot“.',
+  };
 
   const $ = (s, r) => (r || root).querySelector(s);
   function el(tag, cls, text) {
@@ -74,6 +90,7 @@
     root.innerHTML =
       '<div class="br-hlava">' +
         '<span class="br-nazev">' + ico('i-globe') + '<b>Prohlížeč</b></span>' +
+        '<span class="br-chaty"></span>' +
         '<span class="br-spacer"></span>' +
         '<button class="br-btn br-mini" title="Minimalizovat">' + ico('i-minus') + '</button>' +
         '<button class="br-btn br-zavri" title="Zavřít okno">' + ico('i-close') + '</button>' +
@@ -88,7 +105,8 @@
       '</div>' +
       '<div class="br-scena"><canvas class="br-platno"></canvas>' +
         '<textarea class="br-kb" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" tabindex="0"></textarea>' +
-        '<div class="br-stav"></div><div class="br-dialog" hidden></div></div>' +
+        '<div class="br-stav"></div><div class="br-dialog" hidden></div>' +
+        '<div class="br-pomoc" hidden><span></span><button class="br-pomoc-ok">Hotovo</button></div></div>' +
       '<div class="br-roh" title="Změnit velikost"></div>';
     document.body.appendChild(root);
     canvas = $('.br-platno');
@@ -101,10 +119,13 @@
     zamek = $('.br-zamek');
     titulek = $('.br-nazev b');
     dialogEl = $('.br-dialog');
+    chatyEl = $('.br-chaty');
+    pomocEl = $('.br-pomoc');
+    $('.br-pomoc-ok').onclick = () => { odbydPotreby(); pomocEl.hidden = true; nastav('mini'); };
     kb = $('.br-kb');
     tlZpet = $('.br-zpet'); tlVpred = $('.br-vpred'); tlZnovu = $('.br-znovu');
-    $('.br-mini').onclick = () => nastav('mini');
-    $('.br-zavri').onclick = () => nastav('zavreno');
+    $('.br-mini').onclick = () => { odbydPotreby(); nastav('mini'); };
+    $('.br-zavri').onclick = () => { odbydPotreby(); nastav('zavreno'); };
     tlZpet.onclick = () => send({t: 'br', a: 'back'});
     tlVpred.onclick = () => send({t: 'br', a: 'forward'});
     tlZnovu.onclick = () => send({t: 'br', a: info.loading ? 'stop' : 'reload'});
@@ -151,10 +172,12 @@
     sizeTimer = setTimeout(() => {
       if (!otevrene || !scena) return;
       const w = scena.clientWidth, h = scena.clientHeight;
-      const sig = w + 'x' + h;
+      // Hustota pixelů displeje: stránka se pak kreslí ostře i na HiDPI.
+      const dpr = Math.round((window.devicePixelRatio || 1) * 100) / 100;
+      const sig = w + 'x' + h + '@' + dpr;
       if (!w || !h || sig === odeslanaVelikost) return;
       odeslanaVelikost = sig;
-      send({t: 'br', a: 'size', w, h});
+      send({t: 'br', a: 'size', w, h, dpr});
     }, 250);
   }
 
@@ -205,7 +228,7 @@
 
   /* ── zkratky jako v prohlížeči ───────────────────────────────────────────── */
   function dalsiKarta(posun) {
-    const ids = (info.pages || []).map((p) => p.id);
+    const ids = viditelne(info.pages).map((p) => p.id);
     if (ids.length < 2) return;
     const i = ids.indexOf(info.active);
     send({t: 'br', a: 'tab', id: ids[(i + posun + ids.length) % ids.length]});
@@ -309,6 +332,8 @@
     otevrene = true;
     odeslanaVelikost = '';
     send({t: 'br', a: 'open'});
+    send({t: 'br', a: 'sleduj', tab: vyber});
+    send({t: 'br', a: 'vidi', on: stav === 'okno'});
     posliVelikost();
   }
   function zavriSpojeni() {
@@ -335,7 +360,11 @@
     root.hidden = novy !== 'okno';
     pilulka().hidden = novy !== 'mini';
     document.body.classList.toggle('br-otevren', novy === 'okno');
+    if (novy !== 'okno') samo = false;
     if (novy === 'zavreno') zavriSpojeni(); else otevriSpojeni();
+    // Minimalizované okno obraz nestahuje — jen ví, co je v kartách.
+    if (otevrene) send({t: 'br', a: 'vidi', on: novy === 'okno'});
+    if (pomocEl && novy !== 'okno') pomocEl.hidden = true;
     if (novy === 'okno') {
       usad();
       rozloz();
@@ -347,14 +376,18 @@
 
   /* ── vykreslení stavu ze serveru ─────────────────────────────────────────── */
   const obraz = new Image();
+  /* Plátno má tolik pixelů, kolik jich má snímek (velikost plochy × hustota
+     displeje), a CSS ho kreslí na velikost plochy — 1:1, nic se nepřevzorkuje. */
   obraz.onload = () => {
     if (!canvas) return;
-    if (canvas.width !== frame.w || canvas.height !== frame.h) {
-      canvas.width = frame.w;
-      canvas.height = frame.h;
+    const w = obraz.naturalWidth || frame.w, h = obraz.naturalHeight || frame.h;
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+      ctx.imageSmoothingQuality = 'high';
       rozloz();
     }
-    ctx.drawImage(obraz, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(obraz, 0, 0, w, h);
   };
 
   function hostitel(url) {
@@ -374,8 +407,17 @@
   /* Karty se jen aktualizují (nepřestavují), ať neblikají a klik nezmizí pod
      myší. Pořadí drží server podle vzniku karty — kliknutá karta zůstane na
      svém místě. */
+  /* Karty, které okno ukazuje: jen vybraného chatu (a ty bez majitele, když
+     je vybráno „Vše“). Když chat žádné nemá, ukážou se všechny. */
+  function viditelne(pages) {
+    pages = pages || [];
+    if (!vyber) return pages;
+    const moje = pages.filter((p) => p.tab === vyber);
+    return moje.length ? moje : pages;
+  }
+
   function kresliKarty(msg) {
-    const pages = msg.pages || [];
+    const pages = viditelne(msg.pages);
     const ids = new Set(pages.map((p) => p.id));
     for (const [id, node] of taby) if (!ids.has(id)) { node.remove(); taby.delete(id); }
     let plus = tabsBox.querySelector('.br-tab-plus');
@@ -409,6 +451,7 @@
       pred = node;
       const aktivni = p.id === msg.active;
       node.classList.toggle('on', aktivni);
+      node.classList.toggle('br-tab-pomoc', !!p.potreba);
       node.classList.toggle('nacita', aktivni && !!msg.loading);
       const t = p.title && p.title !== p.url ? p.title : (hostitel(p.url) || (p.url === 'about:blank' ? 'Nová karta' : p.url) || 'Nová karta');
       node.querySelector('.br-tab-t').textContent = t;
@@ -476,6 +519,9 @@
       const prazdna = !msg.url || msg.url === 'about:blank';
       if (prazdna) { stavEl.textContent = 'Prázdná karta — napiš nahoře adresu, nebo počkej, až tam Claude něco otevře.'; stavEl.hidden = false; }
       else if (stavEl.textContent.startsWith('Prázdná')) stavEl.hidden = true;
+      kresliChaty(msg);
+      ohlasTaby(msg);
+      hlidejPotreby(msg);
     } else if (msg.t === 'br-dialog') {
       dialog(msg);
     } else if (msg.t === 'br-copy') {
@@ -488,26 +534,113 @@
     }
   }
 
-  /* ── Claude prohlížeč potřebuje ──────────────────────────────────────────── */
-  /* Zavolá ho čtení, když Claude spustí nástroj Playwright. Okno vyskočí, i
-     když je minimalizované nebo zavřené — jednou na sérii nástrojů, ať
-     nevyskakuje při každém kliknutí, které Claude udělá. */
-  function potreba() {
+  /* ── chaty v záhlaví ─────────────────────────────────────────────────────── */
+  function chatyKaret(pages) {
+    const out = [];
+    for (const p of pages || []) if (p.tab && p.tab !== '?' && !out.includes(p.tab)) out.push(p.tab);
+    return out;
+  }
+
+  function kresliChaty(msg) {
+    if (!chatyEl) return;
+    const chaty = chatyKaret(msg.pages);
+    chatyEl.textContent = '';
+    if (chaty.length < 2 && !(chaty.length === 1 && (msg.pages || []).some((p) => p.tab !== chaty[0]))) return;
+    const chip = (sid, text) => {
+      const b = el('button', 'br-chat' + ((vyber || null) === sid ? ' on' : ''), text);
+      if (sid && (msg.pages || []).some((p) => p.tab === sid && p.potreba)) b.classList.add('br-chat-pomoc');
+      b.title = sid ? 'Karty chatu „' + text + '“' : 'Karty všech chatů';
+      b.onclick = (ev) => { ev.stopPropagation(); vyberChat(sid); };
+      chatyEl.appendChild(b);
+    };
+    chip(null, 'Vše');
+    for (const sid of chaty) chip(sid, tabTitle(sid) || 'Chat');
+  }
+
+  /* Okno přepne na karty daného chatu (null = všechny) a na jeho poslední kartu. */
+  function vyberChat(sid, karta) {
+    vyber = sid || null;
+    send({t: 'br', a: 'sleduj', tab: vyber});
+    const moje = (info.pages || []).filter((p) => !vyber || p.tab === vyber);
+    const cil = karta || (moje.some((p) => p.id === info.active) ? '' : (moje[moje.length - 1] || {}).id);
+    if (cil) send({t: 'br', a: 'tab', id: cil});
+    kresliKarty(info);
+    kresliChaty(info);
+  }
+
+  /* Hubu se řekne, které taby mají v prohlížeči karty (ikonka u tabu). */
+  function ohlasTaby(msg) {
+    const mapa = {};
+    for (const p of msg.pages || []) {
+      if (!p.tab || p.tab === '?') continue;
+      mapa[p.tab] = mapa[p.tab] || {karet: 0, potreba: ''};
+      mapa[p.tab].karet++;
+      if (p.potreba) mapa[p.tab].potreba = p.potreba;
+    }
+    const sig = JSON.stringify(mapa);
+    if (sig === posledniTaby) return;
+    posledniTaby = sig;
+    document.dispatchEvent(new CustomEvent('hub-br-taby', {detail: mapa}));
+  }
+
+  /* ── je potřeba člověk ─────────────────────────────────────────────────────
+     Server hlídá karty (hub/prohlizec.py): pole na heslo nebo ověřovací kód,
+     které na stránce vydrží, nebo captcha. Pak se okno samo otevře na té
+     kartě; když potřeba zmizí (přihlásil ses), složí se zpátky do lišty.
+     Když ho při té potřebě zavřeš sám, znovu kvůli ní nevyskočí. */
+  function odbydPotreby() {
+    for (const p of info.pages || []) if (p.potreba) odbyto.add(p.id + ':' + p.potreba);
+  }
+
+  function hlidejPotreby(msg) {
+    const pages = msg.pages || [];
+    for (const k of [...odbyto]) {
+      const [id, duvod] = k.split(':');
+      if (!pages.some((p) => p.id === id && p.potreba === duvod)) odbyto.delete(k);
+    }
+    const ceka = pages.filter((p) => p.potreba && !odbyto.has(p.id + ':' + p.potreba));
+    const ted = ceka.find((p) => p.id === msg.active) ||
+                ceka.find((p) => vyber && p.tab === vyber) || ceka[0];
+    if (ted) {
+      if (stav !== 'okno' || ted.id !== msg.active) {
+        if (stav !== 'okno') { nastav('okno', true); samo = true; }
+        if (ted.tab && ted.tab !== '?' && ted.tab !== vyber) vyberChat(ted.tab, ted.id);
+        else if (ted.id !== msg.active) send({t: 'br', a: 'tab', id: ted.id});
+      }
+      if (ted.id === msg.active) {
+        pomocEl.querySelector('span').textContent = DUVODY[ted.potreba] || 'Claude tu potřebuje tvou pomoc.';
+        pomocEl.hidden = false;
+      }
+      return;
+    }
+    if (pomocEl) pomocEl.hidden = true;
+    if (samo && stav === 'okno') nastav('mini');      // vyřízeno — zpátky do lišty
+  }
+
+  /* ── Claude prohlížeč používá ───────────────────────────────────────────── */
+  /* Zavolá ho čtení, když Claude spustí nástroj Playwright. Okno se kvůli tomu
+     neotevírá — jen se ukáže lišta „Prohlížeč“ (zamrká), ať je vidět, že
+     Claude v prohlížeči pracuje. Otevře se samo, až je potřeba člověk. */
+  function potreba(sid) {
     const ted = Date.now();
     const dlouho = ted - posledniNastroj > POP_PAUZA;
     posledniNastroj = ted;
-    if (stav === 'okno') return;
-    if (stav === 'mini') {
-      // Minimalizované: rozbalí se až po pauze, jinak jen zamrká lišta.
-      if (dlouho) nastav('okno', true); else pill.classList.add('br-mrk');
-      return;
+    if (sid && stav !== 'okno' && sid !== vyber) {
+      vyber = sid;
+      if (otevrene) send({t: 'br', a: 'sleduj', tab: vyber});
     }
-    if (dlouho || stav === 'zavreno') nastav('okno', true);
+    if (stav === 'zavreno') nastav('mini', true);
+    if (stav === 'mini' && dlouho && pill) {
+      pill.classList.remove('br-mrk');
+      void pill.offsetWidth;
+      pill.classList.add('br-mrk');
+    }
   }
 
   function install(io) {
     send = io.send;
     copyText = io.copy || null;
+    if (io.tabTitle) tabTitle = io.tabTitle;
     // Obnovení po reloadu: zůstává tak, jak jsi ho nechal (okno / lišta).
     const g = nactiGeo();
     if (g.stav === 'okno' || g.stav === 'mini') {
@@ -515,7 +648,7 @@
       nastav(g.stav, true);
     }
     document.addEventListener('hub-tool', (ev) => {
-      if (ev.detail && /^mcp__playwright__/.test(ev.detail.name || '')) potreba();
+      if (ev.detail && /^mcp__playwright__/.test(ev.detail.name || '')) potreba(ev.detail.tab || null);
     });
     window.addEventListener('resize', () => {
       if (!geo || !root) return;
@@ -524,6 +657,7 @@
       geo.x = Math.max(0, Math.min(geo.x, window.innerWidth - 100));
       geo.y = Math.max(0, Math.min(geo.y, window.innerHeight - 40));
       usad();
+      posliVelikost();       // přesun na jiný monitor / zoom mění hustotu pixelů
     });
     // Nové spojení hubu (reconnect) — okno si o obraz řekne znovu.
     document.addEventListener('hub-ws-open', () => { otevrene = false; if (stav !== 'zavreno') otevriSpojeni(); });
@@ -532,6 +666,8 @@
   global.HubProhlizec = {
     install, naZpravu, potreba,
     otevri: () => nastav('okno'),
+    /* Ikonka u tabu: prohlížeč s kartami toho chatu. */
+    ukaz: (sid) => { nastav('okno'); vyberChat(sid); },
     get stav() { return stav; },
   };
 })(window);

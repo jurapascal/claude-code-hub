@@ -133,6 +133,61 @@ else
     warn "Claude Code CLI ('claude') není v PATH — Hub se spustí, ale taby zůstanou v shellu."
     echo -e "     ${D}curl -fsSL https://claude.ai/install.sh | bash${R}"
 fi
+
+# Node.js: bez něj nejede prohlížeč pro Clauda (Playwright MCP) ani další MCP
+# servery přes npx. Na Linuxu se bere oficiální balík do ~/.local — bez sudo,
+# takže to zvládne i instalačka ke stažení, která se na heslo zeptat neumí.
+install_node_user() {
+    local arch base file tmp
+    case "$(uname -m)" in
+        x86_64|amd64) arch=x64 ;;
+        aarch64|arm64) arch=arm64 ;;
+        *) return 1 ;;
+    esac
+    base="https://nodejs.org/dist/latest-v22.x"
+    file="$(curl -fsSL "$base/SHASUMS256.txt" 2>/dev/null | grep -o "node-v[0-9.]*-linux-$arch\.tar\.xz" | head -1)"
+    [ -n "$file" ] || return 1
+    tmp="$(mktemp -d)"
+    curl -fsSL "$base/$file" -o "$tmp/$file" || { rm -rf "$tmp"; return 1; }
+    (cd "$tmp" && curl -fsSL "$base/SHASUMS256.txt" | grep " $file\$" | sha256sum -c - >/dev/null 2>&1) \
+        || { rm -rf "$tmp"; return 1; }
+    rm -rf "${HOME:?}/.local/lib/nodejs"
+    mkdir -p "$HOME/.local/lib/nodejs" "$HOME/.local/bin"
+    tar -xJf "$tmp/$file" -C "$HOME/.local/lib/nodejs" --strip-components=1 || { rm -rf "$tmp"; return 1; }
+    rm -rf "$tmp"
+    for b in node npm npx corepack; do ln -sf "$HOME/.local/lib/nodejs/bin/$b" "$HOME/.local/bin/$b"; done
+    export PATH="$HOME/.local/bin:$PATH"
+}
+NODE_MAJOR="$(node -v 2>/dev/null | sed 's/^v//; s/\..*//')"
+if [ -n "$NODE_MAJOR" ] && [ "$NODE_MAJOR" -ge 20 ]; then
+    ok "Node.js $(node -v)"
+elif $MINIMAL; then
+    info "--minimal: Node.js nedoinstalovávám"
+else
+    info "doinstalovávám Node.js 22 ${D}(prohlížeč pro Clauda, MCP servery)${R}"
+    if [ "$(uname)" = "Darwin" ]; then
+        command -v brew >/dev/null 2>&1 && brew install node >/dev/null 2>&1
+    else
+        install_node_user
+    fi
+    NODE_MAJOR="$(node -v 2>/dev/null | sed 's/^v//; s/\..*//')"
+    if [ -n "$NODE_MAJOR" ] && [ "$NODE_MAJOR" -ge 20 ]; then ok "Node.js $(node -v)"
+    else warn "Node.js se nepodařilo nainstalovat — stáhni ho z https://nodejs.org"; fi
+fi
+
+# git: skilly do vaultu, klon vaultu, verze projektů v panelu.
+if command -v git >/dev/null 2>&1; then
+    ok "git"
+elif ! $MINIMAL; then
+    info "doinstalovávám git"
+    if [ "$(uname)" = "Darwin" ]; then
+        { command -v brew >/dev/null 2>&1 && brew install git >/dev/null 2>&1; } || xcode-select --install >/dev/null 2>&1
+    elif command -v apt-get >/dev/null 2>&1; then sudo -n apt-get install -y git >/dev/null 2>&1 || { [ -t 0 ] && sudo apt-get install -y git; }
+    elif command -v dnf >/dev/null 2>&1; then sudo -n dnf install -y git >/dev/null 2>&1 || { [ -t 0 ] && sudo dnf install -y git; }
+    elif command -v pacman >/dev/null 2>&1; then sudo -n pacman -S --noconfirm git >/dev/null 2>&1 || { [ -t 0 ] && sudo pacman -S --noconfirm git; }
+    fi
+    command -v git >/dev/null 2>&1 && ok "git nainstalován" || warn "git se nenainstaloval — doinstaluj ho ručně (apt install git)"
+fi
 fi   # ! $UPDATE
 
 # ── 2. Obsidian a GitHub CLI ─────────────────────────────────────────────────
@@ -593,13 +648,34 @@ register_playwright_mcp() {
 }
 
 download_playwright_browser() {
-    # Verze prohlížeče se váže na verzi MCP serveru; bez tohohle kroku vrací
-    # první browser_navigate "Browser chrome-for-testing is not installed".
-    info "stahuju prohlížeč (~115 MB, stahuje se jen co chybí)…"
-    if npx -y @playwright/mcp@latest install-browser chrome-for-testing >/dev/null 2>&1; then
-        ok "prohlížeč připraven v ~/.cache/ms-playwright"
+    # Verze prohlížeče se váže na verzi MCP serveru, kterou pouští most
+    # (tools/playwright_bridge.py, PW_MCP) — proto se stahuje přes něj.
+    # Na Linuxu i systémové knihovny Chromia (nss, atk, cups, gbm, pango…):
+    # bez nich se prohlížeč vůbec nespustí.
+    local bridge="$CLAUDE_DIR/tools/playwright_bridge.py" out rc
+    [ -f "$bridge" ] || bridge="$SRC/tools/playwright_bridge.py"
+    info "připravuju prohlížeč pro Clauda ${D}(~190 MB poprvé, pak jen co chybí)${R}…"
+    out="$("$PY" "$bridge" --install --deps 2>&1 >/dev/null)"; rc=$?
+    if [ $rc -eq 0 ]; then
+        ok "prohlížeč připraven"
+    elif [ $rc -eq 3 ]; then
+        ok "prohlížeč stažen"
+        local cmd; cmd="$(printf '%s\n' "$out" | sed -n 's/^KNIHOVNY: //p' | head -1)"
+        if [ -t 0 ] && [ -n "$cmd" ]; then
+            info "prohlížeč potřebuje systémové knihovny — zeptá se na heslo (sudo)"
+            if eval "$cmd" >/dev/null; then ok "knihovny prohlížeče nainstalované"
+            else warn "knihovny se nenainstalovaly — dožeň to: $cmd"; fi
+        elif [ -n "$cmd" ] && command -v pkexec >/dev/null 2>&1 \
+                && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+            # Instalačka ke stažení nemá terminál — heslo si řekne okno systému.
+            info "prohlížeč potřebuje systémové knihovny — systém se zeptá na heslo"
+            if eval "pkexec env PATH=\"\$PATH\" ${cmd#sudo }" >/dev/null 2>&1; then ok "knihovny prohlížeče nainstalované"
+            else warn "knihovny se nenainstalovaly — spusť jednou: ${D}$cmd${R}"; fi
+        else
+            warn "chybí systémové knihovny prohlížeče — spusť jednou: ${D}$cmd${R}"
+        fi
     else
-        warn "prohlížeč se nestáhl — dožeň to: npx @playwright/mcp@latest install-browser chrome-for-testing"
+        warn "prohlížeč se nestáhl — dožeň to: $PY $bridge --install --deps"
     fi
 }
 
@@ -618,24 +694,43 @@ if $MINIMAL; then
     info "--minimal: Playwright MCP přeskočen"
 elif ! command -v claude >/dev/null 2>&1; then
     info "Playwright MCP přeskočen — chybí Claude Code CLI"
+elif [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 20 ]; then
+    warn "Playwright MCP přeskočen — chce Node.js 20+ (teď: ${NODE_MAJOR:-žádný})"
+    echo -e "     ${D}Doinstaluj Node 20+ a spusť instalačku znovu.${R}"
 elif $PW_REGISTERED && $PW_PINNED; then
     # Profil se zkouší i tady: když se přenos přihlášení posledně nepovedl,
     # protože nad starým profilem běžel prohlížeč, dožene se to teď.
     ok "playwright MCP už je zaregistrovaný a přihlášení se drží"
     prepare_playwright_profile
-elif [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 20 ]; then
-    warn "Playwright MCP přeskočen — chce Node.js 20+ (teď: ${NODE_MAJOR:-žádný})"
-    echo -e "     ${D}Doinstaluj Node 20+ a spusť instalačku znovu.${R}"
+    # Nová verze hubu může chtít novější Chromium — stáhne se jen co chybí.
+    download_playwright_browser
 elif $PW_REGISTERED; then
     # Starší registrace bez --user-data-dir: prohlížeč se odhlašoval s každou
-    # změnou složky. Přeregistrovat, prohlížeč už na disku je.
+    # změnou složky. Přeregistrovat a dostáhnout prohlížeč pro tuhle verzi.
     info "opravuju Playwright MCP — přihlášení se ztrácelo s každou složkou"
     prepare_playwright_profile
     claude mcp remove playwright -s user >/dev/null 2>&1 || true
-    register_playwright_mcp
+    register_playwright_mcp && download_playwright_browser
 else
     prepare_playwright_profile
     register_playwright_mcp && download_playwright_browser
+fi
+
+# ── 8a. Hlas (diktování a předčítání) ────────────────────────────────────────
+# faster-whisper + Piper do vlastního venvu (hub/hlas.py), i s modely. Dřív
+# jen tlačítkem v Nastavení → Hlas; instalačka ke stažení ho dá rovnou.
+echo ""
+HLAS_OK="$("$PY" -c "import sys; sys.path.insert(0, '$CLAUDE_DIR'); from hub import hlas; print(1 if hlas.root() else 0)" 2>/dev/null)"
+if $MINIMAL || $UPDATE; then
+    :
+elif [ "$HLAS_OK" = "1" ]; then
+    ok "hlas (diktování a předčítání)"
+elif $APP || ask "Nainstalovat hlas — diktování a předčítání česky (~2,5 GB, modely)?"; then
+    info "instaluju hlas ${D}(pár minut, stahují se modely ~2,5 GB)${R}…"
+    if (cd "$CLAUDE_DIR" && "$PY" -m hub.hlas install >/dev/null 2>&1); then ok "hlas připravený"
+    else warn "hlas se nenainstaloval — jde to i později: Nastavení → Hlas"; fi
+else
+    info "hlas přeskočen — jde doinstalovat v Nastavení → Hlas"
 fi
 
 # ── 8b. Clockify MCP (volitelné) ─────────────────────────────────────────────

@@ -268,7 +268,27 @@
       }, SCHOVAT_PO);
     }
 
+    const PREVLEK = {
+      low: 'Dám si to v klidu. 😴', medium: 'Jdu na to normálně.', high: 'Helmu na hlavu, makáme!',
+      xhigh: 'Na tohle je potřeba superhrdina!', max: 'Teď přijde to pravé kouzlo! ✨',
+    };
+    let oblek = '';
+
     return {
+      /* Úsilí (effort), se kterým Claude jede — Claudík se podle něj převlékne. */
+      effort(e) {
+        e = /^(low|medium|high|xhigh|max)$/.test(e || '') ? e : '';
+        if (!zivy || e === oblek) return;
+        const zmena = !!oblek;
+        oblek = e;
+        if (e) hlavni.el.dataset.effort = e; else delete hlavni.el.dataset.effort;
+        if (zmena && e && !box.hidden) {
+          hlavni.el.classList.remove('prevlek');
+          void hlavni.el.offsetWidth;
+          hlavni.el.classList.add('prevlek');
+          mluv(hlavni, PREVLEK[e], 2200);
+        }
+      },
       /* Claude pracuje / přestal. */
       prace(on) {
         if (!zivy || praceOn === !!on) return;

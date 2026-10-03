@@ -32,6 +32,7 @@
     ['ucet',       'Účet',      'i-user',     () => ucet()],
     ['hlas',       'Hlas',      'i-mic',      () => hlas()],
     ['napojeni',   'Propojené služby', 'i-hub', () => napojeni()],   // MCP — Claude Code
+    ['pluginy',    'Pluginy',   'i-plus',     () => (window.HubPluginy ? HubPluginy.sekce() : section('Pluginy'))],
     ['aktualizace','Aktualizace', 'i-up',     () => aktualizace()],
     ['logy',       'Logy',      'i-status',   () => logy(), 'dev'],
     ['ostatni',    'Ostatní',   'i-gear',     () => ostatni()],
@@ -932,7 +933,70 @@
         const again = el('button', 'btn ghost', 'Nové záložní kódy');
         again.onclick = newCodes;
         actions.prepend(again);
+        passkeys();
       }, (e) => { tfa.textContent = 'Stav ověření se nenačetl: ' + e.message; });
+
+      /* Passkey jako druhý krok přihlášení (gateway/webauthn.py): místo
+         opisování kódu otisk prstu, obličej, PIN nebo bezpečnostní klíč.
+         Kód z aplikace zůstává jako záloha a pro appku na počítači. */
+      const pkBox = el('div', 'acc-pk');
+      wrap.insertBefore(pkBox, actions.nextSibling);
+      const b64d = (t) => Uint8Array.from(atob(t.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((t.length + 3) % 4)), (c) => c.charCodeAt(0));
+      const b64e = (b) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      const kdy = (ts) => ts ? new Date(ts * 1000).toLocaleDateString('cs-CZ') : 'zatím ne';
+      function kresliPk(list) {
+        pkBox.textContent = '';
+        pkBox.appendChild(el('div', 'set-note', list.length
+          ? 'Passkey — přihlášení otiskem prstu, obličejem nebo bezpečnostním klíčem místo kódu:'
+          : 'Passkey: přihlašuj se otiskem prstu, obličejem nebo bezpečnostním klíčem místo opisování kódu.'));
+        for (const k of list) {
+          const r = el('div', 'set-row acc-pk-radek');
+          r.appendChild(el('span', 'acc-pk-jmeno', '🔑 ' + (k.name || 'Passkey')));
+          r.appendChild(el('span', 'set-note', 'přidán ' + kdy(k.created) + ' · naposledy ' + kdy(k.used)));
+          const del = el('button', 'btn ghost', 'Odebrat');
+          del.onclick = async () => {
+            if (!confirm('Odebrat passkey „' + (k.name || 'Passkey') + '“? Přihlásíš se pak kódem z aplikace.')) return;
+            try { kresliPk((await gw('/gw/passkey', {action: 'delete', id: k.id})).passkeys); }
+            catch (e) { io.toast(e.message); }
+          };
+          r.appendChild(del);
+          pkBox.appendChild(r);
+        }
+        const add = el('button', 'btn ghost', '+ Přidat passkey');
+        add.onclick = pridatPk;
+        if (!window.PublicKeyCredential) {
+          add.disabled = true;
+          add.title = 'Tenhle prohlížeč passkey neumí.';
+        }
+        pkBox.appendChild(add);
+      }
+      async function passkeys() {
+        try { kresliPk((await gw('/gw/passkey')).passkeys || []); }
+        catch (_) { /* starší brána bez passkeyů — nic neukazovat */ }
+      }
+      async function pridatPk() {
+        const vychozi = /iPhone|iPad/.test(navigator.userAgent) ? 'iPhone' : /Android/.test(navigator.userAgent) ? 'Android'
+          : /Mac/.test(navigator.platform) ? 'Mac' : /Win/.test(navigator.platform) ? 'Windows' : 'Počítač';
+        const name = prompt('Jak se má passkey jmenovat? (třeba „Můj telefon“)', vychozi);
+        if (name === null) return;
+        try {
+          const o = await gw('/gw/passkey', {action: 'options'});
+          const c = await navigator.credentials.create({publicKey: {
+            challenge: b64d(o.challenge), rp: o.rp,
+            user: {id: b64d(o.user.id), name: o.user.name, displayName: o.user.displayName},
+            pubKeyCredParams: o.algs.map((alg) => ({type: 'public-key', alg})),
+            excludeCredentials: o.exclude.map((id) => ({type: 'public-key', id: b64d(id)})),
+            authenticatorSelection: {residentKey: 'preferred', userVerification: 'preferred'},
+            attestation: 'none', timeout: 120000}});
+          const d = await gw('/gw/passkey', {action: 'register', name: name.trim(),
+            clientData: b64e(c.response.clientDataJSON), attestation: b64e(c.response.attestationObject)});
+          kresliPk(d.passkeys);
+          io.toast('Passkey přidán — příště se přihlásíš bez opisování kódu.');
+        } catch (e) {
+          io.toast(e && e.name === 'NotAllowedError' ? 'Přidání passkeye bylo zrušené.'
+            : e && e.name === 'InvalidStateError' ? 'Tenhle passkey už je přidaný.' : (e.message || 'Passkey se nepřidal.'));
+        }
+      }
 
       function newCodes() {
         codesBox.textContent = '';

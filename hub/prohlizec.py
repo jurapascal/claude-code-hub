@@ -32,6 +32,7 @@ import time
 import urllib.parse
 import urllib.request
 
+INSTANCE = ""              # nastaví hub (core.INSTANCE) — podle ní pozná své taby v HUB_TAB
 IS_WINDOWS = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
 HOST = "127.0.0.1"
@@ -125,7 +126,50 @@ def alive():
         return False
 
 
+def zavri_kartu(tid):
+    if re.match(r"^[A-Za-z0-9-]+$", str(tid)):
+        urllib.request.urlopen(endpoint() + "/json/close/" + tid, timeout=2).read()
+
+
+def nova_karta():
+    """Prázdná karta; vrací její id ('' když to nejde)."""
+    try:
+        with urllib.request.urlopen(urllib.request.Request(endpoint() + "/json/new?about:blank", method="PUT"),
+                                    timeout=2) as res:
+            return (json.loads(res.read().decode("utf-8", "replace") or "{}") or {}).get("id", "")
+    except Exception:
+        return ""
+
+
 _launch_lock = threading.Lock()
+
+
+def _verze_chromia(exe):
+    """Hlavní verze Chromia (154) z `chrome --version`; '' když nejde zjistit."""
+    try:
+        out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=8,
+                             creationflags=0x08000000 if IS_WINDOWS else 0).stdout
+        v = re.search(r"(\d+)\.\d+\.\d+", out or "")
+        if v:
+            return v.group(1)
+    except Exception:
+        pass
+    return ""
+
+
+def user_agent(exe):
+    """Obyčejný User-Agent desktopového Chromu. Bezhlavý Chromium se hlásí
+    jako „HeadlessChrome" — a podle toho ho weby (GitHub, Google…) zablokují
+    jako robota („Přístup je dočasně omezen")."""
+    ver = _verze_chromia(exe) or "140"
+    if IS_WINDOWS:
+        os_part = "Windows NT 10.0; Win64; x64"
+    elif IS_MAC:
+        os_part = "Macintosh; Intel Mac OS X 10_15_7"
+    else:
+        os_part = "X11; Linux x86_64"
+    return (f"Mozilla/5.0 ({os_part}) AppleWebKit/537.36 (KHTML, like Gecko) "
+            f"Chrome/{ver}.0.0.0 Safari/537.36")
 
 
 def ensure(wait=15.0):
@@ -137,14 +181,22 @@ def ensure(wait=15.0):
         if not exe:
             return False, "Nenašel jsem Chromium (spusť instalačku nebo: npx @playwright/mcp install-browser chrome-for-testing)."
         os.makedirs(profile_dir(), exist_ok=True)
+        # Bez --remote-allow-origins: webová stránka (ta pošle Origin vždycky)
+        # se k ladicímu portu nepřipojí; Playwright ani hub Origin neposílají.
         args = [exe, f"--remote-debugging-port={port()}", f"--remote-debugging-address={HOST}",
-                "--remote-allow-origins=*", f"--user-data-dir={profile_dir()}",
+                f"--user-data-dir={profile_dir()}",
                 "--no-first-run", "--no-default-browser-check", "--headless=new",
+                # Ať se nepozná, že je bezhlavý: běžný User-Agent, obrazovka
+                # větší než okno (bez toho hlásí 800×600) a bez příznaku automatu.
+                f"--user-agent={user_agent(exe)}", "--screen-info={1920x1080}",
+                "--disable-blink-features=AutomationControlled",
                 "--window-size=1600,1000", "--disable-background-timer-throttling",
                 "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding",
                 "--disable-features=Translate,MediaRouter,OptimizationHints", "--disable-extensions",
                 "--disable-component-update", "--disable-default-apps", "--force-color-profile=srgb", "about:blank"]
-        if not IS_WINDOWS and hasattr(os, "geteuid") and os.geteuid() == 0:
+        # Pod rootem Chromium sandbox odmítne; v prostoru brány už běží
+        # v bwrap a vlastní sandbox (další jmenné prostory) tam nenaběhne.
+        if not IS_WINDOWS and hasattr(os, "geteuid") and (os.geteuid() == 0 or na_serveru()):
             args.insert(1, "--no-sandbox")
         kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
         if IS_WINDOWS:
@@ -168,6 +220,7 @@ def ensure(wait=15.0):
 # ── Minimální websocket klient (jen standardní knihovna) ─────────────────────
 
 SROVNAT_OKNO = False         # appka nemění velikost skutečného okna Chromia
+MIN_SIRKA = 1024             # užší panel nedostane mobilní web — stránka se jen zmenší
 
 class _WS:
     def __init__(self, url):
@@ -258,6 +311,48 @@ class _WS:
 
 # ── Okno v appce: obraz ven, vstup dovnitř ───────────────────────────────────
 
+# Co na stránce potřebuje člověka: captcha hned, přihlášení / kód až když na
+# stránce chvíli vydrží (Claude heslo může vyplnit sám a pole pak zmizí).
+POTREBA_JS = r"""(() => {
+  const vis = (e) => { const r = e.getBoundingClientRect(); if (r.width < 3 || r.height < 3) return false;
+    const s = getComputedStyle(e); return s.visibility !== 'hidden' && s.display !== 'none' && +s.opacity > 0.05; };
+  const je = (sel) => { try { return [...document.querySelectorAll(sel)].some(vis); } catch (_) { return false; } };
+  if (je('iframe[src*="recaptcha"]:not([src*="size=invisible"]), iframe[src*="hcaptcha.com"], ' +
+         'iframe[src*="challenges.cloudflare.com"], iframe[title*="captcha" i], ' +
+         'iframe[src*="captcha-delivery.com"], iframe[src*="arkoselabs.com"], iframe[src*="funcaptcha"], ' +
+         '#px-captcha, iframe[src*="geetest"], iframe[src*="perimeterx"]')) return 'captcha';
+  if (/^(Just a moment|Chvíli strpení|Attention Required)/i.test(document.title) &&
+      document.querySelector('#challenge-form, #cf-challenge-running, .cf-turnstile, #challenge-stage')) return 'captcha';
+  if (je('input[autocomplete="one-time-code"]')) return 'kod';
+  if (je('input[type="password"]')) return 'heslo';
+  return '';
+})()"""
+POTREBA_VYDRZ = {"captcha": 0, "kod": 2, "heslo": 2}     # kolik kontrol po sobě (à ~2 s)
+
+
+def _vyhodnot(tid, js, timeout=1.5):
+    """Runtime.evaluate na kartě přes krátké vlastní spojení; None = nejde."""
+    try:
+        cdp = _WS(f"ws://{HOST}:{port()}/devtools/page/{tid}")
+    except Exception:
+        return None
+    try:
+        cdp.sock.settimeout(timeout)
+        cdp.send(json.dumps({"id": 1, "method": "Runtime.evaluate",
+                             "params": {"expression": js, "returnByValue": True, "timeout": 800}}))
+        while True:
+            raw = cdp.recv()
+            if raw is None:
+                return None
+            d = json.loads(raw or "{}")
+            if d.get("id") == 1:
+                return ((d.get("result") or {}).get("result") or {}).get("value")
+    except Exception:
+        return None
+    finally:
+        cdp.close()
+
+
 KLAVESY = {"Enter": 13, "Backspace": 8, "Tab": 9, "Escape": 27, "Delete": 46,
            "ArrowLeft": 37, "ArrowUp": 38, "ArrowRight": 39, "ArrowDown": 40,
            "Home": 36, "End": 35, "PageUp": 33, "PageDown": 34, "Insert": 45}
@@ -281,8 +376,16 @@ class Okno:
         self._odpovedi = {}        # id požadavku → funkce, která dostane odpověď
         self._nav = {"back": False, "fwd": False}   # lze jít zpět / vpřed
         self._nacita = False       # stránka se načítá (kolečko na kartě, stop místo reload)
-        self._velikost = None      # (šířka, výška) plochy okna v appce
+        self._velikost = None      # (šířka, výška, devicePixelRatio) plochy okna v appce
         self._fit_cekajici = None
+        self._vidi = {}            # spojení → True, když okno je rozbalené (jinak se obraz neposílá)
+        self._sleduj = None        # sid tabu, jehož karty okno ukazuje (None = všechny)
+        self._rucni = {}           # id karty → sid tabu, ke kterému si ji člověk otevřel sám
+        self._vlastnici = {}       # id karty → sid tabu (z mostů, hub/prohlizec_proxy.py)
+        self._vlastnici_cas = 0.0
+        self._potreby = {}         # id karty → důvod ('heslo' | 'kod' | 'captcha')
+        self._potreby_pocet = {}   # id karty → (důvod, kolik kontrol po sobě)
+        self._hlidac = None
 
     # -- pohledy
     def pridej(self, conn):
@@ -292,11 +395,91 @@ class Okno:
             if start:
                 self._thread = threading.Thread(target=self._bez, name="prohlizec", daemon=True)
                 self._thread.start()
+            if not (self._hlidac and self._hlidac.is_alive()):
+                self._hlidac = threading.Thread(target=self._hlidej_potreby, name="prohlizec-potreby", daemon=True)
+                self._hlidac.start()
         self._info = None          # nový pohled chce hned znát stav
 
     def odeber(self, conn):
         with self._lock:
             self.viewers.discard(conn)
+            had = any(self._vidi.values())
+            self._vidi.pop(conn, None)
+        if had and not any(self._vidi.values()):
+            self._posli("Page.stopScreencast")
+
+    def vidi(self, conn, on):
+        """Rozbalené okno chce obraz, minimalizované jen stav karet."""
+        with self._lock:
+            pred = any(self._vidi.values())
+            self._vidi[conn] = bool(on)
+            ted = any(self._vidi.values())
+        if ted and not pred:
+            self._emuluj()
+            self._spust_obraz()
+        elif pred and not ted:
+            # Minimalizované: stránka se vrátí do svého okna, Claude ji vidí normálně.
+            self._posli("Page.stopScreencast")
+            self._posli("Emulation.clearDeviceMetricsOverride")
+
+    # -- komu která karta patří
+    def _majitel(self, tid):
+        return self._vlastnici.get(tid) or self._rucni.get(tid) or ""
+
+    def _nacti_vlastniky(self):
+        if time.time() - self._vlastnici_cas < 0.9:
+            return
+        self._vlastnici_cas = time.time()
+        try:
+            from . import prohlizec_proxy as px
+        except ImportError:
+            try:
+                import prohlizec_proxy as px          # spuštěno mimo balíček
+            except ImportError:
+                return
+        pre = INSTANCE + ":" if INSTANCE else None
+        out = {}
+        for tid, znacka in px.vlastnici().items():
+            if pre and znacka.startswith(pre):
+                out[tid] = znacka[len(pre):]
+            elif znacka:
+                out[tid] = "?"                         # jiná instance hubu / terminál
+        if out != self._vlastnici:
+            self._vlastnici = out
+            self._info = None
+
+    def _hlidej_potreby(self):
+        """Každé ~2 s se podívá na karty: přihlášení, kód nebo captcha?"""
+        while self.viewers:
+            try:
+                strany = self._strany()
+                ids = set()
+                for p in strany[:12]:
+                    tid = p["id"]
+                    ids.add(tid)
+                    url = p.get("url", "")
+                    duvod = "" if not re.match(r"^https?:", url) else (_vyhodnot(tid, POTREBA_JS) or "")
+                    pred, n = self._potreby_pocet.get(tid, ("", 0))
+                    n = n + 1 if duvod == pred else 1
+                    self._potreby_pocet[tid] = (duvod, n)
+                    hotovo = duvod and n > POTREBA_VYDRZ.get(duvod, 2)
+                    if hotovo and self._potreby.get(tid) != duvod:
+                        self._potreby[tid] = duvod
+                        self._info = None
+                    elif not duvod and tid in self._potreby:
+                        self._potreby.pop(tid, None)
+                        self._info = None
+                for tid in list(self._potreby_pocet):
+                    if tid not in ids:
+                        self._potreby_pocet.pop(tid, None)
+                        if self._potreby.pop(tid, None):
+                            self._info = None
+                for tid in list(self._rucni):
+                    if tid not in ids:
+                        self._rucni.pop(tid, None)
+            except Exception:
+                pass
+            time.sleep(2.0)
 
     def _vsem(self, obj):
         for conn in list(self.viewers):
@@ -367,6 +550,7 @@ class Okno:
         except Exception:
             return []
         strany = [p for p in data if p.get("type") == "page" and p.get("webSocketDebuggerUrl")]
+        self._nacti_vlastniky()
         # Chromium je vrací podle poslední aktivity — v okně mají karty zůstat
         # tam, kde vznikly, nejstarší vlevo, ať se při přepínání neskáčou.
         for p in strany:
@@ -391,7 +575,8 @@ class Okno:
             if nova:
                 cil = nova                     # Claude otevřel novou kartu — okno jde za ní
             elif cil is None:
-                cil = strany[0]
+                moje = [p for p in strany if self._sleduj is None or self._majitel(p["id"]) == self._sleduj]
+                cil = (moje or strany)[-1]
             self._target = cil["id"]
             self._posli_info(strany, cil)
             try:
@@ -407,7 +592,8 @@ class Okno:
                 "title": aktivni.get("title", "") if aktivni else "",
                 "back": self._nav["back"], "fwd": self._nav["fwd"], "loading": self._nacita,
                 "pages": [{"id": p["id"], "title": p.get("title", ""), "url": p.get("url", ""),
-                           "icon": p.get("faviconUrl", "")} for p in strany]}
+                           "icon": p.get("faviconUrl", ""), "tab": self._majitel(p["id"]),
+                           "potreba": self._potreby.get(p["id"], "")} for p in strany]}
         sig = json.dumps(info, sort_keys=True)
         if sig != self._info:
             self._info = sig
@@ -419,10 +605,10 @@ class Okno:
         self._posli("Page.enable")
         self._nacita = False
         self._nav = {"back": False, "fwd": False}
-        self._spust_obraz()
+        if any(self._vidi.values()):
+            self._emuluj()
+            self._spust_obraz()
         self._obnov_historii()
-        if self._velikost:
-            self._srovnej_okno(*self._velikost)
         # Co člověk napsal, než se spojení rozjelo (adresa hned po otevření okna).
         cekajici, self._cekajici = self._cekajici, []
         for method, params in cekajici:
@@ -465,12 +651,34 @@ class Okno:
             stop.set()
             cdp.close()
 
-    # -- velikost: okno prohlížeče = plocha okna v appce
+    # -- velikost: stránka se kreslí přesně v rozlišení plochy okna v appce
+    def _emuluj(self):
+        """Ostrý obraz: stránka dostane viewport o velikosti plochy okna
+        a hustotu pixelů displeje (HiDPI), takže snímek jde na plátno 1:1 —
+        dřív se kreslila v pevném okně 1600×1000 a Chrome ji zmenšoval, což
+        rozmazalo text. Užší plocha než MIN_SIRKA dostane desktopový web
+        vykreslený rovnou zmenšený (menší písmo, ale pořád ostré, ne
+        rozmazané zmenšení bitmapy). Platí jen na spojení hubu: zavřením
+        okna (nebo přepnutím karty) se emulace sama zruší."""
+        if not self._velikost:
+            return
+        css_w, css_h, dpr = self._viewport()
+        self._posli("Emulation.setDeviceMetricsOverride", width=css_w, height=css_h,
+                    deviceScaleFactor=dpr, mobile=False,
+                    screenWidth=max(css_w, 1920), screenHeight=max(css_h, 1080))
+
+    def _viewport(self):
+        w, h, dpr = self._velikost or (1600, 1000, 1.0)
+        css_w = max(w, MIN_SIRKA)
+        return css_w, max(200, round(h * css_w / w)), dpr
+
     def _spust_obraz(self):
-        w, h = self._velikost or (1600, 1000)
+        # Bezhlavý Chrome posílá živý obraz v CSS pixelech stránky (hustotu
+        # displeje ignoruje, naměřeno) — na běžném displeji je to přesně 1:1.
+        css_w, css_h, _ = self._viewport()
         self._posli("Page.stopScreencast")
-        self._posli("Page.startScreencast", format="jpeg", quality=85, maxWidth=max(w, 320),
-                    maxHeight=max(h, 240), everyNthFrame=1)
+        self._posli("Page.startScreencast", format="jpeg", quality=92,
+                    maxWidth=css_w, maxHeight=css_h, everyNthFrame=1)
 
     def _srovnej_okno(self, w, h):
         """Skutečné okno Chromia dostane rozměr plochy, ať stránka vidí tu
@@ -536,6 +744,12 @@ class Okno:
             self._videne = set(ids)
             return None
         nove = [p for p in strany if p["id"] not in self._videne]
+        if self._sleduj is not None:
+            # Karta jiného chatu okno nepřepne — jen se objeví u svého tabu.
+            cizi = [p for p in nove if self._majitel(p["id"]) != self._sleduj]
+            if cizi and vzit:
+                self._videne |= {p["id"] for p in cizi}
+            nove = [p for p in nove if p not in cizi]
         if nove and vzit:
             self._videne |= set(ids)
             self._target = nove[0]["id"]
@@ -572,15 +786,16 @@ class Okno:
                 self._posli("Input.insertText", text=text)
         elif a == "size":
             try:
-                w = max(320, min(int(msg.get("w", 0)), 3000))
-                h = max(200, min(int(msg.get("h", 0)), 2000))
+                w = max(320, min(int(msg.get("w", 0)), 4000))
+                h = max(200, min(int(msg.get("h", 0)), 3000))
+                dpr = max(1.0, min(float(msg.get("dpr") or 1), 3.0))
             except (TypeError, ValueError):
                 return
-            if (w, h) != self._velikost:
-                self._velikost = (w, h)
-                self._srovnej_okno(w, h)
-                # Obraz o velikosti okna: spustí se znovu, až se okno srovná.
-                threading.Timer(0.6, self._spust_obraz).start()
+            if (w, h, dpr) != self._velikost:
+                self._velikost = (w, h, dpr)
+                if any(self._vidi.values()):
+                    self._emuluj()
+                    self._spust_obraz()
         elif a == "stop":
             self._posli("Page.stopLoading")
         elif a == "closetab":
@@ -588,8 +803,8 @@ class Okno:
             if re.match(r"^[A-Za-z0-9-]+$", tid):
                 try:
                     if len(self._strany()) <= 1:       # poslední karta se nezavírá, jen vyprázdní
-                        urllib.request.urlopen(urllib.request.Request(endpoint() + "/json/new?about:blank", method="PUT"), timeout=2).read()
-                    urllib.request.urlopen(endpoint() + "/json/close/" + tid, timeout=2).read()
+                        nova_karta()
+                    zavri_kartu(tid)
                 except Exception:
                     pass
                 self._info = None
@@ -635,10 +850,14 @@ class Okno:
                 if cdp:
                     cdp.close()      # smyčka se znovu připojí na novou záložku
         elif a == "newtab":
-            try:
-                urllib.request.urlopen(urllib.request.Request(endpoint() + "/json/new?about:blank", method="PUT"), timeout=2).read()
-            except Exception:
-                pass
+            tid = nova_karta()
+            if tid and self._sleduj:
+                self._rucni[tid] = self._sleduj        # patří k chatu, který je v okně vybraný
+                self._info = None
+        elif a == "sleduj":
+            tab = msg.get("tab")
+            self._sleduj = str(tab) if tab else None
+            self._info = None
 
 
 OKNO = Okno()
@@ -655,6 +874,8 @@ def zprava(conn, msg, server=False):
         OKNO.pridej(conn)
     elif a == "close":
         OKNO.odeber(conn)
+    elif a == "vidi":
+        OKNO.vidi(conn, msg.get("on"))
     else:
         OKNO.vstup(msg)
 

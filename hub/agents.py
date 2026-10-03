@@ -273,6 +273,50 @@ def which(spec):
 
 _NPM_PREFIX = None
 
+# Co se zjišťuje spuštěním CLI (`npm config get prefix`, `claude --help`) se
+# drží i na disku: při každém startu hubu by to bylo ~1 s čekání. Klíčem je
+# cesta a mtime binárky — po aktualizaci npm/agenta se zeptá znovu.
+_DISK = None
+
+
+def _disk_path():
+    base = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+    return os.path.join(base, "hub-agents-cache.json")
+
+
+def _disk():
+    global _DISK
+    if _DISK is None:
+        try:
+            with open(_disk_path(), encoding="utf-8") as fh:
+                _DISK = json.load(fh)
+            if not isinstance(_DISK, dict):
+                _DISK = {}
+        except (OSError, ValueError):
+            _DISK = {}
+    return _DISK
+
+
+def _disk_set(key, value):
+    d = _disk()
+    if d.get(key) == value:
+        return
+    d[key] = value
+    try:
+        tmp = _disk_path() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(d, fh)
+        os.replace(tmp, _disk_path())
+    except OSError:
+        pass
+
+
+def _stamp(path):
+    try:
+        return f"{path}|{os.path.getmtime(path)}"
+    except OSError:
+        return ""
+
 
 def npm_user_prefix():
     """Kam smí `npm install -g` psát bez práv správce. Prázdno = stačí systémový.
@@ -286,6 +330,11 @@ def npm_user_prefix():
         return _NPM_PREFIX
     _NPM_PREFIX = ""
     npm = shutil.which("npm")
+    stamp = "npm-prefix|" + _stamp(os.path.realpath(npm)) if npm else ""
+    hit = _disk().get(stamp) if stamp else None
+    if isinstance(hit, str):
+        _NPM_PREFIX = hit
+        return _NPM_PREFIX
     if npm:
         try:
             r = subprocess.run([npm, "config", "get", "prefix"], capture_output=True,
@@ -295,6 +344,7 @@ def npm_user_prefix():
             if prefix and not os.access(probe if os.path.isdir(probe) else prefix,
                                         os.W_OK):
                 _NPM_PREFIX = os.path.join(os.path.expanduser("~"), ".local")
+            _disk_set(stamp, _NPM_PREFIX)
         except Exception:
             pass
     return _NPM_PREFIX
@@ -585,12 +635,16 @@ def _knows_flag(spec, flag):
         key = (path, os.path.getmtime(path), flag)
     except OSError:
         return False
+    disk_key = "flag|" + _stamp(os.path.realpath(path)) + "|" + flag
+    if key not in _KNOWS_FLAG and isinstance(_disk().get(disk_key), bool):
+        _KNOWS_FLAG[key] = _disk()[disk_key]
     if key not in _KNOWS_FLAG:
         try:
             r = subprocess.run([path, "--help"], capture_output=True, text=True,
                                timeout=10, stdin=subprocess.DEVNULL,
                                creationflags=_NO_WINDOW)
             _KNOWS_FLAG[key] = flag in (r.stdout or "") + (r.stderr or "")
+            _disk_set(disk_key, _KNOWS_FLAG[key])
         except Exception:
             _KNOWS_FLAG[key] = False
     return _KNOWS_FLAG[key]

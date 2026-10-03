@@ -479,6 +479,9 @@ def google_client():
         return "", ""
 
 
+PROHLIZECE = "/usr/local/share/ms-playwright"
+
+
 def session_env(user):
     """Proměnné prostředí navíc pro prostor: přihlášení Clauda a klient OAuth
     pro napojení na Google (všem — účty si každý přidává sám).
@@ -496,6 +499,10 @@ def session_env(user):
     if cid and secret:
         env["GOOGLE_OAUTH_CLIENT_ID"] = cid
         env["GOOGLE_OAUTH_CLIENT_SECRET"] = secret
+    # Společný Chromium pro Playwright (gateway/install.sh, setup_prohlizec) —
+    # jinak by si ho každý stahoval do svého domova (~300 MB na člověka).
+    if os.path.isdir(PROHLIZECE):
+        env["PLAYWRIGHT_BROWSERS_PATH"] = PROHLIZECE
     return env
 
 

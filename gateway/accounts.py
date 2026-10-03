@@ -64,6 +64,16 @@ CREATE TABLE IF NOT EXISTS users (
     created  REAL NOT NULL,
     disabled INTEGER NOT NULL DEFAULT 0
 );
+-- Passkey (WebAuthn) jako druhý krok přihlášení (gateway/webauthn.py).
+CREATE TABLE IF NOT EXISTS passkeys (
+    id         TEXT PRIMARY KEY,           -- credential id, base64url
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    public_key TEXT NOT NULL,              -- COSE klíč, base64url
+    sign_count INTEGER NOT NULL DEFAULT 0,
+    name       TEXT NOT NULL DEFAULT '',
+    created    REAL NOT NULL,
+    used       REAL NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS login_fails (
     key     TEXT PRIMARY KEY,           -- ip:…|email:…, ip:…, email:…
     hits    TEXT NOT NULL DEFAULT '[]', -- časy neúspěchů, které se ještě počítají
@@ -492,10 +502,44 @@ class Accounts:
         with self._lock:
             row = self.db.execute("SELECT totp_secret, recovery FROM users WHERE id = ?",
                                   (user_id,)).fetchone()
+            keys = self.db.execute("SELECT COUNT(*) FROM passkeys WHERE user_id = ?",
+                                   (user_id,)).fetchone()[0] if row else 0
         if not row:
-            return {"enabled": False, "recovery_left": 0}
+            return {"enabled": False, "recovery_left": 0, "passkeys": 0}
         return {"enabled": bool(row["totp_secret"]),
-                "recovery_left": len(_codes(row["recovery"]))}
+                "recovery_left": len(_codes(row["recovery"])),
+                "passkeys": keys}
+
+    # ── passkey ──────────────────────────────────────────────────────────────
+    def passkeys(self, user_id):
+        """Klíče účtu — bez veřejných klíčů (ty UI nepotřebuje)."""
+        with self._lock:
+            return [dict(r) for r in self.db.execute(
+                "SELECT id, name, created, used FROM passkeys WHERE user_id = ? ORDER BY created",
+                (user_id,))]
+
+    def passkey(self, cred_id):
+        with self._lock:
+            row = self.db.execute("SELECT * FROM passkeys WHERE id = ?", (cred_id,)).fetchone()
+        return dict(row) if row else None
+
+    def passkey_add(self, user_id, cred, name):
+        with self._lock:
+            self.db.execute(
+                "INSERT INTO passkeys (id, user_id, public_key, sign_count, name, created)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (cred["id"], user_id, cred["public_key"], int(cred["sign_count"]),
+                 (name or "Passkey")[:60], time.time()))
+
+    def passkey_used(self, cred_id, count):
+        with self._lock:
+            self.db.execute("UPDATE passkeys SET sign_count = ?, used = ? WHERE id = ?",
+                            (int(count), time.time(), cred_id))
+
+    def passkey_delete(self, user_id, cred_id):
+        with self._lock:
+            return self.db.execute("DELETE FROM passkeys WHERE id = ? AND user_id = ?",
+                                   (cred_id, user_id)).rowcount > 0
 
     def _store_recovery(self, user_id):
         codes = totp.recovery_codes()
@@ -550,6 +594,9 @@ class Accounts:
                 " WHERE email = ?", (email,))
             if not cur.rowcount:
                 raise ValueError(f"{email} tu žádný účet nemá.")
+            # Ztracený telefon bývá i ztracený passkey — pryč s ověřováním celým.
+            self.db.execute("DELETE FROM passkeys WHERE user_id = (SELECT id FROM users"
+                            " WHERE email = ?)", (email,))
             self._drop_logins(email)
 
     def user_for_token(self, token):

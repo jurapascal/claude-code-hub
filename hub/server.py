@@ -485,6 +485,12 @@ class Handler(BaseHTTPRequestHandler):
         # Vlastní Cache-Control v `extra` má přednost — dřív odcházely oba.
         if not any(k.lower() == "cache-control" for k in (extra or {})):
             self.send_header("Cache-Control", "no-store")
+        # Obrana do hloubky: nic se nehádá podle obsahu, cizí stránka hub
+        # nezarámuje (clickjacking) a adresa s tokenem neodejde v Refereru.
+        for k, v in (("X-Content-Type-Options", "nosniff"), ("X-Frame-Options", "SAMEORIGIN"),
+                     ("Referrer-Policy", "same-origin")):
+            if not any(x.lower() == k.lower() for x in (extra or {})):
+                self.send_header(k, v)
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -1228,6 +1234,36 @@ class Handler(BaseHTTPRequestHandler):
             if not path:
                 return self._json({"error": "chybí cesta"}, 400)
             return self._json(stats.project_detail(path))
+        if name == "pluginy":
+            # Pluginy Claude Code (katalog, instalace) a pluginy appky (hub/pluginy.py).
+            from . import pluginy
+            co = payload.get("akce") or ""
+            if not co and (query.get("jen") or [""])[0] == "appka":
+                return self._json(pluginy.appka_seznam())
+            if not co:
+                obnovit = bool(query.get("refresh"))
+                return self._json({"cc": pluginy.katalog(obnovit), "appka": pluginy.appka_seznam()})
+            if co.startswith("appka-"):
+                pid = payload.get("id", "")
+                res = {"appka-zapni": lambda: pluginy.appka_zapni(pid, True),
+                       "appka-vypni": lambda: pluginy.appka_zapni(pid, False),
+                       "appka-pridej": lambda: pluginy.appka_pridej(payload.get("url", "")),
+                       "appka-odeber": lambda: pluginy.appka_odeber(pid),
+                       "appka-ukazka": pluginy.appka_ukazka}.get(co)
+                if not res:
+                    return self._json({"ok": False, "message": "Neznámá akce."}, 400)
+                out = res()
+                return self._json({**out, "appka": pluginy.appka_seznam()}, 200 if out.get("ok") else 400)
+            out = pluginy.akce(co, payload.get("id", ""), payload.get("sha", ""), payload.get("zdroj", ""))
+            return self._json(out, 200 if out.get("ok") or out.get("potvrdit") else 400)
+        if name == "plugin-soubor":
+            # Soubory zapnutého pluginu appky (JS, CSS, obrázky) — jen s tokenem.
+            from . import pluginy
+            hit = pluginy.appka_soubor((query.get("id") or [""])[0], (query.get("f") or [""])[0])
+            if not hit:
+                return self._send(404, b"404")
+            with open(hit[0], "rb") as fh:
+                return self._send(200, fh.read(), hit[1])
         if name == "connect":
             # Služby pro člověka — Freelo, Canva, Ecomail, Google, i více účtů
             # (hub/connect.py). Nad technickým katalogem /api/mcp.
@@ -1566,6 +1602,19 @@ class HubHTTPServer(ThreadingHTTPServer):
         self.origins = set()
 
 
+def _zahrat_doctor():
+    """Co chce první /api/state (agenti, projekty s gitem, obsluha obsidian://),
+    se připraví souběžně se startem okna, ať první načtení stránky nečeká."""
+    def jedno(fn, co):
+        try:
+            fn()
+        except Exception as exc:      # noqa: BLE001 — jen příprava, nic nesmí shodit
+            core.log_error(f"start: příprava {co}", exc)
+    for fn, co in ((core.doctor, "doctor()"), (core.get_projects, "projektů"),
+                   (core.has_obsidian, "Obsidianu"), (core.get_memory, "paměti")):
+        threading.Thread(target=jedno, args=(fn, co), daemon=True).start()
+
+
 def start():
     """Start the server on a random loopback port. Returns (server, url)."""
     # V prostoru na serveru: připravit Claude Code na přihlášení z prostředí
@@ -1581,8 +1630,12 @@ def start():
     threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.2},
                      daemon=True).start()
     threading.Thread(target=watch_autosave, daemon=True).start()
+    prohlizec.INSTANCE = core.INSTANCE
     threading.Thread(target=prohlizec.migruj, args=(core.log,), daemon=True).start()
     threading.Thread(target=chats.warm_up, daemon=True).start()
+    # První /api/state chce doctor() (agenti v PATH) — ať je připravený, než
+    # se okno rozjede, místo aby na něj čekalo první načtení stránky.
+    threading.Thread(target=_zahrat_doctor, daemon=True).start()
     # Taby průběžně na disk — po pádu nebo zabití se appka vrátí, kde byla.
     threading.Thread(target=restart.keep_saving,
                      args=(HUB, "uspani" if core.on_gateway() else "zavreni"),

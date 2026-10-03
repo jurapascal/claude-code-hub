@@ -588,10 +588,7 @@ function openVault(path, vault, title) {
     trezory: vaultList(),
     // Sdílené poznámky: založit nové a u otevřených členové / odejít.
     novySdileny: onServer() ? () => sharedCreate() : null,
-    sdilenyMenu: shared ? (x, y) => {
-      const v = sharedVaults.find((s) => 'sdilene:' + s.slug === vault);
-      if (v) sharedMenu(v, x, y, false);
-    } : null,
+    sdilenyMenu: onServer() ? () => sharedManage() : null,
     prepni: (v) => {
       const s = (sharedVaults || []).find((x) => 'sdilene:' + x.slug === v);
       openVault('', v, s ? s.name : '');
@@ -604,6 +601,7 @@ function openVault(path, vault, title) {
 
 /* Které Obsidiany člověk má: osobní, firemní (když má přístup) a sdílené. */
 let sharedVaults = [];
+let sharedCizi = [];       // správce: sdílené, ve kterých není (jen spravovat, obsah nevidí)
 function vaultList() {
   const out = [{id: '', name: 'Moje poznámky'}];
   if (STATE.firma && STATE.firma.vault) out.push({id: 'firma', name: 'Firemní'});
@@ -665,6 +663,7 @@ async function renderShared() {
   box.hidden = false;
   sharedPeople = data.people || [];
   sharedVaults = data.vaults || [];
+  sharedCizi = data.spravovane || [];
   const list = $('shared-list');
   list.textContent = '';
   const vaults = data.vaults || [];
@@ -712,17 +711,112 @@ async function renderShared() {
 
 /* Nabídka sdílených poznámek: v Obsidianu (přepínač nahoře) i jinde. */
 function sharedMenu(v, x, y, withOpen) {
-  const items = withOpen
+  const items = withOpen && v.is_member !== false
     ? [{icon: 'i-book', label: 'Otevřít', run: () => openVault('', 'sdilene:' + v.slug, v.name)}] : [];
-  if (v.is_owner) {
+  const spravuje = v.can_manage !== undefined ? v.can_manage : v.is_owner;
+  if (spravuje) {
     items.push({icon: 'i-user', label: 'Kdo je vidí…', run: () => sharedMembers(v)});
-    items.push({icon: 'i-close', label: 'Smazat…', run: () => sharedAction(v, 'smazat',
-      `Smazat sdílené poznámky „${v.name}“? Zmizí všem členům (soubory zůstanou stranou na serveru).`)});
-  } else {
+    items.push({icon: 'i-close', label: 'Smazat…', run: () => sharedDelete(v)});
+  }
+  if (!v.is_owner && v.is_member !== false) {
     items.push({icon: 'i-close', label: 'Odejít…', run: () => sharedAction(v, 'odejit',
       `Odejít ze sdílených poznámek „${v.name}“? Přestaneš je vidět.`)});
   }
   showMenu(x, y, items);
+}
+
+/* Smazání sdíleného Obsidianu: soubory odložit stranou (dají se vrátit),
+   nebo smazat natrvalo (uvolní místo na disku serveru). */
+function sharedDelete(v) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'onb set-modal vault-access-modal';
+    wrap.innerHTML = `
+      <div class="onb-box acc-box">
+        <div class="onb-head"><div><div class="onb-title"></div><div class="onb-sub">Zmizí všem, kdo je vidí.</div></div>
+          <span class="spacer"></span><button class="set-x sd-close" title="Zavřít">×</button></div>
+        <div class="acc-list sd-volby">
+          <label class="sd-volba"><input type="radio" name="sd" value="" checked>
+            <span><b>Smazat, soubory odložit stranou</b><br><small>Zůstanou na serveru, správce je umí vrátit.</small></span></label>
+          <label class="sd-volba"><input type="radio" name="sd" value="1">
+            <span><b>Smazat i se soubory natrvalo</b><br><small>Uvolní místo na disku. Vrátit to nejde.</small></span></label>
+        </div>
+        <div class="who-foot"><button class="btn ghost sd-close">Zrušit</button><button class="btn danger sd-ok">Smazat</button></div>
+      </div>`;
+    wrap.querySelector('.onb-title').textContent = 'Smazat sdílené poznámky „' + v.name + '“?';
+    const zavri = () => { wrap.remove(); resolve(); };
+    wrap.querySelectorAll('.sd-close').forEach((b) => { b.onclick = zavri; });
+    wrap.onclick = (ev) => { if (ev.target === wrap) zavri(); };
+    wrap.querySelector('.sd-ok').onclick = async () => {
+      const natrvalo = !!wrap.querySelector('input[name=sd]:checked').value;
+      if (natrvalo && !confirm(`Opravdu smazat „${v.name}“ i se všemi soubory natrvalo?`)) return;
+      wrap.querySelector('.sd-ok').disabled = true;
+      try {
+        const out = await sharedPost({akce: 'smazat', slug: v.slug, natrvalo});
+        toast(out.message || 'Smazáno.');
+      } catch (err) {
+        toast(err.message);
+      }
+      zavri();
+      await renderShared();
+      document.dispatchEvent(new CustomEvent('hub-shared-changed'));
+    };
+    document.body.appendChild(wrap);
+  });
+}
+
+/* Správa sdílených poznámek z Obsidianu: všechny, které člověk vidí (a správce
+   i ty ostatní), každé s tím, co s nimi smí. */
+async function sharedManage() {
+  await renderShared();
+  const wrap = document.createElement('div');
+  wrap.className = 'onb set-modal vault-access-modal';
+  wrap.innerHTML = `
+    <div class="onb-box acc-box">
+      <div class="onb-head"><div><div class="onb-title">Sdílené poznámky</div>
+        <div class="onb-sub">Poznámky jen pro vybrané lidi.</div></div>
+        <span class="spacer"></span><button class="set-x sm-close" title="Zavřít">×</button></div>
+      <div class="acc-list sm-list"></div>
+      <div class="who-foot"><button class="btn ghost sm-new">+ Nové sdílené poznámky</button></div>
+    </div>`;
+  const zavri = () => { wrap.remove(); document.removeEventListener('hub-shared-changed', kresli); };
+  wrap.querySelector('.sm-close').onclick = zavri;
+  wrap.onclick = (ev) => { if (ev.target === wrap) zavri(); };
+  wrap.querySelector('.sm-new').onclick = () => { zavri(); sharedCreate(); };
+  function kresli() {
+    const list = wrap.querySelector('.sm-list');
+    list.textContent = '';
+    const vse = [...sharedVaults, ...sharedCizi];
+    if (!vse.length) list.appendChild(Object.assign(document.createElement('p'), {className: 'who-hint', textContent: 'Zatím žádné.'}));
+    for (const v of vse) {
+      const r = document.createElement('div');
+      r.className = 'sm-radek';
+      const info = document.createElement('div');
+      info.className = 'sm-info';
+      const jm = document.createElement('b');
+      jm.textContent = v.name;
+      const kdo = document.createElement('small');
+      kdo.textContent = (v.members || []).map((m) => m.name || m.email).join(', ') +
+        (v.is_member === false ? ' · nejsi členem' : '') + (v.owner ? '' : ' · bez zakladatele');
+      info.append(jm, kdo);
+      r.appendChild(info);
+      const btn = (text, fn, cls) => {
+        const b = document.createElement('button');
+        b.className = 'btn ' + (cls || 'ghost');
+        b.textContent = text;
+        b.onclick = fn;
+        r.appendChild(b);
+      };
+      if (v.is_member !== false && !v.needs_restart) btn('Otevřít', () => { zavri(); openVault('', 'sdilene:' + v.slug, v.name); });
+      if (v.can_manage) btn('Lidé…', async () => { await sharedMembers(v); await renderShared(); kresli(); });
+      if (!v.is_owner && v.is_member !== false) btn('Odejít', async () => { await sharedAction(v, 'odejit', `Odejít ze sdílených poznámek „${v.name}“? Přestaneš je vidět.`); kresli(); });
+      if (v.can_manage) btn('Smazat…', () => sharedDelete(v), 'danger');
+      list.appendChild(r);
+    }
+  }
+  document.addEventListener('hub-shared-changed', kresli);
+  kresli();
+  document.body.appendChild(wrap);
 }
 
 /* Sdílené poznámky naklikáním (brána POST /gw/sdilene, gateway/shared.py).
@@ -1785,6 +1879,16 @@ function renderActions() {
     el.onclick = () => runSlash(a.cmd);
     box.appendChild(el);
   }
+  // Tlačítka pluginů appky (pluginy.js, api.akce).
+  for (const a of (window.HubPluginy ? HubPluginy.akce() : [])) {
+    const el = document.createElement('button');
+    el.className = 'barbtn plg-akce';
+    el.innerHTML = icon('i-plus') + '<span></span>';
+    el.querySelector('span').textContent = a.label;
+    el.title = a.title || ('Plugin ' + a.id);
+    el.onclick = () => { try { a.run(); } catch (err) { toast('Plugin ' + a.id + ': ' + err.message); } };
+    box.appendChild(el);
+  }
   showActionbar(ACTIVE);
 }
 
@@ -2523,6 +2627,8 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
                                        aktivni: () => ACTIVE === tab,
                                        // Panel Průběh vpravo (renderPrehled).
                                        prehled: () => { if (ACTIVE === tab) showActionbar(tab); }});
+    // Úsilí mohla bublina zjistit dřív, než vzniklo hřiště — Claudík se převlékne hned.
+    if (tab.effort && tab.cteni.hriste) tab.cteni.hriste.effort(tab.effort);
   }
   if (kind === 'project' || kind.startsWith('slash:')) {
     tab.composer = HubComposer.install(tab, {
@@ -2550,6 +2656,9 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
         // Podle tohohle aktualizace prostoru počká, až Claude doběhne.
         const pracoval = tab.pracuje;
         tab.pracuje = !!(stav && stav.on);
+        if (pracoval !== tab.pracuje) {
+          document.dispatchEvent(new CustomEvent('hub-prace', {detail: {tab: tab.id, on: tab.pracuje}}));
+        }
         // Doběhl v tabu, na který se zrovna nekouká — ať je to na tabu vidět.
         if (pracoval && !tab.pracuje && tab !== ACTIVE) { tab.hotovo = true; oznacTab(tab); }
         if (window.HubClaudici && tab.cteni && tab.cteni.hriste) tab.cteni.hriste.prace(tab.pracuje);
@@ -2606,11 +2715,13 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
   el.draggable = true;
   el.innerHTML = '<span class="tab-agent" hidden></span>' +
                  '<span class="tab-title"></span>' +
+                 `<span class="tab-br" hidden title="Prohlížeč tohohle chatu">${icon('i-globe')}</span>` +
                  `<span class="tab-close" title="Zavřít tab">${icon('i-close')}</span>`;
   el.querySelector('.tab-title').textContent = title;
   el.onclick = (ev) => {
     if (ev.target.closest('input')) return;       // pole na přejmenování
     if (ev.target.closest('.tab-close')) { requestCloseTab(tab); return; }
+    if (ev.target.closest('.tab-br') && window.HubProhlizec) { HubProhlizec.ukaz(tab.id); return; }
     activate(tab);
   };
   el.ondblclick = (ev) => { if (!ev.target.closest('.tab-close')) startRename(tab); };
@@ -2701,6 +2812,7 @@ function measure(tab) {
 
 function activate(tab) {
   ACTIVE = tab;
+  document.dispatchEvent(new CustomEvent('hub-tab', {detail: tab ? {id: tab.id, title: tab.title, path: tab.path || ''} : null}));
   showProjekty(false);
   if (tab && tab.hotovo) { tab.hotovo = false; oznacTab(tab); }
   if (placeReady) writePlace({tab: tab ? tabKey(tab) : null});
@@ -2759,6 +2871,7 @@ function kresliVisici() {
       t.visi.innerHTML = '<span class="tv-ruce"></span>' + HubCteni.claudik('') +
                          '<span class="tv-otaznik">?</span>';
       t.visi.onclick = () => activate(t);
+      if (t.effort) t.visi.dataset.effort = t.effort;
       document.body.appendChild(t.visi);
     }
     const r = t.el.getBoundingClientRect();
@@ -3788,7 +3901,34 @@ async function main() {
     ev.returnValue = '';             // vyžadují starší prohlížeče
   });
 
-  if (window.HubProhlizec) HubProhlizec.install({send, copy: (t) => copyText(t)});
+  // Pluginy appky (pluginy.js, hub/pluginy.py) — zapnuté se načtou teď.
+  if (window.HubPluginy) {
+    HubPluginy.start({
+      api, toast, token: TOKEN, renderActions,
+      aktivniTab: () => (ACTIVE ? {id: ACTIVE.id, title: ACTIVE.title, path: ACTIVE.path || ''} : null),
+      posli: (text) => {
+        if (!ACTIVE || !ACTIVE.composer || !text) return false;
+        return ACTIVE.composer.run(text + '\r');
+      },
+    });
+  }
+  if (window.HubProhlizec) {
+    HubProhlizec.install({send, copy: (t) => copyText(t),
+                          tabTitle: (sid) => { const t = TABS.find((x) => x.id === sid); return t ? t.title : ''; }});
+  }
+  /* Ikonka prohlížeče u tabů, které v něm mají karty (prohlizec.js). */
+  document.addEventListener('hub-br-taby', (ev) => {
+    const mapa = ev.detail || {};
+    for (const t of TABS) {
+      const ik = t.el && t.el.querySelector('.tab-br');
+      if (!ik) continue;
+      const m = mapa[t.id];
+      ik.hidden = !m;
+      ik.classList.toggle('pomoc', !!(m && m.potreba));
+      ik.title = !m ? '' : m.potreba ? 'Claude v prohlížeči potřebuje tvou pomoc — ukázat'
+        : 'Prohlížeč tohohle chatu (' + m.karet + (m.karet === 1 ? ' karta' : m.karet < 5 ? ' karty' : ' karet') + ')';
+    }
+  });
   connect();
   checkForUpdate();
   checkServerUpdate();

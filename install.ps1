@@ -49,9 +49,10 @@ function Test-Cmd($name) {
     return [bool](Get-Command $name -ErrorAction SilentlyContinue)
 }
 
-# Doinstalovat chybějící program? S -App ano, jinak se ptá (s -Yes ne).
+# Doinstalovat chybějící program? S -App i -Yes ano (dřív -Yes nenainstaloval
+# nic — Ask-YesNo bez otázky vrací ne), jinak se ptá. -Update nic neinstaluje.
 function Want-Install($question) {
-    if ($App) { return $true }
+    if ($App -or ($Yes -and -not $Update)) { return $true }
     return (Ask-YesNo $question)
 }
 
@@ -630,8 +631,8 @@ function Find-Npx {
 }
 
 $NodeExe = Find-Node
-if (-not $NodeExe -and $ClaudeCli -and $HasWinget -and
-    (Want-Install 'Node.js není nainstalovaný. Nainstalovat LTS přes winget? (kvůli Playwright MCP)')) {
+if (-not $NodeExe -and $HasWinget -and -not $Update -and
+    (Want-Install 'Node.js není nainstalovaný. Nainstalovat LTS přes winget? (prohlížeč pro Clauda, MCP servery)')) {
     Install-WithWinget 'OpenJS.NodeJS.LTS'
     $NodeExe = Find-Node
     if (-not $NodeExe) { Write-Info 'Node se nainstaloval, ale je potřeba nový PowerShell — pak spusť install.ps1 znovu.' }
@@ -675,34 +676,58 @@ if (-not $ClaudeCli) {
     Write-Info 'Playwright MCP přeskočen — chybí Claude Code CLI'
 } elseif (-not $NodeExe -or -not $NpxExe) {
     Write-Info 'Playwright MCP přeskočen — bez Node.js/npx ho není čím spustit'
-} elseif ($mcpRegistered -and $mcpPinned) {
-    # Profil se zkouší i tady: když se přenos přihlášení posledně nepovedl,
-    # protože nad starým profilem běžel prohlížeč, dožene se to teď.
-    Write-Ok 'playwright MCP už je zaregistrovaný a přihlášení se drží'
-    Initialize-PlaywrightProfile
 } elseif ($nodeMajor -lt 20) {
     Write-Warn "Playwright MCP přeskočen — chce Node.js 20+ (teď: $nodeMajor)"
-} elseif ($mcpRegistered) {
-    # Starší registrace bez --user-data-dir: prohlížeč se odhlašoval s každou
-    # změnou složky. Přeregistrovat, prohlížeč už na disku je.
-    Write-Info 'opravuju Playwright MCP — přihlášení se ztrácelo s každou složkou'
-    Initialize-PlaywrightProfile
-    & $ClaudeCli mcp remove playwright -s user *>$null
-    & $ClaudeCli mcp add playwright -s user -- npx '@playwright/mcp@latest' --browser chromium --user-data-dir $PwProfile
-    Write-Ok "playwright MCP opraven, profil $PwProfile"
 } else {
-    Write-Info 'přidávám Playwright MCP (prohlížeč pro Claude Code, stáhne ~115 MB)'
+    # Přes most (tools/playwright_bridge.py): prohlížeč sdílený s oknem v appce,
+    # každý chat vlastní karty. Chromium se stahuje přesně pro verzi, kterou
+    # most pouští — dřív se stahoval pro @latest a most ho pak nenašel.
+    $Bridge = Join-Path $ClaudeDir 'tools\playwright_bridge.py'
     Initialize-PlaywrightProfile
-    & $ClaudeCli mcp add playwright -s user -- npx '@playwright/mcp@latest' --browser chromium --user-data-dir $PwProfile
-    Write-Info 'stahuju prohlížeč (~115 MB, stahuje se jen co chybí)…'
-    & $NpxExe -y '@playwright/mcp@latest' install-browser chrome-for-testing
-    Write-Ok "playwright MCP připraven, profil $PwProfile"
+    if (-not ($mcpRegistered -and $mcpCurrent -match 'playwright_bridge')) {
+        & $ClaudeCli mcp remove playwright -s user *>$null
+        & $ClaudeCli mcp add playwright -s user -- $Python $Bridge
+        Write-Ok 'playwright MCP zaregistrován přes vestavěný prohlížeč'
+    } else {
+        Write-Ok 'playwright MCP už je zaregistrovaný'
+    }
+    Write-Info 'připravuju prohlížeč pro Clauda (~190 MB poprvé, pak jen co chybí)…'
+    & $Python $Bridge '--install' *>$null
+    if ($LASTEXITCODE -eq 0) { Write-Ok "prohlížeč připraven, profil $PwProfile" }
+    else { Write-Warn "prohlížeč se nestáhl — dožeň to: python `"$Bridge`" --install" }
 }
 } catch {
     # nothing here is required for the hub to work — never let it fail the install
     Write-Warn "Playwright MCP se nepovedlo přidat: $($_.Exception.Message)"
 } finally {
     $ErrorActionPreference = $prevEap
+}
+
+# ── 11a. Hlas (diktování a předčítání) ───────────────────────────────────────
+# faster-whisper + Piper do vlastního venvu (hub/hlas.py), i s modely (~2,5 GB).
+# Dřív jen tlačítkem v Nastavení → Hlas; instalačka ke stažení (-App) ho dá rovnou.
+if (-not $Update) {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        Push-Location $ClaudeDir
+        $hlasHotovo = (& $Python -c "from hub import hlas; print(1 if hlas.root() else 0)" 2>$null) -eq '1'
+        if ($hlasHotovo) {
+            Write-Ok 'hlas (diktování a předčítání)'
+        } elseif ($App -or (Ask-YesNo 'Nainstalovat hlas — diktování a předčítání česky (~2,5 GB, modely)?')) {
+            Write-Info 'instaluju hlas (pár minut, stahují se modely ~2,5 GB)…'
+            & $Python -m hub.hlas install *>$null
+            if ($LASTEXITCODE -eq 0) { Write-Ok 'hlas připravený' }
+            else { Write-Warn 'hlas se nenainstaloval — jde to i později: Nastavení → Hlas' }
+        } else {
+            Write-Info 'hlas přeskočen — jde doinstalovat v Nastavení → Hlas'
+        }
+    } catch {
+        Write-Warn "hlas: $($_.Exception.Message)"
+    } finally {
+        Pop-Location
+        $ErrorActionPreference = $prevEap
+    }
 }
 
 # ── 11b. Clockify MCP (volitelné) ────────────────────────────────────────────

@@ -9,6 +9,7 @@ going through Git for Windows' bash.exe, so `claude-wrapper.sh` and every
 bash-based slash command work unchanged on all three platforms.
 """
 import datetime
+import functools
 import json
 import os
 import re
@@ -440,18 +441,94 @@ def open_path(path):
 _HAS_OBSIDIAN = [0.0, None]
 
 
+def _slouc(fn):
+    """Souběžná volání se sloučí: kdo přijde, když výpočet už běží, počká na
+    jeho výsledek místo druhého výpočtu. (Zahřívání při startu a první
+    načtení stránky by jinak totéž počítaly dvakrát a navzájem se brzdily.)"""
+    lock = threading.Lock()
+    stav = {"ev": None, "res": None, "err": None}
+
+    @functools.wraps(fn)
+    def obal(*a, **k):
+        if a or k:
+            return fn(*a, **k)
+        with lock:
+            ev = stav["ev"]
+            vedu = ev is None
+            if vedu:
+                ev = stav["ev"] = threading.Event()
+        if not vedu:
+            ev.wait()
+            if stav["err"] is not None:
+                raise stav["err"]
+            return stav["res"]
+        try:
+            stav["res"], stav["err"] = fn(), None
+            return stav["res"]
+        except BaseException as exc:
+            stav["err"] = exc
+            raise
+        finally:
+            with lock:
+                stav["ev"] = None
+            ev.set()
+    return obal
+
+
 def has_obsidian():
     """True if an obsidian:// URL handler is registered on this machine.
 
     Cached for a few minutes — on Linux it's an `xdg-mime` call and the
     answer is needed on every page load."""
     now = time.monotonic()
-    if _HAS_OBSIDIAN[1] is not None and now - _HAS_OBSIDIAN[0] < 300:
+    if _HAS_OBSIDIAN[1] is not None:
+        if now - _HAS_OBSIDIAN[0] >= 300:
+            # Stará odpověď platí, nová se zjistí na pozadí — stránka nečeká.
+            _HAS_OBSIDIAN[0] = now
+            threading.Thread(target=lambda: _HAS_OBSIDIAN.__setitem__(1, _has_obsidian()),
+                             daemon=True).start()
         return _HAS_OBSIDIAN[1]
     _HAS_OBSIDIAN[0], _HAS_OBSIDIAN[1] = now, _has_obsidian()
     return _HAS_OBSIDIAN[1]
 
 
+_OBSIDIAN_MIME = "x-scheme-handler/obsidian"
+
+
+def _obsidian_v_souborech():
+    """Obsluha obsidian:// podle mimeapps.list a .desktop souborů — totéž, co
+    čte `xdg-mime`, jen bez spouštění shellového skriptu (ten trvá ~0,3 s)."""
+    data = os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local", "share")
+    conf = os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config")
+    sys_data = (os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share").split(":")
+    seznamy = [os.path.join(conf, "mimeapps.list"), os.path.join(data, "applications", "mimeapps.list")] + \
+              [os.path.join(d, "applications", "mimeapps.list") for d in sys_data]
+    for path in seznamy:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    if line.startswith(_OBSIDIAN_MIME + "=") and line.split("=", 1)[1].strip(" ;\n"):
+                        return True
+        except OSError:
+            continue
+    slozky = [os.path.join(data, "applications"), os.path.join(data, "flatpak", "exports", "share", "applications"),
+              "/var/lib/flatpak/exports/share/applications"] + [os.path.join(d, "applications") for d in sys_data]
+    for d in slozky:
+        try:
+            names = [n for n in os.listdir(d) if n.endswith(".desktop") and "obsidian" in n.lower()]
+        except OSError:
+            continue
+        for n in names:
+            try:
+                with open(os.path.join(d, n), encoding="utf-8", errors="replace") as fh:
+                    if _OBSIDIAN_MIME in fh.read():
+                        return True
+            except OSError:
+                continue
+    return False
+
+
+@_slouc
 def _has_obsidian():
     try:
         if IS_WINDOWS:
@@ -460,6 +537,8 @@ def _has_obsidian():
                 return True
         if IS_MAC:
             return os.path.isdir("/Applications/Obsidian.app")
+        if _obsidian_v_souborech():
+            return True
         return bool(run(["xdg-mime", "query", "default",
                          "x-scheme-handler/obsidian"], timeout=3))
     except Exception:
@@ -522,6 +601,7 @@ def hex_rgb(color):
 BLOCKED_DIRS = []
 
 
+@_slouc
 def get_projects():
     projects, blocked = [], []
     for base in PROJECT_DIRS:
@@ -718,6 +798,7 @@ def _note_title(path):
         return os.path.basename(path)[:-3]
 
 
+@_slouc
 def get_memory():
     """(counts, recent) for the per-note memory vault; recent = newest 8 notes."""
     kinds = {"learnings": "learning_", "errors": "error_", "wins": "win_"}
