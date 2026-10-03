@@ -190,7 +190,7 @@
       const img = el('img', 'plg-logo');
       img.alt = '';
       img.onload = () => { i.classList.add('s-logem'); i.textContent = ''; i.appendChild(img); };
-      img.src = '/api/logo?k=' + encodeURIComponent(logo) + '&t=' + encodeURIComponent(io.token);
+      img.src = '/api/logo?k=' + encodeURIComponent(logo) + '&t=' + encodeURIComponent(io.token || '');
     }
     return i;
   }
