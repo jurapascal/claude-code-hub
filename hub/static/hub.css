@@ -3785,3 +3785,12 @@ button.pr-radek:hover { background: var(--card-hover); color: var(--fg-bright); 
 @media (max-width: 640px) { .plg-radek { flex-direction: column; } .plg-btns { justify-content: flex-start; } }
 .plg .set-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .plg .set-row .set-input { flex: 1; min-width: 220px; }
+.plg-ikona { flex: none; width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 17px; }
+.plg-filtry { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0 10px; }
+.plg-chipy { display: flex; gap: 5px; flex-wrap: wrap; flex: 1; }
+.plg-chip { border: 1px solid var(--border); background: none; color: var(--dim); padding: 3px 10px; border-radius: 999px; cursor: pointer; font: inherit; font-size: 12px; }
+.plg-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.plg-razeni { width: auto; }
+.plg-vstup { animation: plg-vstup .28s ease-out both; }
+@keyframes plg-vstup { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .plg-vstup { animation: none; } }

@@ -143,8 +143,9 @@
     return box;
   }
 
-  function radek(nazev, popis, meta) {
+  function radek(nazev, popis, meta, emoji) {
     const r = el('div', 'plg-radek');
+    r.appendChild(ikonka(nazev, emoji));
     const info = el('div', 'plg-info');
     info.appendChild(el('b', '', nazev));
     if (meta) info.appendChild(el('span', 'plg-meta', meta));
@@ -162,6 +163,25 @@
       try { await fn(); } finally { b.disabled = false; }
     };
     return b;
+  }
+
+  /* Ikonka: barevný čtvereček s písmenem (barva z názvu) a kategorie podle slov. */
+  const KATEGORIE = [
+    ['design', 'Design', '🎨', /design|figma|ui\b|ux|css|frontend|canva|logo|color|palette/i],
+    ['kod', 'Kód a review', '🧑‍💻', /code|review|debug|test|refactor|lint|typescript|python|git\b|github|pull request|tdd/i],
+    ['data', 'Data a API', '🗄️', /database|sql|data|api\b|postgres|supabase|analytics|openapi|query/i],
+    ['web', 'Web a prohlížeč', '🌐', /browser|playwright|web|seo|scrap|search|crawl|http/i],
+    ['produktivita', 'Práce a komunikace', '📋', /slack|notion|linear|jira|asana|email|calendar|docs|project|task|workflow|agent/i],
+    ['bezpecnost', 'Bezpečnost', '🔒', /security|vulnerab|owasp|secret|auth|audit/i],
+  ];
+  const kategorie = (p) => (KATEGORIE.find((k) => k[3].test(p.name + ' ' + p.description)) || ['ostatni', 'Ostatní', '🧩'])[0];
+  const katInfo = (id) => KATEGORIE.find((k) => k[0] === id) || ['ostatni', 'Ostatní', '🧩'];
+  function ikonka(nazev, emoji) {
+    let h = 0;
+    for (const c of nazev) h = (h * 31 + c.charCodeAt(0)) % 360;
+    const i = el('span', 'plg-ikona', emoji || (nazev[0] || '?').toUpperCase());
+    i.style.background = 'hsl(' + h + ' 45% 32%)';
+    return i;
   }
 
   const kolik = (n) => n >= 1e6 ? (n / 1e6).toFixed(1).replace('.0', '') + ' mil.' : n >= 1000 ? Math.round(n / 1000) + ' tis.' : String(n);
@@ -226,28 +246,62 @@
       obsah.appendChild(el('div', 'set-title plg-podnadpis', 'Katalog (' + data.available.length + ')'));
       const hledat = el('input', 'set-input plg-hledat');
       hledat.placeholder = 'Hledat plugin — třeba „figma", „github", „design"…';
-      obsah.appendChild(hledat);
+      const radka = el('div', 'plg-filtry');
+      let kat = '', razeni = 'popularita';
+      const chipy = el('div', 'plg-chipy');
+      const mkChip = (id, text) => {
+        const c = el('button', 'plg-chip' + (kat === id ? ' on' : ''), text);
+        c.onclick = () => { kat = id; for (const x of chipy.children) x.classList.toggle('on', x.dataset.k === id); vypis(); };
+        c.dataset.k = id;
+        chipy.appendChild(c);
+      };
+      mkChip('', 'Vše');
+      for (const k of KATEGORIE) mkChip(k[0], k[2] + ' ' + k[1]);
+      mkChip('ostatni', '🧩 Ostatní');
+      const sel = el('select', 'set-input plg-razeni');
+      for (const [v, t] of [['popularita', 'Nejoblíbenější'], ['nazev', 'Podle abecedy']]) sel.appendChild(Object.assign(el('option', '', t), {value: v}));
+      sel.onchange = () => { razeni = sel.value; vypis(); };
+      radka.append(chipy, sel);
+      obsah.append(hledat, radka);
       const seznam = el('div', 'plg-seznam');
       obsah.appendChild(seznam);
+      let token = 0;
       const vypis = () => {
         const q = hledat.value.trim().toLowerCase();
-        const hit = data.available.filter((p) => !q || (p.name + ' ' + p.description + ' ' + p.marketplace).toLowerCase().includes(q));
+        const mine = ++token;
+        let hit = data.available.filter((p) => (!q || (p.name + ' ' + p.description + ' ' + p.marketplace).toLowerCase().includes(q)) &&
+                                               (!kat || kategorie(p) === kat));
+        if (razeni === 'nazev') hit = hit.slice().sort((x, y) => x.name.localeCompare(y.name));
         seznam.textContent = '';
-        for (const p of hit.slice(0, 60)) {
-          const {r, tlacitka} = radek(p.name, p.description, p.marketplace + ' · ' + kolik(p.installs) + ' instalací');
-          if (p.installed && data.installed.some((i) => i.id === p.id && i.scope === 'user')) {
+        if (!hit.length) { seznam.appendChild(el('div', 'set-note', 'Nic takového v katalogu není.')); return; }
+        const celkem = Math.min(hit.length, 120);
+        let i = 0;
+        const dalsi = () => {            // po jednom, postupně — okno se nezasekne a řádky naskakují
+          if (mine !== token) return;
+          const dalsiHit = hit[i++];
+          const {r, tlacitka} = radek(dalsiHit.name, dalsiHit.description, dalsiHit.marketplace + ' · ' + kolik(dalsiHit.installs) + ' instalací',
+                                      katInfo(kategorie(dalsiHit))[2]);
+          r.classList.add('plg-vstup');
+          if (data.installed.some((x) => x.id === dalsiHit.id && x.scope === 'user')) {
             tlacitka.appendChild(el('span', 'set-ok', '✓ Nainstalováno'));
           } else {
-            tlacitka.appendChild(tlacitko('Nainstalovat', () => akce({akce: 'install', id: p.id}), 'primary'));
+            tlacitka.appendChild(tlacitko('Nainstalovat', () => akce({akce: 'install', id: dalsiHit.id}), 'primary'));
           }
           seznam.appendChild(r);
-        }
-        if (hit.length > 60) seznam.appendChild(el('div', 'set-note', 'A dalších ' + (hit.length - 60) + ' — upřesni hledání.'));
-        if (!hit.length) seznam.appendChild(el('div', 'set-note', 'Nic takového v katalogu není.'));
+          if (i < celkem) setTimeout(dalsi, 25);
+          else if (hit.length > celkem) seznam.appendChild(el('div', 'set-note', 'A dalších ' + (hit.length - celkem) + ' — upřesni hledání nebo vyber kategorii.'));
+        };
+        dalsi();
       };
       let t = null;
       hledat.oninput = () => { clearTimeout(t); t = setTimeout(vypis, 150); };
       vypis();
+      // Napojení (MCP servery) — ostatní, které nejsou pluginy
+      obsah.appendChild(el('div', 'set-title plg-podnadpis', 'Napojení (MCP servery)'));
+      const mcpBox = el('div');
+      obsah.appendChild(mcpBox);
+      mcpBox.appendChild(el('div', 'set-note', 'Zjišťuji napojení…'));
+      nactiMcp(mcpBox);
       // Marketplace
       obsah.appendChild(el('div', 'set-title plg-podnadpis', 'Katalogy (marketplace)'));
       for (const m of data.marketplaces) {
@@ -263,6 +317,30 @@
     }
     nacti(false);
     return wrap;
+  }
+
+  /* MCP servery z Claude Code (Propojené služby): ukážou se po jednom, jak se
+     ke kterému hub dozví stav — zjišťování trvá, každý server se ptá zvlášť. */
+  async function nactiMcp(box) {
+    let res = null;
+    for (let i = 0; i < 40; i++) {
+      try { res = await io.api('mcp'); } catch (_) { break; }
+      if (!res.running) break;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    box.textContent = '';
+    const servery = ((res && res.servers) || []).slice().sort((a, b) =>
+      (a.state === 'ok' ? 0 : 1) - (b.state === 'ok' ? 0 : 1) || a.name.localeCompare(b.name));
+    if (!servery.length) { box.appendChild(el('div', 'set-note', 'Žádná napojení se nenašla.')); return; }
+    servery.forEach((m, i) => setTimeout(() => {
+      const nazev = m.name.replace(/^claude\.ai /, '');
+      const {r, tlacitka} = radek(nazev, '', (m.where || '') + (m.status ? ' · ' + m.status : ''), '🔌');
+      r.classList.add('plg-vstup');
+      tlacitka.appendChild(el('span', m.state === 'ok' ? 'set-ok' : 'set-warn', m.state === 'ok' ? '✓ Funguje' : '! ' + (m.status || 'Nefunguje')));
+      box.appendChild(r);
+    }, i * 60));
+    const pozn = el('div', 'set-note', 'Přidat a nastavit napojení jde v Nastavení → Propojené služby.');
+    box.appendChild(pozn);
   }
 
   let vypnutoNekdy = false;       // vypnutý plugin zmizí až po obnovení okna
