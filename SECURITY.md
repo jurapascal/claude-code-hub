@@ -198,6 +198,15 @@ příznak přítomnosti uživatele, počítadlo podpisů, které nesmí couvnout
 Neúspěšný podpis se počítá do stejných zámků jako špatný kód. Reset 2FA
 správcem (`claude-hub-admin 2fa`, ztracený telefon) smaže i passkeye.
 
+**Přihlášení jen passkeyem (bez hesla, 2.57.15).** Na přihlašovací stránce je
+tlačítko „Přihlásit se passkeyem“. Passkey s ověřením člověka na zařízení (otisk,
+obličej, PIN — brána vyžaduje příznak UV a prohlížeč ho vynutí) je zároveň
+vlastnictví i znalost, takže platí za celé přihlášení včetně druhého kroku.
+Klíč se hledá podle id, které autentizátor pošle (objevitelný klíč), takže se
+nezadává ani e-mail a nedá se zjišťovat, kdo má účet. Výzva je na jedno použití
+a platí 3 minuty; neúspěchy jdou do stejných zámků jako špatné heslo. Přidávané
+passkeye musí být objevitelné a s ověřením člověka.
+
 ## Pluginy (2.57)
 
 - **Pluginy Claude Code** instaluje `claude plugin install` — hub jen předá

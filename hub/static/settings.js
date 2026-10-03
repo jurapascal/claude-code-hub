@@ -1021,7 +1021,7 @@
             user: {id: b64d(o.user.id), name: o.user.name, displayName: o.user.displayName},
             pubKeyCredParams: o.algs.map((alg) => ({type: 'public-key', alg})),
             excludeCredentials: o.exclude.map((id) => ({type: 'public-key', id: b64d(id)})),
-            authenticatorSelection: {residentKey: 'preferred', userVerification: 'preferred'},
+            authenticatorSelection: {residentKey: 'required', userVerification: 'required'},
             attestation: 'none', timeout: 120000}});
           const d = await gw('/gw/passkey', {action: 'register', name: name.trim(),
             clientData: b64e(c.response.clientDataJSON), attestation: b64e(c.response.attestationObject)});

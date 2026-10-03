@@ -109,6 +109,7 @@ def tries_left(left):
 
 
 _pk_reg = {}       # user_id → (výzva pro přidání passkeye, platí do)
+_pk_login = {}     # id výzvy → (výzva pro přihlášení passkeyem, platí do)
 
 
 def _ticket_new(uid, label="", secret=""):
@@ -528,6 +529,41 @@ MSG_BROKEN = "Něco se pokazilo. Zkus to prosím za chvíli znovu."
 MSG_SAVE = "Uložit se nepodařilo. Zkus to prosím za chvíli znovu."
 
 
+PASSKEY_LOGIN_JS = """<script>
+(() => {
+  if (!window.PublicKeyCredential) return;
+  const form = document.querySelector('form.card');
+  const b64d = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+  const b64e = (b) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+  const sep = document.createElement('p'); sep.className = 'hint'; sep.style.textAlign = 'center'; sep.textContent = 'nebo';
+  const btn = document.createElement('button'); btn.type = 'button'; btn.id = 'pklogin';
+  btn.style.cssText = 'background:transparent;color:#e0a458;border:1px solid #e0a458;margin-top:6px';
+  btn.textContent = 'Přihlásit se passkeyem';
+  const err = document.createElement('div'); err.className = 'err'; err.id = 'pklogerr';
+  form.append(sep, btn, err);
+  const post = (body) => fetch('/login/passkey', {method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}).then((r) => r.json());
+  btn.onclick = async () => {
+    err.textContent = ''; btn.disabled = true;
+    try {
+      const o = await post({step: 'login-options'});
+      if (o.error) throw new Error(o.error);
+      const c = await navigator.credentials.get({publicKey: {challenge: b64d(o.challenge), rpId: o.rpId,
+        userVerification: 'required', timeout: 60000}});
+      const v = await post({step: 'login-verify', cid: o.cid, id: c.id, clientData: b64e(c.response.clientDataJSON),
+        authData: b64e(c.response.authenticatorData), signature: b64e(c.response.signature)});
+      if (v.error) throw new Error(v.error);
+      location.href = v.redirect || '/';
+    } catch (e) {
+      err.textContent = e && e.name === 'NotAllowedError' ? 'Přihlášení passkeyem bylo zrušené, nebo tu žádný passkey není.'
+                                                          : (e && e.message) || 'Přihlášení nevyšlo.';
+      btn.disabled = false;
+    }
+  };
+})();
+</script>"""
+
+
 def login_page(error=""):
     err = f'<div class=err>{html.escape(error)}</div>' if error else ''
     return _page("Přihlášení — Claude Hub", f"""
@@ -540,7 +576,8 @@ def login_page(error=""):
 <input name=password type=password autocomplete=current-password required>
 <button type=submit>Přihlásit se</button>
 {err}
-</form>""")
+</form>
+{PASSKEY_LOGIN_JS}""")
 
 
 PASSKEY_JS = """<script>
@@ -1272,6 +1309,8 @@ class Handler(BaseHTTPRequestHandler):
         if method != "POST" or not self._same_origin():
             return self._json({"error": "Jen ze stránky přihlášení."}, 403)
         form = self._read_form()
+        if form.get("step") in ("login-options", "login-verify"):
+            return self._passkey_login(form)
         ticket_id = str(form.get("ticket") or "")
         ticket = _ticket_get(ticket_id)
         user = self.accounts.by_id(ticket["uid"]) if ticket else None
@@ -1308,6 +1347,49 @@ class Handler(BaseHTTPRequestHandler):
         self.accounts.passkey_used(cred["id"], count)
         self.accounts.fail_clear(keys[0][0])
         token = self.accounts.issue_token(user, ticket["label"], mfa=True)
+        return self._send(200, json.dumps({"ok": True, "redirect": "/"}),
+                          "application/json; charset=utf-8", {"Set-Cookie": self._set_cookie(token)})
+
+    def _passkey_login(self, form):
+        """Přihlášení jen passkeyem, bez hesla: klíč s ověřením člověka na
+        zařízení (otisk, obličej, PIN) je zároveň vlastnictví i znalost, takže
+        platí za celé přihlášení včetně druhého kroku. Passkey se hledá podle
+        id, které autentizátor pošle (objevitelný klíč) — nikdo neříká, jaký
+        e-mail zkouší."""
+        rp_id, origin = self._rp()
+        keys = self._fail_keys("")
+        wait = self.accounts.fail_wait(keys)
+        if wait:
+            return self._json({"error": too_many(wait)}, 429)
+        now = time.time()
+        if form.get("step") == "login-options":
+            with _ticket_lock:
+                for k, (_, exp) in list(_pk_login.items()):
+                    if exp < now:
+                        _pk_login.pop(k, None)
+                if len(_pk_login) > 2000:
+                    return self._json({"error": "Server je teď zahlcený, zkus to za chvíli."}, 429)
+                cid, challenge = secrets.token_urlsafe(18), os.urandom(32)
+                _pk_login[cid] = (challenge, now + 180)
+            return self._json({"cid": cid, "challenge": webauthn.b64e(challenge), "rpId": rp_id})
+        with _ticket_lock:
+            challenge, exp = _pk_login.pop(str(form.get("cid") or ""), (None, 0))
+        cred = self.accounts.passkey(str(form.get("id") or ""))
+        user = self.accounts.by_id(cred["user_id"]) if cred else None
+        try:
+            if not challenge or exp < now or not cred or not user or user.get("disabled"):
+                raise webauthn.Chyba("neznámý klíč, vypršelá výzva nebo zakázaný účet")
+            count = webauthn.prihlaseni(
+                webauthn.b64d(form.get("clientData")), webauthn.b64d(form.get("authData")),
+                webauthn.b64d(form.get("signature")), challenge, origin, rp_id,
+                cred["public_key"], cred["sign_count"], uv=True)
+        except (webauthn.Chyba, ValueError, TypeError, KeyError) as exc:
+            _errlog("passkey přihlášení bez hesla", exc)
+            locked, left = self._failed(keys)
+            return self._json({"error": "Passkey nesedí. " + (locked or tries_left(left))}, 401)
+        self.accounts.passkey_used(cred["id"], count)
+        self.accounts.fail_clear(keys[0][0])
+        token = self.accounts.issue_token(user, self.headers.get("User-Agent", "")[:60], mfa=True)
         return self._send(200, json.dumps({"ok": True, "redirect": "/"}),
                           "application/json; charset=utf-8", {"Set-Cookie": self._set_cookie(token)})
 

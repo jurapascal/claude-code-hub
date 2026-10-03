@@ -303,10 +303,14 @@ def registrace(client_data_json, attestation_object, challenge, origin, rp_id):
 
 
 def prihlaseni(client_data_json, authenticator_data, signature, challenge, origin, rp_id,
-               public_key_b64, stored_count):
-    """Ověří odpověď navigator.credentials.get(). Vrací nový sign_count."""
+               public_key_b64, stored_count, uv=False):
+    """Ověří odpověď navigator.credentials.get(). Vrací nový sign_count.
+    `uv` = vyžadovat ověření člověka na zařízení (otisk, obličej, PIN) —
+    u přihlášení jen passkeyem, bez hesla, je to jediný „faktor znalosti"."""
     _client_data(client_data_json, "webauthn.get", challenge, origin)
-    _, count = _auth_data(authenticator_data, rp_id)
+    flags, count = _auth_data(authenticator_data, rp_id)
+    if uv and not flags & 0x04:
+        raise Chyba("autentizátor neověřil člověka (UV)")
     msg = authenticator_data + hashlib.sha256(client_data_json).digest()
     if not verify_cose(b64d(public_key_b64), signature, msg):
         raise Chyba("podpis nesedí")
