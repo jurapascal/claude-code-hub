@@ -57,6 +57,11 @@ HUB_URL_RE = "http://127.0.0.1:"
 # „Odhlásit se" příště opravdu zeptá, místo aby tiše naskočila zpátky.
 HANDOFF_TTL = 60
 _handoffs = {}                       # kód -> (token zařízení, do kdy)
+# Přihlášení appky na počítači přes prohlížeč (passkey): appka vyrobí nonce,
+# otevře v prohlížeči /zarizeni?n=…, člověk se přihlásí (i passkeyem) a potvrdí,
+# a appka si token vyzvedne (GET /gw/zarizeni?n=…) — jednou.
+_zarizeni = {}                       # nonce -> {"label", "exp", "token", "user"}
+ZAR_RE = __import__("re").compile(r"^[A-Za-z0-9_-]{20,64}$")
 _handoff_lock = threading.Lock()
 
 
@@ -821,6 +826,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._login_second(method)
             if route == "/login/passkey":
                 return self._login_passkey(method)
+            if route == "/zarizeni":
+                return self._zarizeni_stranka(method)
+            if route == "/gw/zarizeni":
+                return self._zarizeni_appka(method)
             # Rozhraní pro hub běžící na počítači: ověřuje se tokenem
             # v hlavičce, ne cookie, a nikdy se neproxuje do instance.
             if route == "/gw/info":
@@ -1246,7 +1255,7 @@ class Handler(BaseHTTPRequestHandler):
         cookie = {"Set-Cookie": self._set_cookie(token)}
         if recovery:
             return self._send(200, recovery_page(recovery), HTML, cookie)
-        return self._redirect("/", extra=cookie)
+        return self._redirect(self._cil_po_prihlaseni(), extra=cookie)
 
     def _login_second(self, method):
         """Druhý krok: kód z aplikace (nebo záložní), při prvním přihlášení
@@ -1390,8 +1399,81 @@ class Handler(BaseHTTPRequestHandler):
         self.accounts.passkey_used(cred["id"], count)
         self.accounts.fail_clear(keys[0][0])
         token = self.accounts.issue_token(user, self.headers.get("User-Agent", "")[:60], mfa=True)
-        return self._send(200, json.dumps({"ok": True, "redirect": "/"}),
+        return self._send(200, json.dumps({"ok": True, "redirect": self._cil_po_prihlaseni()}),
                           "application/json; charset=utf-8", {"Set-Cookie": self._set_cookie(token)})
+
+    # ---- přihlášení appky na počítači přes prohlížeč ----
+    def _cil_po_prihlaseni(self):
+        """Kam po přihlášení: běžně na hlavní stránku, ale když ho vyvolala appka
+        na počítači (/zarizeni), zpátky na potvrzení pro ni."""
+        nonce = self._cookies().get("hub_zar", "")
+        with _ticket_lock:
+            ok = bool(ZAR_RE.match(nonce)) and nonce in _zarizeni and _zarizeni[nonce]["exp"] > time.time()
+        return "/zarizeni?n=" + nonce if ok else "/"
+
+    def _zarizeni_appka(self, method):
+        """Appka: POST {label} založí nonce, GET ?n=… se ptá, jestli už je potvrzeno."""
+        now = time.time()
+        if method == "POST":
+            form = self._read_form()
+            with _ticket_lock:
+                for k, v in list(_zarizeni.items()):
+                    if v["exp"] < now:
+                        _zarizeni.pop(k, None)
+                if len(_zarizeni) > 500:
+                    return self._json({"error": "Server je teď zahlcený, zkus to za chvíli."}, 429)
+                nonce = secrets.token_urlsafe(24)
+                _zarizeni[nonce] = {"label": str(form.get("label") or "počítač")[:60], "exp": now + 600,
+                                    "token": None, "user": None}
+            return self._json({"n": nonce, "url": "/zarizeni?n=" + nonce})
+        nonce = (urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("n") or [""])[0]
+        with _ticket_lock:
+            z = _zarizeni.get(nonce) if ZAR_RE.match(nonce) else None
+            if not z or z["exp"] < now:
+                _zarizeni.pop(nonce, None)
+                return self._json({"error": "Přihlášení vypršelo, začni znovu."}, 410)
+            if not z["token"]:
+                return self._json({"stav": "ceka"})
+            _zarizeni.pop(nonce, None)                  # token se vydá jednou
+        return self._json({"stav": "hotovo", "token": z["token"], "user": z["user"]})
+
+    def _zarizeni_stranka(self, method):
+        """Prohlížeč: přihlášení (heslem i passkeyem) a potvrzení pro appku."""
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        nonce = (query.get("n") or [""])[0]
+        if method == "POST":
+            nonce = str(self._read_form().get("n") or "")
+        with _ticket_lock:
+            z = _zarizeni.get(nonce) if ZAR_RE.match(nonce) else None
+            platne = bool(z) and z["exp"] > time.time() and not z["token"]
+        if not platne:
+            return self._send(200, error_page("Tohle přihlášení už vypršelo. Zkus to znovu z appky."), HTML)
+        user = self._user()
+        if not user:
+            # Přihlásit se; po přihlášení brána vrátí sem (cookie hub_zar).
+            flags = "; Secure" if self._https() else ""
+            return self._redirect("/login", extra={"Set-Cookie": f"hub_zar={nonce}; Path=/; HttpOnly; "
+                                                                 f"SameSite=Lax; Max-Age=600{flags}"})
+        if method != "POST":
+            return self._send(200, _page("Přihlášení appky — Claude Hub", f"""
+<form class=card method=post action="/zarizeni">
+<h1>Povolit přihlášení?</h1>
+<p class=sub>Appka <b>Claude Code Hub</b> na zařízení <b>{html.escape(z["label"])}</b>
+chce být přihlášená jako <b>{html.escape(user["email"])}</b>.</p>
+<input type=hidden name=n value="{html.escape(nonce)}">
+<button type=submit>Povolit</button>
+<p class=hint>Nepoznáváš to zařízení? Zavři stránku, nic se nestane.</p>
+</form>"""), HTML)
+        if not self._same_origin():
+            return self._send(403, error_page("Tohle jde jen z téhle stránky."), HTML)
+        token = self.accounts.issue_token(user, "Appka · " + z["label"], mfa=True)
+        with _ticket_lock:
+            z["token"], z["user"] = token, user
+        return self._send(200, _page("Hotovo — Claude Hub", """
+<div class=card>
+<h1>Hotovo</h1>
+<p class=sub>Appka je přihlášená. Tuhle stránku můžeš zavřít a vrátit se do appky.</p>
+</div>"""), HTML, {"Set-Cookie": "hub_zar=; Path=/; HttpOnly; Max-Age=0"})
 
     def _gw_passkey(self, method, user):
         """Nastavení → Účet: seznam passkeyů, přidání (výzva + ověření) a odebrání.

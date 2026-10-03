@@ -992,6 +992,10 @@ class Handler(BaseHTTPRequestHandler):
                     payload.get("server", ""),
                     payload.get("email", ""),
                     payload.get("password", "")))
+            if action == "browser-start":
+                return self._json(account.browser_start(payload.get("server", "")))
+            if action == "browser-poll":
+                return self._json(account.browser_poll(payload.get("server", ""), payload.get("n", "")))
             if action == "2fa":
                 return self._json(account.second_factor(
                     payload.get("server", ""), payload.get("ticket", ""),

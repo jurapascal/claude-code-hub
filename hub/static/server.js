@@ -195,7 +195,12 @@
     creds.appendChild(pass);
     const loginRow = el('div', 'srv-row srv-actions');
     const login = el('button', 'btn primary', 'Přihlásit se');
+    // Passkey (otisk, obličej, PIN) jde jen v prohlížeči u adresy serveru —
+    // appka ho tam otevře a počká, až se přihlásíš a potvrdíš.
+    const browserLogin = el('button', 'btn ghost', 'Přihlásit v prohlížeči (passkey)');
+    browserLogin.title = 'Otevře přihlášení serveru v prohlížeči — tam můžeš použít passkey. Pak se vrátíš sem.';
     loginRow.appendChild(login);
+    loginRow.appendChild(browserLogin);
     creds.appendChild(loginRow);
     const loginErr = el('div', 'srv-status err');
     loginErr.hidden = true;
@@ -237,6 +242,36 @@
       }
       check.disabled = false;
     }
+
+    let cekani = 0;                // běžící čekání na přihlášení v prohlížeči
+    browserLogin.onclick = async () => {
+      if (!verified) return probe();
+      const mine = ++cekani;
+      browserLogin.disabled = true;
+      say(loginErr, 'busy', 'Otevírám prohlížeč…');
+      try {
+        const st = await io.api('account', {action: 'browser-start', server: verified});
+        if (st.error) { say(loginErr, 'err', st.error); browserLogin.disabled = false; return; }
+        if (io.open) io.open(st.url); else window.open(st.url, '_blank');
+        say(loginErr, 'busy', 'Přihlas se v prohlížeči (passkey, nebo heslo a kód) a potvrď. Čekám…');
+        for (let i = 0; i < 300 && mine === cekani; i++) {      // asi 10 minut
+          await new Promise((r) => setTimeout(r, 2000));
+          if (mine !== cekani) return;
+          const res = await io.api('account', {action: 'browser-poll', server: verified, n: st.n});
+          if (res.error) { say(loginErr, 'err', res.error); break; }
+          if (res.stav === 'hotovo') {
+            say(loginErr, '', '');
+            if (opts.onReady) await opts.onReady(res);
+            browserLogin.disabled = false;
+            return;
+          }
+        }
+        if (mine === cekani) say(loginErr, 'err', 'Čekání vypršelo. Zkus to znovu.');
+      } catch (e) {
+        say(loginErr, 'err', friendly('browser', e));
+      }
+      browserLogin.disabled = false;
+    };
 
     async function doLogin() {
       if (!verified) return probe();

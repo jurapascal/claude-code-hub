@@ -473,6 +473,35 @@ def login(server, email, password):
     return status()
 
 
+def browser_start(server):
+    """Přihlášení v prohlížeči (passkey, heslo + kód): appka založí na bráně
+    nonce a vrátí adresu, kterou má člověk otevřít. Token si pak vyzvedne
+    `browser_poll` — prohlížeč ho nikdy nevidí."""
+    import socket
+    base = normalize(server)
+    if not base:
+        return {"error": "Zadej adresu serveru."}
+    data, err, _kind = _call("/gw/zarizeni", base=base, payload={"label": socket.gethostname()})
+    if not data or not data.get("n"):
+        return {"error": err or "Server přihlášení v prohlížeči neumí — aktualizuj ho."}
+    return {"n": data["n"], "url": base + "/zarizeni?n=" + urllib.parse.quote(str(data["n"])), "server": base}
+
+
+def browser_poll(server, nonce):
+    base = normalize(server)
+    if not base or not nonce:
+        return {"error": "Přihlášení vypršelo, začni znovu."}
+    data, err, kind = _call("/gw/zarizeni?n=" + urllib.parse.quote(str(nonce)), base=base)
+    if kind == HTTP and err:
+        return {"error": err}
+    if not data:
+        return {"error": err or "Server neodpovídá."}
+    if data.get("stav") == "hotovo" and data.get("token"):
+        core.save_config({"gw_server": base, "gw_token": data["token"], "gw_user": data.get("user")})
+        return {"stav": "hotovo", **status()}
+    return {"stav": "ceka"}
+
+
 def second_factor(server, ticket, code):
     """Druhý krok přihlášení: kód z aplikace (nebo záložní), při prvním
     přihlášení zároveň zapnutí ověřování. Po úspěchu uloží token jako login()."""

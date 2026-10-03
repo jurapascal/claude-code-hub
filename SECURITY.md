@@ -207,6 +207,13 @@ nezadává ani e-mail a nedá se zjišťovat, kdo má účet. Výzva je na jedno
 a platí 3 minuty; neúspěchy jdou do stejných zámků jako špatné heslo. Přidávané
 passkeye musí být objevitelné a s ověřením člověka.
 
+**Přihlášení appky na počítači přes prohlížeč (2.57.16).** Passkey jde jen v prohlížeči
+na adrese serveru (WebAuthn je vázaný na doménu), proto appka otevře
+`/zarizeni?n=<nonce>` (nonce 192 bitů, platí 10 minut, jedno použití). Člověk se
+přihlásí (i passkeyem) a výslovně potvrdí „Povolit přihlášení appky na zařízení X“
+— bez potvrzení by šlo podstrčit cizí odkaz. Token zařízení se do prohlížeče
+nikdy nedostane: appka si ho vyzvedne sama podle nonce a brána ho vydá jednou.
+
 ## Pluginy (2.57)
 
 - **Pluginy Claude Code** instaluje `claude plugin install` — hub jen předá
