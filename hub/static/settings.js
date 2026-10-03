@@ -1695,45 +1695,54 @@
        Skilly (co Claude umí — moje příkazy, z pluginů, z Obsidianu),
        MCP servery (všechna napojení technicky, se stavem) a Pro appku. */
   const ROZ_TABS = [
-    ['mcp', 'Napojení (MCP)', 'i-hub'], ['pluginy', 'Pluginy', 'i-plus'],
-    ['skilly', 'Skilly', 'i-book'], ['appka', 'Pro appku', 'i-gear'],
+    ['skilly', 'Skilly', 'i-book'], ['konektory', 'Konektory (MCP)', 'i-hub'],
+    ['pluginy', 'Pluginy', 'i-plus'], ['appka', 'Pro appku', 'i-gear'],
   ];
   function rozsireni() {
     const box = section('Napojení a pluginy',
-      'Všechno, čím se Claude rozšiřuje: služby, pluginy, dovednosti (skilly) a napojení.');
+      'Jako Přizpůsobení v claude.ai: skilly (co Claude umí), konektory (služby) a pluginy.');
     const tabs = el('div', 'plg-tabs roz-tabs');
+    const prepinac = el('div', 'plg-tabs roz-moje');       // Moje | Objevit
     const telo = el('div', 'roz-telo');
-    let kde = localStorage.getItem('hub-roz-tab') || 'mcp';
-    if (!ROZ_TABS.some(([id]) => id === kde)) kde = 'mcp';     // i dřívější „Služby"
+    let kde = localStorage.getItem('hub-roz-tab') || 'skilly';
+    if (!ROZ_TABS.some(([id]) => id === kde)) kde = 'skilly';
+    let cim = localStorage.getItem('hub-roz-cim') === 'objevit' ? 'objevit' : 'moje';
     const P = window.HubPluginy;
-    const kresli = (id) => {
-      kde = id;
-      try { localStorage.setItem('hub-roz-tab', id); } catch (_) { /* soukromé okno */ }
-      for (const b of tabs.children) b.classList.toggle('on', b.dataset.k === id);
+    const uloz = (k, v) => { try { localStorage.setItem(k, v); } catch (_) { /* soukromé okno */ } };
+    const kresli = () => {
+      for (const b of tabs.children) b.classList.toggle('on', b.dataset.k === kde);
+      const maObjevit = kde === 'konektory' || kde === 'pluginy';
+      prepinac.hidden = !maObjevit;
+      for (const b of prepinac.children) b.classList.toggle('on', b.dataset.k === cim);
       telo.textContent = '';
-      const obsah = id === 'mcp' ? napojeni()
+      const objevit = maObjevit && cim === 'objevit';
+      telo.appendChild(kde === 'konektory' ? napojeni(objevit)
         : !P ? el('div', 'set-note', 'Načítám…')
-        : id === 'pluginy' ? P.claudeCode()
-        : id === 'skilly' ? P.skilly()
-        : P.appka();
-      telo.appendChild(obsah);
+        : kde === 'pluginy' ? P.claudeCode(objevit ? 'objevit' : 'moje')
+        : kde === 'skilly' ? P.skilly()
+        : P.appka());
     };
     for (const [id, text, ico] of ROZ_TABS) {
       const b = el('button', 'plg-tab');
       b.innerHTML = '<svg class="ico"><use href="#' + ico + '"/></svg><span></span>';
       b.querySelector('span').textContent = text;
       b.dataset.k = id;
-      b.onclick = () => kresli(id);
+      b.onclick = () => { kde = id; uloz('hub-roz-tab', id); kresli(); };
       tabs.appendChild(b);
     }
-    box.append(tabs, telo);
-    kresli(kde);
+    for (const [id, text] of [['moje', 'Moje'], ['objevit', 'Objevit']]) {
+      const b = el('button', 'plg-tab', text);
+      b.dataset.k = id;
+      b.onclick = () => { cim = id; uloz('hub-roz-cim', id); kresli(); };
+      prepinac.appendChild(b);
+    }
+    const hlava = el('div', 'roz-hlava');
+    hlava.append(tabs, prepinac);
+    box.append(hlava, telo);
+    kresli();
     return box;
   }
 
-  /* Napojení (MCP): nahoře služby naklikáním (účty, přihlášení, sdílení na
-     serveru), pod nimi ostatní MCP servery, které žádná služba nemá —
-     z pluginů, z účtu claude.ai, ručně přidané. Nic se neukazuje dvakrát. */
   /* Napojení, která jsou součástí appky (hub je zakládá a spravuje sám). */
   function soucastAppky(s) {
     const t = s.target || '';
@@ -1749,11 +1758,22 @@
     return null;
   }
 
-  function napojeni() {
+  function napojeni(objevit) {
     const box = el('div');
+    // Objevit: katalog (konektory claude.ai + registr MCP serverů).
+    if (objevit) {
+      box.appendChild(el('div', 'set-note',
+        'Najdi službu a přidej ji jedním klikem. Přihlásíš se pak v záložce Moje.'));
+      if (window.HubPluginy) box.appendChild(HubPluginy.katalogNapojeni(() => {
+        try { localStorage.setItem('hub-roz-cim', 'moje'); } catch (_) { /* nic */ }
+        const t = document.querySelector('.roz-moje .plg-tab[data-k="moje"]');
+        if (t) t.click();
+      }));
+      return box;
+    }
     box.appendChild(el('div', 'set-note',
       'Služby a nástroje, se kterými Claude umí pracovat — e-mail, kalendář, úkoly, design… ' +
-      'Přidáš je tlačítkem u služby a přihlásíš se jako obvykle.'));
+      'Další najdeš v záložce Objevit.'));
     box.appendChild(el('div', 'set-title plg-podnadpis', 'Služby'));
     let sluzbyServery = null;            // MCP servery, které už mají karty služeb
     box.appendChild(sluzby((d) => {
@@ -1762,15 +1782,6 @@
       sluzbyServery = new Set(d.servers || []);
       if (mcpLast) draw(mcpLast);
     }));
-    // Přidat další: konektory z claude.ai a katalog MCP serverů z registru.
-    if (window.HubPluginy) {
-      box.appendChild(el('div', 'set-title plg-podnadpis', 'Přidat další napojení'));
-      box.appendChild(HubPluginy.katalogNapojeni(() => {
-        // Nové vlastní napojení: překreslit karty služeb, ať jde hned přihlásit.
-        const stare = box.querySelector('.svc-list');
-        if (stare) stare.replaceWith(sluzby((d) => { sluzbyServery = new Set(d.servers || []); }));
-      }));
-    }
     box.appendChild(el('div', 'set-title plg-podnadpis', 'Ostatní napojení'));
     const summary = el('div', 'set-row');
     const list = el('div', 'onb-list');

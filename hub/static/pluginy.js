@@ -191,11 +191,12 @@
 
   const kolik = (n) => n >= 1e6 ? (n / 1e6).toFixed(1).replace('.0', '') + ' mil.' : n >= 1000 ? Math.round(n / 1000) + ' tis.' : String(n);
 
-  function claudeCode() {
+  function claudeCode(mode) {
     const wrap = el('div');
-    wrap.appendChild(el('div', 'set-note',
-      'Pluginy přidávají Claudovi dovednosti, příkazy, pomocníky a napojení. Instalují se z katalogů ' +
-      '(marketplace) a projeví se v nově otevřených chatech.'));
+    const objevit = mode === 'objevit';
+    wrap.appendChild(el('div', 'set-note', objevit
+      ? 'Katalog pluginů — instalace jedním klikem, projeví se v nově otevřených chatech.'
+      : 'Pluginy přidávají Claudovi dovednosti, příkazy, pomocníky a napojení.'));
     const stav = el('div', 'set-note', 'Načítám katalog…');
     wrap.appendChild(stav);
     const obsah = el('div');
@@ -231,10 +232,9 @@
 
     function kresli() {
       obsah.textContent = '';
-      // Nainstalované
-      obsah.appendChild(el('div', 'set-title plg-podnadpis', 'Nainstalované'));
-      if (!data.installed.length) obsah.appendChild(el('div', 'set-note', 'Zatím žádné — vyber si níž v katalogu.'));
-      for (const p of data.installed) {
+      // Moje: nainstalované
+      if (!objevit && !data.installed.length) obsah.appendChild(el('div', 'set-note', 'Zatím žádné pluginy. Vyber si v záložce Objevit.'));
+      for (const p of (objevit ? [] : data.installed)) {
         const [jmeno, trh] = p.id.split('@');
         const vKatalogu = data.available.find((a) => a.id === p.id);
         const {r, tlacitka} = radek(jmeno, vKatalogu ? vKatalogu.description : '', (trh || '') + (p.scope === 'project' ? ' · jen v projektu ' + (p.projectPath || '').split(/[\\/]/).pop() : '') +
@@ -249,8 +249,18 @@
         }
         obsah.appendChild(r);
       }
-      // Katalog
-      obsah.appendChild(el('div', 'set-title plg-podnadpis', 'Katalog (' + data.available.length + ')'));
+      if (!objevit) {
+        // Katalogy (marketplace) patří k mým pluginům — odkud se berou.
+        obsah.appendChild(el('div', 'set-title plg-podnadpis', 'Katalogy (marketplace)'));
+        for (const m of data.marketplaces) obsah.appendChild(radek(m.name, '', m.repo || m.url || m.source || '', 'i-folder').r);
+        const pridat = el('div', 'set-row');
+        const zdroj = el('input', 'set-input');
+        zdroj.placeholder = 'GitHub owner/repo nebo adresa katalogu';
+        pridat.append(zdroj, tlacitko('Přidat katalog', () => zdroj.value.trim() && akce({akce: 'marketplace-add', zdroj: zdroj.value.trim()})));
+        pridat.appendChild(tlacitko('Aktualizovat katalogy', () => akce({akce: 'marketplace-update'})));
+        obsah.appendChild(pridat);
+        return;
+      }
       const hledat = el('input', 'set-input plg-hledat');
       hledat.placeholder = 'Hledat plugin — třeba „figma", „github", „design"…';
       const radka = el('div', 'plg-filtry');
@@ -305,18 +315,6 @@
       let t = null;
       hledat.oninput = () => { clearTimeout(t); t = setTimeout(vypis, 150); };
       vypis();
-      // Marketplace
-      obsah.appendChild(el('div', 'set-title plg-podnadpis', 'Katalogy (marketplace)'));
-      for (const m of data.marketplaces) {
-        const {r, tlacitka} = radek(m.name, '', m.repo || m.url || m.source || '');
-        obsah.appendChild(r);
-      }
-      const pridat = el('div', 'set-row');
-      const zdroj = el('input', 'set-input');
-      zdroj.placeholder = 'GitHub owner/repo nebo adresa katalogu';
-      pridat.append(zdroj, tlacitko('Přidat katalog', () => zdroj.value.trim() && akce({akce: 'marketplace-add', zdroj: zdroj.value.trim()})));
-      pridat.appendChild(tlacitko('Aktualizovat katalogy', () => akce({akce: 'marketplace-update'})));
-      obsah.appendChild(pridat);
     }
     nacti(false);
     return wrap;
