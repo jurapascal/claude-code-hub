@@ -143,9 +143,9 @@
     return box;
   }
 
-  function radek(nazev, popis, meta, emoji) {
+  function radek(nazev, popis, meta, ico) {
     const r = el('div', 'plg-radek');
-    r.appendChild(ikonka(nazev, emoji));
+    r.appendChild(ikonka(nazev, ico));
     const info = el('div', 'plg-info');
     info.appendChild(el('b', '', nazev));
     if (meta) info.appendChild(el('span', 'plg-meta', meta));
@@ -167,22 +167,27 @@
 
   /* Ikonka: barevný čtvereček s písmenem (barva z názvu) a kategorie podle slov. */
   const KATEGORIE = [
-    ['design', 'Design', '🎨', /design|figma|ui\b|ux|css|frontend|canva|logo|color|palette/i],
-    ['kod', 'Kód a review', '🧑‍💻', /code|review|debug|test|refactor|lint|typescript|python|git\b|github|pull request|tdd/i],
-    ['data', 'Data a API', '🗄️', /database|sql|data|api\b|postgres|supabase|analytics|openapi|query/i],
-    ['web', 'Web a prohlížeč', '🌐', /browser|playwright|web|seo|scrap|search|crawl|http/i],
-    ['produktivita', 'Práce a komunikace', '📋', /slack|notion|linear|jira|asana|email|calendar|docs|project|task|workflow|agent/i],
-    ['bezpecnost', 'Bezpečnost', '🔒', /security|vulnerab|owasp|secret|auth|audit/i],
+    ['design', 'Design', 'i-image', /design|figma|ui\b|ux|css|frontend|canva|logo|color|palette/i],
+    ['kod', 'Kód a review', 'i-terminal', /code|review|debug|test|refactor|lint|typescript|python|git\b|github|pull request|tdd/i],
+    ['data', 'Data a API', 'i-chart', /database|sql|data|api\b|postgres|supabase|analytics|openapi|query/i],
+    ['web', 'Web a prohlížeč', 'i-globe', /browser|playwright|web|seo|scrap|search|crawl|http/i],
+    ['produktivita', 'Práce a komunikace', 'i-note', /slack|notion|linear|jira|asana|email|calendar|docs|project|task|workflow|agent/i],
+    ['bezpecnost', 'Bezpečnost', 'i-lock', /security|vulnerab|owasp|secret|auth|audit/i],
   ];
-  const kategorie = (p) => (KATEGORIE.find((k) => k[3].test(p.name + ' ' + p.description)) || ['ostatni', 'Ostatní', '🧩'])[0];
-  const katInfo = (id) => KATEGORIE.find((k) => k[0] === id) || ['ostatni', 'Ostatní', '🧩'];
-  function ikonka(nazev, emoji) {
+  const kategorie = (p) => (KATEGORIE.find((k) => k[3].test(p.name + ' ' + p.description)) || ['ostatni', 'Ostatní', 'i-star'])[0];
+  const katInfo = (id) => KATEGORIE.find((k) => k[0] === id) || ['ostatni', 'Ostatní', 'i-star'];
+  /* Ikonka řádku: barevný čtvereček (barva z názvu) s ikonkou appky
+     (`i-…` ze sady v index.html), nebo s prvním písmenem názvu. */
+  function ikonka(nazev, ico) {
     let h = 0;
     for (const c of nazev) h = (h * 31 + c.charCodeAt(0)) % 360;
-    const i = el('span', 'plg-ikona', emoji || (nazev[0] || '?').toUpperCase());
+    const i = el('span', 'plg-ikona');
+    if (ico && ico.startsWith('i-')) i.innerHTML = '<svg class="ico"><use href="#' + ico + '"/></svg>';
+    else i.textContent = (nazev.replace(/^[^A-Za-zÀ-ž0-9]+/, '')[0] || '?').toUpperCase();
     i.style.background = 'hsl(' + h + ' 45% 32%)';
     return i;
   }
+  const svg = (ico) => '<svg class="ico"><use href="#' + ico + '"/></svg>';
 
   const kolik = (n) => n >= 1e6 ? (n / 1e6).toFixed(1).replace('.0', '') + ' mil.' : n >= 1000 ? Math.round(n / 1000) + ' tis.' : String(n);
 
@@ -231,8 +236,10 @@
       if (!data.installed.length) obsah.appendChild(el('div', 'set-note', 'Zatím žádné — vyber si níž v katalogu.'));
       for (const p of data.installed) {
         const [jmeno, trh] = p.id.split('@');
-        const {r, tlacitka} = radek(jmeno, '', (trh || '') + (p.scope === 'project' ? ' · jen v projektu ' + (p.projectPath || '').split(/[\\/]/).pop() : '') +
-                                    (p.enabled ? ' · zapnutý' : ' · vypnutý'));
+        const vKatalogu = data.available.find((a) => a.id === p.id);
+        const {r, tlacitka} = radek(jmeno, vKatalogu ? vKatalogu.description : '', (trh || '') + (p.scope === 'project' ? ' · jen v projektu ' + (p.projectPath || '').split(/[\\/]/).pop() : '') +
+                                    (p.enabled ? ' · zapnutý' : ' · vypnutý'),
+                                    katInfo(vKatalogu ? kategorie(vKatalogu) : 'ostatni')[2]);
         if (p.scope === 'user') {
           tlacitka.appendChild(tlacitko(p.enabled ? 'Vypnout' : 'Zapnout', () => akce({akce: p.enabled ? 'disable' : 'enable', id: p.id})));
           tlacitka.appendChild(tlacitko('Aktualizovat', () => akce({akce: 'update', id: p.id})));
@@ -249,15 +256,17 @@
       const radka = el('div', 'plg-filtry');
       let kat = '', razeni = 'popularita';
       const chipy = el('div', 'plg-chipy');
-      const mkChip = (id, text) => {
-        const c = el('button', 'plg-chip' + (kat === id ? ' on' : ''), text);
+      const mkChip = (id, text, ico) => {
+        const c = el('button', 'plg-chip' + (kat === id ? ' on' : ''));
+        c.innerHTML = (ico ? svg(ico) : '') + '<span></span>';
+        c.querySelector('span').textContent = text;
         c.onclick = () => { kat = id; for (const x of chipy.children) x.classList.toggle('on', x.dataset.k === id); vypis(); };
         c.dataset.k = id;
         chipy.appendChild(c);
       };
       mkChip('', 'Vše');
-      for (const k of KATEGORIE) mkChip(k[0], k[2] + ' ' + k[1]);
-      mkChip('ostatni', '🧩 Ostatní');
+      for (const k of KATEGORIE) mkChip(k[0], k[1], k[2]);
+      mkChip('ostatni', 'Ostatní', 'i-star');
       const sel = el('select', 'set-input plg-razeni');
       for (const [v, t] of [['popularita', 'Nejoblíbenější'], ['nazev', 'Podle abecedy']]) sel.appendChild(Object.assign(el('option', '', t), {value: v}));
       sel.onchange = () => { razeni = sel.value; vypis(); };
@@ -315,7 +324,7 @@
 
   /* Skilly: co Claude umí. Moje příkazy (slash), ze zapnutých pluginů a
      postupy v Obsidian Brainu, které si Claude načte, když je potřebuje. */
-  const ZDROJE = [['moje', 'Moje příkazy', '⚡'], ['plugin', 'Z pluginů', '🧩'], ['obsidian', 'Z Obsidianu', '📚']];
+  const ZDROJE = [['moje', 'Moje příkazy', 'i-bolt'], ['plugin', 'Z pluginů', 'i-plus'], ['obsidian', 'Z Obsidianu', 'i-book']];
   function skilly() {
     const wrap = el('div');
     wrap.appendChild(el('div', 'set-note',
@@ -331,16 +340,18 @@
       const filtry = el('div', 'plg-filtry');
       const chipy = el('div', 'plg-chipy');
       let zdroj = '';
-      const mk = (id, text) => {
+      const mk = (id, text, ico) => {
         const pocet = id ? vse.filter((x) => x.source === id).length : vse.length;
         if (id && !pocet) return;
-        const c = el('button', 'plg-chip' + (zdroj === id ? ' on' : ''), text + ' · ' + pocet);
+        const c = el('button', 'plg-chip' + (zdroj === id ? ' on' : ''));
+        c.innerHTML = (ico ? svg(ico) : '') + '<span></span>';
+        c.querySelector('span').textContent = text + ' · ' + pocet;
         c.dataset.k = id;
         c.onclick = () => { zdroj = id; for (const x of chipy.children) x.classList.toggle('on', x.dataset.k === id); vypis(); };
         chipy.appendChild(c);
       };
       mk('', 'Vše');
-      for (const [id, text, ico] of ZDROJE) mk(id, ico + ' ' + text);
+      for (const [id, text, ico] of ZDROJE) mk(id, text, ico);
       filtry.appendChild(chipy);
       const seznam = el('div', 'plg-seznam');
       wrap.append(hledat, filtry, seznam);
@@ -359,8 +370,8 @@
         const dalsi = () => {
           if (mine !== tik) return;
           const x = hit[i++];
-          const nadpis = x.source === 'obsidian' ? '📚 ' + (x.category || 'Obsidian')
-            : x.source === 'plugin' ? '🧩 Plugin ' + (x.plugin || '') : '⚡ Moje příkazy';
+          const nadpis = x.source === 'obsidian' ? 'Obsidian · ' + (x.category || '')
+            : x.source === 'plugin' ? 'Plugin ' + (x.plugin || '') : 'Moje příkazy';
           if (nadpis !== skupina) {
             skupina = nadpis;
             seznam.appendChild(el('div', 'set-title plg-podnadpis plg-vstup', nadpis));
@@ -385,9 +396,10 @@
 
   function appka() {
     const wrap = el('div');
-    wrap.appendChild(el('div', 'set-note plg-varovani',
-      '⚠ Plugin appky běží uvnitř aplikace se stejnými právy jako ty — může číst chaty, ' +
-      'posílat zprávy Claudovi a spouštět příkazy. Zapni jen plugin, kterému věříš.'));
+    const varovani = el('div', 'set-note plg-varovani');
+    varovani.innerHTML = svg('i-error') + '<span>Plugin appky běží uvnitř aplikace se stejnými právy jako ty — může ' +
+      'číst chaty, posílat zprávy Claudovi a spouštět příkazy. Zapni jen plugin, kterému věříš.</span>';
+    wrap.appendChild(varovani);
     const obsah = el('div');
     wrap.appendChild(obsah);
 

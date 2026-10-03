@@ -500,10 +500,16 @@ def services(refresh=False):
             item["accounts"] = _mcp_accounts(sid, spec, states)
         if not _claude():
             item["missing"] = "Claude Code (claude) tu není nainstalovaný."
-        claimed.update(a["name"] for a in item.get("accounts") or [])
+        if spec["kind"] == "google":
+            if item.get("accounts"):
+                claimed.add(GOOGLE_MCP_NAME)  # jeden server pro všechny Google účty
+        else:
+            claimed.update(a["name"] for a in item.get("accounts") or [])
         out.append(item)
+    # `servers` = MCP servery, které už má některá karta služby — v seznamu
+    # ostatních napojení se neopakují.
     return {"services": out, "checking": bool(job.get("running")) or _recheck_waiting.is_set(),
-            "on_server": core.on_gateway()}
+            "on_server": core.on_gateway(), "servers": sorted(claimed)}
 
 
 def add_account(service, label="", account="", client_id="", client_secret=""):

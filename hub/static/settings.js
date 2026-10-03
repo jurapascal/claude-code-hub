@@ -1220,7 +1220,7 @@
      chce „napojit Freelo", ne registrovat MCP server: popisek účtu, Přihlásit,
      a na serveru vložit adresu, kam přihlášení přesměrovalo. Víc účtů u jedné
      služby je normální (firma, osobní). */
-  function sluzby() {
+  function sluzby(onData) {
     const wrap = el('div', 'svc-list');
     wrap.appendChild(el('div', 'set-dim', 'Načítám služby…'));
     let data = null;
@@ -1249,6 +1249,7 @@
       // Rozdělané přihlášení se nepřekresluje — člověk by přišel o vložený text.
       // …ani rozdělaný výběr lidí u sdílení.
       if (!wrap.querySelector('.svc-login, .svc-share')) draw();
+      if (onData) onData(data);
       if (data.checking) timer = setTimeout(() => load(false), 2500);
     }
 
@@ -1661,24 +1662,23 @@
        Skilly (co Claude umí — moje příkazy, z pluginů, z Obsidianu),
        MCP servery (všechna napojení technicky, se stavem) a Pro appku. */
   const ROZ_TABS = [
-    ['sluzby', 'Služby', '🔗'], ['pluginy', 'Pluginy', '🧩'], ['skilly', 'Skilly', '📜'],
-    ['mcp', 'MCP servery', '🔌'], ['appka', 'Pro appku', '🛠️'],
+    ['mcp', 'Napojení (MCP)', 'i-hub'], ['pluginy', 'Pluginy', 'i-plus'],
+    ['skilly', 'Skilly', 'i-book'], ['appka', 'Pro appku', 'i-gear'],
   ];
   function rozsireni() {
     const box = section('Napojení a pluginy',
       'Všechno, čím se Claude rozšiřuje: služby, pluginy, dovednosti (skilly) a napojení.');
     const tabs = el('div', 'plg-tabs roz-tabs');
     const telo = el('div', 'roz-telo');
-    let kde = localStorage.getItem('hub-roz-tab') || 'sluzby';
-    if (!ROZ_TABS.some(([id]) => id === kde)) kde = 'sluzby';
+    let kde = localStorage.getItem('hub-roz-tab') || 'mcp';
+    if (!ROZ_TABS.some(([id]) => id === kde)) kde = 'mcp';     // i dřívější „Služby"
     const P = window.HubPluginy;
     const kresli = (id) => {
       kde = id;
       try { localStorage.setItem('hub-roz-tab', id); } catch (_) { /* soukromé okno */ }
       for (const b of tabs.children) b.classList.toggle('on', b.dataset.k === id);
       telo.textContent = '';
-      const obsah = id === 'sluzby' ? napojeni('sluzby')
-        : id === 'mcp' ? napojeni('mcp')
+      const obsah = id === 'mcp' ? napojeni()
         : !P ? el('div', 'set-note', 'Načítám…')
         : id === 'pluginy' ? P.claudeCode()
         : id === 'skilly' ? P.skilly()
@@ -1686,7 +1686,9 @@
       telo.appendChild(obsah);
     };
     for (const [id, text, ico] of ROZ_TABS) {
-      const b = el('button', 'plg-tab', ico + ' ' + text);
+      const b = el('button', 'plg-tab');
+      b.innerHTML = '<svg class="ico"><use href="#' + ico + '"/></svg><span></span>';
+      b.querySelector('span').textContent = text;
       b.dataset.k = id;
       b.onclick = () => kresli(id);
       tabs.appendChild(b);
@@ -1696,19 +1698,23 @@
     return box;
   }
 
-  function napojeni(mode) {
+  /* Napojení (MCP): nahoře služby naklikáním (účty, přihlášení, sdílení na
+     serveru), pod nimi ostatní MCP servery, které žádná služba nemá —
+     z pluginů, z účtu claude.ai, ručně přidané. Nic se neukazuje dvakrát. */
+  function napojeni() {
     const box = el('div');
-    if (mode === 'sluzby') {
-      box.appendChild(el('div', 'set-note',
-        'Služby, se kterými Claude umí pracovat — e-mail, kalendář, úkoly… ' +
-        'Přidáš je tlačítkem u služby a přihlásíš se jako obvykle.'));
-      box.appendChild(sluzby());
-      return box;
-    }
-    // MCP servery: všechna napojení Claude Code se stavem (i z účtu claude.ai).
     box.appendChild(el('div', 'set-note',
-      'Všechna napojení, která Claude Code má — i ta z pluginů a z účtu claude.ai. ' +
-      'Funkční jsou nahoře.'));
+      'Služby a nástroje, se kterými Claude umí pracovat — e-mail, kalendář, úkoly, design… ' +
+      'Přidáš je tlačítkem u služby a přihlásíš se jako obvykle.'));
+    box.appendChild(el('div', 'set-title plg-podnadpis', 'Služby'));
+    let sluzbyServery = null;            // MCP servery, které už mají karty služeb
+    box.appendChild(sluzby((d) => {
+      const nove = (d.servers || []).join('|');
+      if (sluzbyServery && [...sluzbyServery].join('|') === nove) return;   // bez blikání při kontrole
+      sluzbyServery = new Set(d.servers || []);
+      if (mcpLast) draw(mcpLast);
+    }));
+    box.appendChild(el('div', 'set-title plg-podnadpis', 'Ostatní napojení'));
     const acct = el('div', 'mcp-acct');
     const summary = el('div', 'set-row');
     const list = el('div', 'onb-list');
@@ -1776,7 +1782,9 @@
       if (!servers.length) list.appendChild(el('div', 'empty', '(žádné napojení)'));
       // Funkční nahoře, pak co chce přihlásit, pak zbytek; uvnitř podle abecedy.
       const PORADI = {ok: 0, auth: 1, local: 2};
-      const serazene = servers.slice().sort((a, b) =>
+      const ostatni = sluzbyServery ? servers.filter((x) => !sluzbyServery.has(x.name)) : servers;
+      if (!ostatni.length && servers.length) list.appendChild(el('div', 'set-note', 'Všechna napojení jsou mezi službami výš.'));
+      const serazene = ostatni.slice().sort((a, b) =>
         ((PORADI[a.state] ?? 3) - (PORADI[b.state] ?? 3)) ||
         a.name.replace(/^claude\.ai /, '').localeCompare(b.name.replace(/^claude\.ai /, ''), 'cs'));
       const tik = ++drawTik;
@@ -1785,7 +1793,7 @@
         const [cls, dot, fallback] = MCP_STATES[s.state] || MCP_STATES.unknown;
         const row = el('div', 'onb-row mcp-row plg-vstup');
         const jmeno = s.name.replace(/^claude\.ai /, '');
-        row.appendChild(window.HubPluginy ? HubPluginy.ikonka(jmeno, s.name.startsWith('claude.ai ') ? '☁️' : '') : el('span'));
+        row.appendChild(window.HubPluginy ? HubPluginy.ikonka(jmeno, s.name.startsWith('claude.ai ') ? 'i-globe' : 'i-hub') : el('span'));
         row.appendChild(Object.assign(el('span', 'mcp-dot ' + cls), {textContent: dot}));
         const col = el('span', 'onb-col');
         col.appendChild(el('span', null, jmeno + (s.name.startsWith('claude.ai ') ? '  · z účtu claude.ai' : '')));
@@ -1827,7 +1835,7 @@
         return;
       }
       while (data.running) {
-        busy(data.step || 'Ptám se serverů…');
+        busy('Zjišťuji, která napojení odpovídají… (každé se ptá zvlášť, chvíli to trvá)');
         drawAccount(data.account);
         await new Promise(r => setTimeout(r, 1200));
         try {
