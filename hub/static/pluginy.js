@@ -186,7 +186,7 @@
     else i.textContent = (nazev.replace(/^[^A-Za-zÀ-ž0-9]+/, '')[0] || '?').toUpperCase();
     i.style.background = 'hsl(' + h + ' 45% 32%)';
     // Skutečné logo vydavatele / služby (hub ho stáhne a uloží); bez něj zůstává ikonka.
-    if (logo && io && io.token) {
+    if (logo && io) {
       const img = el('img', 'plg-logo');
       img.alt = '';
       img.onload = () => { i.classList.add('s-logem'); i.textContent = ''; i.appendChild(img); };
