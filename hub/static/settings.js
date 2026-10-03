@@ -813,7 +813,7 @@
      konektory z claude.ai (Gmail, Drive…) — jiný účet = jiné konektory. */
   function claudeUcet() {
     const wrap = el('div', 'acc-claude');
-    wrap.appendChild(el('div', 'set-title plg-podnadpis', 'Claude Code'));
+    wrap.appendChild(el('div', 'set-title plg-podnadpis', 'Předplatné Claude'));
     const radek = el('div', 'mcp-acct');
     radek.appendChild(el('span', 'set-dim', 'Zjišťuji účet…'));
     wrap.appendChild(radek);
@@ -821,8 +821,10 @@
       radek.textContent = '';
       const col = el('span', 'onb-col');
       if (a && a.email) {
-        col.appendChild(el('span', null, a.name ? a.name + ' · ' + a.email : a.email));
-        col.appendChild(el('small', null, ['konektory z claude.ai patří k tomuhle účtu', a.plan, a.org].filter(Boolean).join(' · ')));
+        col.appendChild(el('span', null, a.email));
+        col.appendChild(el('small', null, 'Předplatné: ' + (a.plan || 'neznámé') +
+          (a.org ? ' · ' + a.org : '') + (a.name ? ' · ' + a.name : '')));
+        col.appendChild(el('small', null, 'Konektory z claude.ai patří k tomuhle účtu.'));
       } else {
         col.appendChild(el('span', 'set-warn', 'Claude Code není přihlášený'));
         col.appendChild(el('small', null, 'Bez přihlášení Claude nepracuje a konektory z claude.ai nejsou vidět.'));
@@ -850,7 +852,8 @@
 
     const body = el('div');
     box.appendChild(body);
-    box.appendChild(claudeUcet());
+    const claudeBox = claudeUcet();
+    box.appendChild(claudeBox);
 
     function busy(text) {
       body.textContent = '';
@@ -922,6 +925,7 @@
       acts.appendChild(out);
       prof.appendChild(acts);
       body.appendChild(prof);
+      body.appendChild(claudeBox);      // účet a předplatné hned pod profilem
 
       const cards = el('div', 'acc-cards');
       cards.appendChild(card(HubPredplatne.serverBlock(io), 'i-hub'));
