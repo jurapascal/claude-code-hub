@@ -194,13 +194,11 @@
     }
     return i;
   }
-  /* Klíč loga z adresy serveru (mcp.notion.com → d:notion.com), stejně jako v hub/pluginy.py. */
+  /* Klíč loga z adresy serveru — doménu značky určuje hub (hub/pluginy.py logo). */
   function logoZUrl(url) {
     let host = '';
     try { host = new URL(/^https?:/.test(url) ? url : 'https://' + url).hostname.toLowerCase(); } catch (_) { return ''; }
-    const l = host.split('.');
-    const dom = l.length > 2 ? (['co', 'com', 'org', 'net'].includes(l[l.length - 2]) && l[l.length - 1].length === 2 ? l.slice(-3) : l.slice(-2)).join('.') : host;
-    return /^[a-z0-9.-]{3,80}$/.test(dom) && dom.includes('.') ? 'd:' + dom : '';
+    return /^[a-z0-9.-]{3,100}$/.test(host) && host.includes('.') ? 'h:' + host : '';
   }
   const svg = (ico) => '<svg class="ico"><use href="#' + ico + '"/></svg>';
 

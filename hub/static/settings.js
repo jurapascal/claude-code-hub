@@ -1358,6 +1358,16 @@
       const [cls, dot] = MCP_STATES[acc.state] || MCP_STATES.unknown;
       const wrapRow = el('div', 'svc-acc-wrap');
       const row = el('div', 'svc-acc');
+      // Logo u každého účtu: vlastní napojení má logo svého webu, ostatní logo služby.
+      const sIco = svcIcon(svc.id);
+      if (svc.kind === 'custom' && window.HubPluginy) {
+        row.appendChild(HubPluginy.ikonka(acc.label, 'i-hub', HubPluginy.logoZUrl(acc.detail || '')));
+      } else if (sIco) {
+        const box = el('span', 'plg-ikona s-logem');
+        sIco.className = 'plg-logo';
+        box.appendChild(sIco);
+        row.appendChild(box);
+      }
       row.appendChild(el('span', 'mcp-dot ' + cls, dot));
       const col = el('span', 'onb-col');
       col.appendChild(el('span', null, acc.label));

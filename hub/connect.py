@@ -203,6 +203,9 @@ def _user_servers():
 _recheck_waiting = threading.Event()
 
 
+_unknown_at = 0.0
+
+
 def _recheck():
     """Znovu zjistit stav napojení po změně. Když kontrola zrovna běží, začala
     před změnou a nový server nezná — pustí se proto ještě jednou, až doběhne."""
@@ -506,6 +509,15 @@ def services(refresh=False):
         else:
             claimed.update(a["name"] for a in item.get("accounts") or [])
         out.append(item)
+    # Účet, o jehož stavu se zatím neví (právě přidaný, nebo kontrola doběhla
+    # před jeho přidáním), by zůstal navždy na „zjišťuju…" — kontrola se pustí
+    # znovu (nejvýš jednou za minutu).
+    global _unknown_at
+    if not job.get("running") and not _recheck_waiting.is_set() and time.time() - _unknown_at > 60 and any(
+            a.get("state") == "unknown" for it in out for a in it.get("accounts") or []):
+        _unknown_at = time.time()
+        _recheck()
+        job = core.job_state("mcp")
     # `servers` = MCP servery, které už má některá karta služby — v seznamu
     # ostatních napojení se neopakují.
     return {"services": out, "checking": bool(job.get("running")) or _recheck_waiting.is_set(),

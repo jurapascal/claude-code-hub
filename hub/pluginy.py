@@ -196,7 +196,16 @@ def _hotovo(co):
 # služby z jejího vlastního webu (napojení). Hub je stáhne sám, uloží na disk
 # (~/.claude/hub-logos/) a vydává stránce — prohlížeč nesahá na cizí servery
 # a nikdo se nedozví, co si prohlížíš. Jen rastrové obrázky, žádné SVG.
-LOGO_RE = re.compile(r"^(gh:[A-Za-z0-9-]{1,39}|d:[a-z0-9.-]{3,80})$")
+LOGO_RE = re.compile(r"^(gh:[A-Za-z0-9-]{1,39}|d:[a-z0-9.-]{3,80}|h:[a-z0-9.-]{3,100})$")
+# Adresa MCP serveru není vždy web služby (ai.todoist.net → todoist.com): ručně
+# ověřené případy; jinak se bere hlavní doména adresy.
+BRAND_HOSTY = {
+    "ai.todoist.net": "todoist.com", "api.githubcopilot.com": "github.com", "learn.microsoft.com": "microsoft.com",
+    "mcp.zoom.us": "zoom.us", "api.anthropic.com": "anthropic.com", "gitlab.com": "gitlab.com",
+    "mcp.make.com": "make.com", "mcp.apify.com": "apify.com", "huggingface.co": "huggingface.co",
+    "mcp.sentry.dev": "sentry.io", "mcp.linear.app": "linear.app", "mcp.canva.com": "canva.com",
+    "drivemcp.googleapis.com": "google.com", "mcp.stripe.com": "stripe.com", "api.githubcopilot.com/mcp": "github.com",
+}
 _LOGO_PRAZDNE = b""
 
 
@@ -204,6 +213,8 @@ def logo_domeny(url):
     """`d:notion.com` z adresy MCP serveru (mcp.notion.com → notion.com)."""
     import urllib.parse
     host = (urllib.parse.urlparse(str(url or "")).hostname or "").lower()
+    if host in BRAND_HOSTY:
+        return "d:" + BRAND_HOSTY[host]
     labels = host.split(".")
     if len(labels) > 2:
         labels = labels[-3:] if labels[-2] in ("co", "com", "org", "net") and len(labels[-1]) == 2 else labels[-2:]
@@ -260,6 +271,10 @@ def logo(klic):
     na disku — služba se nezkouší pořád dokola."""
     if not LOGO_RE.match(str(klic or "")):
         return None
+    if klic.startswith("h:"):                         # h:<adresa serveru> → doména značky
+        klic = logo_domeny("https://" + klic[2:])
+        if not klic:
+            return None
     os.makedirs(_logo_slozka(), exist_ok=True)
     cesta = os.path.join(_logo_slozka(), klic.replace(":", "_"))
     try:
@@ -367,7 +382,7 @@ def napojeni_katalog(hledat=""):
             cached = json.load(fh)
         if time.time() - cached.get("at", 0) < 86400 and cached.get("items"):
             for i in cached["items"]:
-                i.setdefault("logo", logo_domeny(i.get("url")))   # starší cache loga neměla
+                i["logo"] = logo_domeny(i.get("url"))   # vždy znovu — pravidla se zpřesňují
             _NAPOJENI.update(at=cached["at"], data={"items": cached["items"]})
             return _NAPOJENI["data"]
     except (OSError, ValueError):
