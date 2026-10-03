@@ -864,7 +864,7 @@
   async function deleteNote() {
     if (!current || proposes() || !canEdit()) return;
     const was = current;
-    if (!confirm(`Smazat poznámku „${baseName(was)}“? Přesune se do koše — dá se vrátit.`)) return;
+    if (!(await HubDialog.confirm(`Smazat poznámku „${baseName(was)}“? Přesune se do koše — dá se vrátit.`, {title: 'Smazat poznámku', ok: 'Smazat'}))) return;
     clearTimeout(saveTimer);
     dirty = false;
     let res;
@@ -955,7 +955,7 @@
       try {
         let out = await sendFile(file, rel, false);
         if (out.exists) {
-          if (!confirm(`„${rel}“ už tu je. Přepsat?`)) continue;
+          if (!(await HubDialog.confirm(`„${rel}“ už tu je. Přepsat?`, {title: 'Soubor už existuje', ok: 'Přepsat'}))) continue;
           out = await sendFile(file, rel, true);
         }
         done++;
@@ -1406,7 +1406,7 @@
     save.onclick = async () => {
       const emails = only ? [...chosen] : [];
       if (only && !emails.length &&
-          !confirm('Nikoho jsi nevybral — ' + what.toLowerCase() + ' uvidí jen správci poznámek. Pokračovat?')) return;
+          !(await HubDialog.confirm('Nikoho jsi nevybral — ' + what.toLowerCase() + ' uvidí jen správci poznámek. Pokračovat?', {title: 'Nikdo nevybrán', ok: 'Pokračovat'}))) return;
       save.disabled = true;
       try {
         const out = await aclFetch('POST', {cesta: path, emaily: emails, jen: only});

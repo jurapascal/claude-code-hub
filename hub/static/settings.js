@@ -788,7 +788,7 @@
       if (!form.hidden) (form.querySelector('input') || {focus() {}}).focus();
     };
     off.onclick = async () => {
-      if (!confirm('Odpojit Jev? Údaje se z tohohle počítače smažou.')) return;
+      if (!(await HubDialog.confirm('Odpojit Jev? Údaje se z tohohle počítače smažou.', {title: 'Odpojit Jev', ok: 'Odpojit'}))) return;
       try { draw(await io.api('jev', {action: 'remove'})); }
       catch (err) { io.toast(err.message); }
     };
@@ -990,7 +990,7 @@
           r.appendChild(el('span', 'set-note', 'přidán ' + kdy(k.created) + ' · naposledy ' + kdy(k.used)));
           const del = el('button', 'btn ghost', 'Odebrat');
           del.onclick = async () => {
-            if (!confirm('Odebrat passkey „' + (k.name || 'Passkey') + '“? Přihlásíš se pak kódem z aplikace.')) return;
+            if (!(await HubDialog.confirm('Odebrat passkey „' + (k.name || 'Passkey') + '“? Přihlásíš se pak kódem z aplikace.', {title: 'Odebrat passkey', ok: 'Odebrat'}))) return;
             try { kresliPk((await gw('/gw/passkey', {action: 'delete', id: k.id})).passkeys); }
             catch (e) { io.toast(e.message); }
           };
@@ -1012,7 +1012,7 @@
       async function pridatPk() {
         const vychozi = /iPhone|iPad/.test(navigator.userAgent) ? 'iPhone' : /Android/.test(navigator.userAgent) ? 'Android'
           : /Mac/.test(navigator.platform) ? 'Mac' : /Win/.test(navigator.platform) ? 'Windows' : 'Počítač';
-        const name = prompt('Jak se má passkey jmenovat? (třeba „Můj telefon“)', vychozi);
+        const name = await HubDialog.prompt('Jak se má passkey jmenovat? (třeba „Můj telefon“)', vychozi, {title: 'Název passkeye', ok: 'Přidat'});
         if (name === null) return;
         try {
           const o = await gw('/gw/passkey', {action: 'options'});
@@ -1411,8 +1411,8 @@
       const del = el('button', 'set-x', '×');
       del.title = 'Odebrat účet';
       del.onclick = async () => {
-        if (!confirm(svc.kind === 'custom' ? `Odebrat napojení ${acc.label}?`
-                                           : `Odebrat účet ${acc.label} (${svc.label})?`)) return;
+        if (!(await HubDialog.confirm(svc.kind === 'custom' ? `Odebrat napojení ${acc.label}?`
+                                           : `Odebrat účet ${acc.label} (${svc.label})?`, {title: 'Odebrat napojení', ok: 'Odebrat'}))) return;
         try {
           const r = await io.api('connect', {action: 'remove', service: svc.id, name: acc.name});
           if (mine) {
@@ -1878,7 +1878,7 @@
           del.title = 'Odebrat napojení';
           del.onclick = async (ev) => {
             ev.stopPropagation();
-            if (!confirm('Odebrat napojení ' + s.name + '?')) return;
+            if (!(await HubDialog.confirm('Odebrat napojení ' + s.name + '?', {title: 'Odebrat napojení', ok: 'Odebrat'}))) return;
             try {
               await io.api('mcp', {action: 'remove', name: s.name});
               io.toast(s.name + ' odebrán.');
@@ -2286,7 +2286,7 @@
       } catch (err) { io.toast('Nepovedlo se: ' + err.message); }
     };
     clear.onclick = async () => {
-      if (!confirm('Vymazat log?')) return;
+      if (!(await HubDialog.confirm('Vymazat log?', {title: 'Vymazat log', ok: 'Vymazat'}))) return;
       try { await io.api('log-clear', {}); await load(); }
       catch (err) { io.toast(err.message); }
     };

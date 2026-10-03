@@ -749,7 +749,7 @@ function sharedDelete(v) {
     wrap.onclick = (ev) => { if (ev.target === wrap) zavri(); };
     wrap.querySelector('.sd-ok').onclick = async () => {
       const natrvalo = !!wrap.querySelector('input[name=sd]:checked').value;
-      if (natrvalo && !confirm(`Opravdu smazat „${v.name}“ i se všemi soubory natrvalo?`)) return;
+      if (natrvalo && !(await HubDialog.confirm(`Opravdu smazat „${v.name}“ i se všemi soubory natrvalo?`, {title: 'Smazat natrvalo', ok: 'Smazat natrvalo'}))) return;
       wrap.querySelector('.sd-ok').disabled = true;
       try {
         const out = await sharedPost({akce: 'smazat', slug: v.slug, natrvalo});
@@ -941,7 +941,7 @@ async function sharedMembers(v) {
 }
 
 async function sharedAction(v, akce, question) {
-  if (!confirm(question)) return;
+  if (!(await HubDialog.confirm(question, {title: 'Potvrď', ok: 'Potvrdit'}))) return;
   try {
     const out = await sharedPost({akce, slug: v.slug});
     toast(out.message || 'Hotovo.');
@@ -952,8 +952,8 @@ async function sharedAction(v, akce, question) {
 }
 
 async function restartSpace(why) {
-  if (!confirm(why + '\n\nRestartovat teď? Zabere to pár vteřin a otevřené ' +
-               'rozhovory se pak vrátí.')) return;
+  if (!(await HubDialog.confirm(why + '\n\nRestartovat teď? Zabere to pár vteřin a otevřené ' +
+               'rozhovory se pak vrátí.', {title: 'Restartovat prostor', ok: 'Restartovat'}))) return;
   try {
     const r = await fetch('/gw/restart', {
       method: 'POST', credentials: 'same-origin',
@@ -1293,7 +1293,7 @@ function readChat(c) {
 
 /* Pokračovat v konverzaci: tohle už je nový tab s Claude Code. `prompt` je
    zpráva napsaná v okně se čtením — Claude na ní začne dělat hned po startu. */
-function resumeChat(c, prompt, preneseny) {
+async function resumeChat(c, prompt, preneseny) {
   if (!c.exists) {
     toast(c.cwd ? 'Složka téhle konverzace už není: ' + c.cwd
                 : 'Tuhle konverzaci jsi poslal na počítač — pokračuj v ní tam.');
@@ -1305,8 +1305,8 @@ function resumeChat(c, prompt, preneseny) {
   let fork = false;
   // Prave preneseny chat je cerstvy jen proto, ze jsme ho pred chvili zapsali - nikde jinde nebezi.
   if (!preneseny && Date.now() / 1000 - c.updated < 180) {
-    if (!confirm(`Konverzace „${c.title}" se změnila před chvílí — nejspíš ještě běží jinde.\n\n` +
-                 'Otevřít její kopii? Původní konverzace zůstane, jak je.')) return;
+    if (!(await HubDialog.confirm(`Konverzace „${c.title}" se změnila před chvílí — nejspíš ještě běží jinde.\n\n` +
+                 'Otevřít její kopii? Původní konverzace zůstane, jak je.', {title: 'Konverzace možná běží jinde', ok: 'Otevřít kopii'}))) return;
     fork = true;
   }
   openTab({kind: 'project', path: c.cwd, title: c.title.slice(0, 40), agent: 'claude',
@@ -1575,7 +1575,7 @@ async function sdiletChat(tab) {
 }
 
 async function zrusitSdileni(rel) {
-  if (!confirm('Přestat chat sdílet? Kolegové ho přestanou vidět.')) return;
+  if (!(await HubDialog.confirm('Přestat chat sdílet? Kolegové ho přestanou vidět.', {title: 'Přestat sdílet', ok: 'Přestat sdílet'}))) return;
   try { await relacePost({akce: 'zrusit', id: rel.id}); } catch (err) { toast(err.message); }
   loadRelace();
 }
@@ -3318,8 +3318,8 @@ function projectMenu(ev, p) {
 /* Odebrání je jen o panelu — složka na disku zůstává. Kdyby to mazalo soubory,
    byla by to poslední věc, kterou by kdo od launcheru čekal. */
 async function removeProject(p) {
-  if (!confirm(`Odebrat „${p.label || p.name}" z Hubu?\n\n` +
-               `Složka na disku zůstane, maže se jen z panelu:\n${p.path}`)) return;
+  if (!(await HubDialog.confirm(`Odebrat „${p.label || p.name}" z Hubu?\n\n` +
+               `Složka na disku zůstane, maže se jen z panelu:\n${p.path}`, {title: 'Odebrat projekt', ok: 'Odebrat'}))) return;
   try {
     const r = await api('project', {action: 'remove', path: p.path});
     if (r.rescanned) {

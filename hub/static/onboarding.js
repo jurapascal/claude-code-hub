@@ -359,7 +359,7 @@
     };
     const clone = el('button', 'actionbtn', 'Stáhnout z GitHubu…');
     clone.onclick = async () => {
-      const repo = prompt('Adresa úložiště na GitHubu (např. jmeno/pamet nebo celý odkaz):', '');
+      const repo = await HubDialog.prompt('Adresa úložiště na GitHubu (např. jmeno/pamet nebo celý odkaz):', '', {title: 'Stáhnout z GitHubu', ok: 'Stáhnout'});
       if (!repo) return;
       try {
         const r = await io.api('vault', {action: 'clone', repo: repo.trim()});

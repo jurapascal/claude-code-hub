@@ -1316,10 +1316,10 @@
        potvrzení se proto otevře nový tab, rovnou v bypassu. */
     async function chooseBypass() {
       if (tab.bypass || seenBypass) return setMode('bypass');
-      const ok = window.confirm(
+      const ok = await HubDialog.confirm(
         'Režim bez ptaní: Claude pak sám spouští programy a mění soubory — ' +
         'i takové, které můžou něco smazat nebo rozbít.\n\n' +
-        'Zapne se v novém rozhovoru, tenhle zůstane, jak je. Pokračovat?');
+        'Zapne se v novém rozhovoru, tenhle zůstane, jak je. Pokračovat?', {title: 'Režim bez ptaní', ok: 'Zapnout', danger: true});
       if (!ok) return;
       try {
         if (io.acceptBypass) await io.acceptBypass();

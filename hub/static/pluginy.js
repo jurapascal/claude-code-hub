@@ -220,7 +220,7 @@
       try {
         const out = await io.api('pluginy', body);
         if (out.potvrdit) {
-          const ok = confirm(out.message + '\n\nPříkaz:\n' + out.potvrdit + '\n\nSpustit a nainstalovat?');
+          const ok = (await HubDialog.confirm(out.message + '\n\nPříkaz:\n' + out.potvrdit + '\n\nSpustit a nainstalovat?', {title: 'Instalace spustí příkaz', ok: 'Spustit a nainstalovat'}));
           if (ok) return akce({...body, sha: out.sha});
           return;
         }
@@ -256,7 +256,7 @@
         if (p.scope === 'user') {
           tlacitka.appendChild(tlacitko(p.enabled ? 'Vypnout' : 'Zapnout', () => akce({akce: p.enabled ? 'disable' : 'enable', id: p.id})));
           tlacitka.appendChild(tlacitko('Aktualizovat', () => akce({akce: 'update', id: p.id})));
-          tlacitka.appendChild(tlacitko('Odinstalovat', () => confirm('Odinstalovat „' + jmeno + '“?') && akce({akce: 'uninstall', id: p.id}), 'danger'));
+          tlacitka.appendChild(tlacitko('Odinstalovat', async () => (await HubDialog.confirm('Odinstalovat „' + jmeno + '“?', {title: 'Odinstalovat plugin', ok: 'Odinstalovat'})) && akce({akce: 'uninstall', id: p.id}), 'danger'));
         } else {
           tlacitka.appendChild(tlacitko('Nainstalovat všude', () => akce({akce: 'install', id: p.id})));
         }
@@ -621,8 +621,8 @@
           [p.version && 'v' + p.version, p.author, p.enabled ? 'zapnutý' : 'vypnutý'].filter(Boolean).join(' · '));
         if (!p.error) {
           tlacitka.appendChild(tlacitko(p.enabled ? 'Vypnout' : 'Zapnout', async () => {
-            if (!p.enabled && !confirm('Zapnout plugin „' + p.name + '“?\n\nPoběží v aplikaci se stejnými právy jako ty ' +
-                                      '(chaty, zprávy Claudovi, příkazy). Zapni ho, jen když mu věříš.')) return;
+            if (!p.enabled && !(await HubDialog.confirm('Zapnout plugin „' + p.name + '“?\n\nPoběží v aplikaci se stejnými právy jako ty ' +
+                                      '(chaty, zprávy Claudovi, příkazy). Zapni ho, jen když mu věříš.', {title: 'Zapnout plugin appky', ok: 'Zapnout'}))) return;
             if (p.enabled) vypnutoNekdy = true;
             await akce({akce: p.enabled ? 'appka-vypni' : 'appka-zapni', id: p.id});
           }));
@@ -635,7 +635,7 @@
             }));
           }
         }
-        tlacitka.appendChild(tlacitko('Odebrat', () => confirm('Odebrat plugin „' + p.name + '“ i s jeho soubory?') && akce({akce: 'appka-odeber', id: p.id}), 'danger'));
+        tlacitka.appendChild(tlacitko('Odebrat', async () => (await HubDialog.confirm('Odebrat plugin „' + p.name + '“ i s jeho soubory?', {title: 'Odebrat plugin', ok: 'Odebrat'})) && akce({akce: 'appka-odeber', id: p.id}), 'danger'));
         obsah.appendChild(r);
       }
       if (vypnutoNekdy || seznam.some((p) => !p.enabled && nactene.has(p.id))) {

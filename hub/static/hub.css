@@ -3848,3 +3848,20 @@ button.pr-radek:hover { background: var(--card-hover); color: var(--fg-bright); 
 .plg-ikona.s-logem { background: #fff !important; padding: 5px; }
 .plg-ikona .plg-logo { width: 100%; height: 100%; object-fit: contain; border-radius: 4px; }
 .plg-detail-hlava .plg-ikona.s-logem { padding: 8px; }
+/* Okna na potvrzení (dialog.js). */
+.hd-wrap { position: fixed; inset: 0; z-index: 400; display: grid; place-items: center; padding: 16px;
+  background: rgba(0, 0, 0, .55); backdrop-filter: blur(2px); animation: hd-vstup .14s ease-out; }
+.hd-wrap.zavira { opacity: 0; transition: opacity .12s; }
+.hd-box { width: min(440px, 100%); background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px;
+  padding: 20px 22px 16px; box-shadow: 0 18px 60px rgba(0, 0, 0, .55); animation: hd-box .16s ease-out; }
+.hd-title { font-size: 16px; font-weight: 600; color: var(--fg-bright); margin-bottom: 10px; }
+.hd-text { color: var(--fg); font-size: 13.5px; line-height: 1.55; overflow-wrap: anywhere; max-height: 50vh; overflow: auto; }
+.hd-text p { margin: 0 0 8px; white-space: pre-wrap; }
+.hd-text p:last-child { margin-bottom: 0; }
+.hd-pole { width: 100%; margin-top: 12px; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--fg-bright); font: inherit; }
+.hd-pole:focus { outline: none; border-color: var(--accent); }
+.hd-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+@keyframes hd-vstup { from { opacity: 0; } }
+@keyframes hd-box { from { transform: translateY(8px) scale(.98); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .hd-wrap, .hd-box { animation: none; } }
