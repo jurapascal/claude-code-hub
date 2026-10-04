@@ -1674,6 +1674,8 @@ def start():
                      daemon=True).start()
     threading.Thread(target=watch_autosave, daemon=True).start()
     prohlizec.INSTANCE = core.INSTANCE
+    prohlizec.CESTY = lambda: {sid: (s.path or "") for sid, s in HUB.sessions.items()
+                               if not getattr(s, "exited", False)}
     threading.Thread(target=prohlizec.migruj, args=(core.log,), daemon=True).start()
     threading.Thread(target=chats.warm_up, daemon=True).start()
     # První /api/state chce doctor() (agenti v PATH) — ať je připravený, než

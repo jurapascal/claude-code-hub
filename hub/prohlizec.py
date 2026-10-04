@@ -32,6 +32,7 @@ import time
 import urllib.parse
 import urllib.request
 
+CESTY = lambda: {}         # nastaví hub: id tabu → složka (osiřelé karty se přiřadí podle ní)
 INSTANCE = ""              # nastaví hub (core.INSTANCE) — podle ní pozná své taby v HUB_TAB
 IS_WINDOWS = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
@@ -452,6 +453,17 @@ class Okno:
                 out[tid] = znacka[len(pre):]
             elif znacka:
                 out[tid] = "?"                         # jiná instance hubu / terminál
+        # Osiřelé karty (most po restartu ještě nenaběhl) → tab ve stejné složce,
+        # jen když je takový jediný.
+        try:
+            cesty = CESTY() or {}
+            for cwd, pages in px.sirotci():
+                shoda = [sid for sid, c in cesty.items() if os.path.abspath(c or "") == cwd]
+                if len(shoda) == 1:
+                    for tid in pages:
+                        out.setdefault(tid, shoda[0])
+        except Exception:
+            pass
         if out != self._vlastnici:
             self._vlastnici = out
             self._info = None

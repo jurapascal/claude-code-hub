@@ -504,6 +504,29 @@ def vlastnici():
     return out
 
 
+def sirotci():
+    """[(cwd, [targetId…])] ze zápisů mostů, které už neběží (po restartu appky).
+    Karty tam čekají na novou session; hub je do té doby přiřadí tabu ve stejné
+    složce, ať je ikonka a lišta vidět hned a ne až po startu Clauda."""
+    out = []
+    try:
+        names = os.listdir(slozka())
+    except OSError:
+        return out
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(slozka(), name), encoding="utf-8") as fh:
+                d = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        pid = d.get("pid")
+        if isinstance(pid, int) and not _zije(pid) and d.get("pages"):
+            out.append((os.path.abspath(d.get("cwd") or ""), list(d["pages"])))
+    return out
+
+
 def _zije(pid):
     if os.name == "nt":
         try:
