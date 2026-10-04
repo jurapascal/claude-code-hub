@@ -199,12 +199,38 @@ def relaunch(hub, delay=0.6):
 
     def go():
         time.sleep(delay)
+        # Značka „běžím na pozadí" pryč dřív než nová instance: jinak by se
+        # připojila k téhle, která za chvíli skončí, a appka by zmizela.
+        try:
+            from . import pozadi, window
+            stara = ""
+            try:
+                with open(pozadi.soubor(), encoding="utf-8") as fh:
+                    stara = json.load(fh).get("url", "")
+            except (OSError, ValueError):
+                pass
+            pozadi.smaz()
+        except Exception:
+            stara = ""
         try:
             _spawn()
         except Exception as exc:
             core.log(f"restart: nová instance nenaběhla: {exc}", "error")
             return
+        # Okna, která proces zavřít nejde (předaná běžícímu prohlížeči), si
+        # zavřou stránky samy.
+        try:
+            hub.broadcast({"t": "okno-zavri"})
+        except Exception:
+            pass
         core.log("restart: nová instance spuštěna, končím")
+        # Staré okno se zavře — nové se otevře samo. Jinak by tu zůstala dvě.
+        try:
+            n = window.zavri_okno(stara)
+            if n:
+                core.log(f"restart: zavřeno staré okno ({n})")
+        except Exception:
+            pass
         # Terminály stejně umírají s procesem; tohle je pošle spát řízeně,
         # ať po sobě Claude Code stihne zavřít přepisy.
         try:

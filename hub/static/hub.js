@@ -3523,6 +3523,8 @@ function connect() {
 window.addEventListener('focus', () => claimSize(ACTIVE));
 
 function handle(msg) {
+  // Appka se restartuje (aktualizace): nové okno se otevře samo, tohle se zavře.
+  if (msg.t === 'okno-zavri') { setTimeout(() => { try { window.close(); } catch (_) { /* nic */ } }, 1200); return; }
   if (msg.t && msg.t.startsWith('br-')) { if (window.HubProhlizec) HubProhlizec.naZpravu(msg); return; }
   if (msg.t === 'out') {
     const tab = TABS.find(t => t.id === msg.id);

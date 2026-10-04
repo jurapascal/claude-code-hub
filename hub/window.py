@@ -13,6 +13,7 @@ For a spawned browser the process is NOT a reliable signal — see _open_chromiu
 so the launcher watches the page's websocket instead.
 """
 import os
+import sys
 import shutil
 import subprocess
 import webbrowser
@@ -295,6 +296,37 @@ def _follow_theme(view, Gtk):
             manager.register_script_message_handler("hubTheme", None)   # WebKit 6
     except Exception:
         pass  # starší WebKit — seznam zůstane podle systému, stránka jede dál
+
+
+def zavri_okno(base):
+    """Zavře okno appky (Chromium `--app=<base>…`), které patří téhle instanci.
+    Po aktualizaci by jinak zůstalo staré okno vedle nového — a ukazovalo by
+    na server, který už neběží. Jen to, co spustil hub; ostatní okna prohlížeče
+    nechává být."""
+    if not base:
+        return 0
+    base = base.split("/?")[0].rstrip("/")
+    needle = f"--app={base}"
+    killed = 0
+    try:
+        if sys.platform == "win32":
+            cmd = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*" + needle +
+                   "*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }")
+            subprocess.run(["powershell", "-NoProfile", "-Command", cmd], timeout=10,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            return 1
+        out = subprocess.run(["pgrep", "-f", "--", needle], capture_output=True, text=True, timeout=5).stdout
+        for pid in out.split():
+            if int(pid) != os.getpid():
+                try:
+                    os.kill(int(pid), 15)
+                    killed += 1
+                except OSError:
+                    pass
+    except Exception:
+        pass
+    return killed
 
 
 def open_window(url, prefer=""):
