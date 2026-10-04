@@ -47,6 +47,7 @@
   const odbyto = new Set();          // „id:důvod“ — člověk okno při té potřebě sám zavřel
   let posledniTaby = '';
   let mapaTabu = {};                 // sid tabu → {karet, potreba} (co hlásí server)
+  let zavrelJsi = false;             // okno jsi zavřel sám — lišta se sama nevrací, dokud Claude prohlížeč znovu nepoužije
   let aktivniTab = null;             // tab, na kterém zrovna stojíš
   const DUVODY = {
     heslo: 'Claude potřebuje, aby ses tu přihlásil.',
@@ -138,7 +139,7 @@
     kb = $('.br-kb');
     tlZpet = $('.br-zpet'); tlVpred = $('.br-vpred'); tlZnovu = $('.br-znovu');
     $('.br-mini').onclick = () => { odbydPotreby(); nastav('mini'); };
-    $('.br-zavri').onclick = () => { odbydPotreby(); nastav('zavreno'); };
+    $('.br-zavri').onclick = () => { odbydPotreby(); zavrelJsi = true; nastav('zavreno'); };
     tlZpet.onclick = () => send({t: 'br', a: 'back'});
     tlVpred.onclick = () => send({t: 'br', a: 'forward'});
     tlZnovu.onclick = () => send({t: 'br', a: info.loading ? 'stop' : 'reload'});
@@ -341,11 +342,11 @@
   }
 
   /* ── stavy okna ──────────────────────────────────────────────────────────── */
-  function otevriSpojeni() {
+  function otevriSpojeni(pasivne) {
     if (otevrene) return;
     otevrene = true;
     odeslanaVelikost = '';
-    send({t: 'br', a: 'open'});
+    send({t: 'br', a: 'open', pasivne: !!pasivne});
     send({t: 'br', a: 'sleduj', tab: vyber});
     send({t: 'br', a: 'vidi', on: stav === 'okno'});
     posliVelikost();
@@ -523,7 +524,13 @@
   }
 
   function naZpravu(msg) {
-    if (!root) return;
+    if (!root) {
+      // Pasivní sledování: okno ještě neexistuje, ale chat má karty → postaví se lišta.
+      if (msg.t !== 'br-info') return;
+      ohlasTaby(msg);
+      if (zavrelJsi || !aktivniTab || !mapaTabu[aktivniTab]) return;
+      nastav('mini', true);
+    }
     if (msg.t === 'br-frame') {
       if (msg.w && msg.h) frame = {w: msg.w, h: msg.h};
       if (!stavEl.textContent.startsWith('Prázdná')) stavEl.hidden = true;
@@ -544,6 +551,11 @@
       kresliChaty(msg);
       ohlasTaby(msg);
       hlidejPotreby(msg);
+      // Chat, na kterém stojíš, má karty (třeba z doby před restartem appky,
+      // kdy se žádný nástroj naživo nespustil) — ukáže se lišta.
+      if (stav === 'zavreno' && !zavrelJsi && aktivniTab && mapaTabu[aktivniTab]) nastav('mini', true);
+    } else if (msg.t === 'br-nic') {
+      if (stav === 'zavreno') otevrene = false;       // prohlížeč neběží, zkusí se později
     } else if (msg.t === 'br-dialog') {
       dialog(msg);
     } else if (msg.t === 'br-copy') {
@@ -646,6 +658,7 @@
      neotevírá — jen se ukáže lišta „Prohlížeč“ (zamrká), ať je vidět, že
      Claude v prohlížeči pracuje. Otevře se samo, až je potřeba člověk. */
   function potreba(sid) {
+    zavrelJsi = false;
     const ted = Date.now();
     const dlouho = ted - posledniNastroj > POP_PAUZA;
     posledniNastroj = ted;
@@ -670,16 +683,21 @@
       nastav(g.stav, true);
       if (g.cela && root) root.classList.add('br-cela');
     }
+    // Sledování bez otevírání: appka zjišťuje, jestli mají chaty v prohlížeči karty
+    // (i po restartu), a ukáže lištu tam, kde mají. Prohlížeč se kvůli tomu nespouští.
+    const pozoruj = () => { if (stav === 'zavreno' && !zavrelJsi) otevriSpojeni(true); };
+    setTimeout(pozoruj, 1500);
+    setInterval(pozoruj, 15000);
     document.addEventListener('hub-tab', (ev) => {
       aktivniTab = (ev.detail && ev.detail.id) || null;
+      pozoruj();
       vyber = aktivniTab;
       samo = false;
       if (otevrene) {
         send({t: 'br', a: 'sleduj', tab: vyber});
         const moje = (info.pages || []).filter((p) => p.tab === vyber);
         if (moje.length && !moje.some((p) => p.id === info.active)) send({t: 'br', a: 'tab', id: moje[moje.length - 1].id});
-        kresliKarty(info);
-        kresliChaty(info);
+        if (root) { kresliKarty(info); kresliChaty(info); }
       }
       usadViditelnost();
     });

@@ -388,7 +388,15 @@ class Okno:
         self._hlidac = None
 
     # -- pohledy
-    def pridej(self, conn):
+    def pridej(self, conn, pasivne=False):
+        # Pasivní pohled (appka jen zjišťuje, jestli má chat karty): prohlížeč se
+        # kvůli tomu nespouští — když neběží, není co ukázat.
+        if pasivne and not alive():
+            try:
+                conn.send_json({"t": "br-nic"})
+            except Exception:
+                pass
+            return
         with self._lock:
             self.viewers.add(conn)
             start = not (self._thread and self._thread.is_alive())
@@ -871,7 +879,7 @@ def zprava(conn, msg, server=False):
         return
     a = msg.get("a")
     if a == "open":
-        OKNO.pridej(conn)
+        OKNO.pridej(conn, bool(msg.get("pasivne")))
     elif a == "close":
         OKNO.odeber(conn)
     elif a == "vidi":
