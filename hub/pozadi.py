@@ -5,6 +5,8 @@ Běh na pozadí: appka nemusí skončit se zavřením okna a počítač nemusí 
   běží dál a když appku spustíš znovu, otevře se okno k téhle běžící instanci
   (zápis `~/.claude/hub-bezi.json`), ne druhá appka — dvě instance nad stejnými
   chaty by si přepisovaly konverzace.
+* `tray` (výchozí zapnuto) — ikonka v oznamovací oblasti panelu (hub/tray.py):
+  appka je vidět i se zavřeným oknem, klik okno otevře, v nabídce je Ukončit.
 * `bez_spanku` — dokud appka běží, počítač neusne (ani při zavření víka, kde to
   systém dovolí). Linux: zámek `systemd-inhibit`, macOS: `caffeinate`,
   Windows: `SetThreadExecutionState`. Ručně vyvolaný spánek (nabídka, tlačítko)
@@ -24,6 +26,7 @@ from . import core
 IS_WINDOWS = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
 _zamek = {"proc": None, "vlakno": None, "stop": None}
+_ikonka = {"proc": None, "url": ""}
 
 
 def soubor():
@@ -113,13 +116,37 @@ def spanek(zapnout):
     core.log("spánek: počítač nebude usínat, dokud appka běží")
 
 
+# ── ikonka v liště ────────────────────────────────────────────────────────────
+def ikonka_url(url):
+    """Adresa, na kterou ikonka volá (jen u appky s oknem, ne u prostoru na serveru)."""
+    _ikonka["url"] = url
+
+
+def ikonka(zapnout):
+    p = _ikonka["proc"]
+    bezi = p is not None and p.poll() is None
+    if zapnout and not bezi and _ikonka["url"]:
+        from . import tray
+        _ikonka["proc"] = tray.spust(_ikonka["url"])
+        if _ikonka["proc"]:
+            core.log("tray: ikonka v liště spuštěna")
+    elif not zapnout and bezi:
+        try:
+            p.terminate()
+        except OSError:
+            pass
+        _ikonka["proc"] = None
+
+
 def sync():
     """Srovná běžící stav s nastavením (po startu a po změně nastavení)."""
     spanek(bool(core.CONFIG.get("bez_spanku")))
+    ikonka(core.CONFIG.get("tray", True) is not False)
 
 
 def konec():
     """Úplné ukončení appky (i z pozadí)."""
     spanek(False)
+    ikonka(False)
     smaz()
     threading.Timer(0.4, lambda: os._exit(0)).start()

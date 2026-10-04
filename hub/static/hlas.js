@@ -332,31 +332,54 @@
       .trim();
   }
 
+  /* Kusy na předčítání. První je krátký (první věta) — zazní hned, zatímco
+     se počítá zbytek; další můžou být delší, ať hlas drží intonaci. */
+  const PRVNI = 160;
   function kusy(text) {
     const vety = text.match(/[^.!?…\n]+[.!?…]*\s*|\n/g) || [text];
     const out = [];
     let cur = '';
     for (const v of vety) {
-      if ((cur + v).length > KUS && cur.trim()) { out.push(cur.trim()); cur = ''; }
+      const strop = out.length ? KUS : PRVNI;
+      if ((cur + v).length > strop && cur.trim()) { out.push(cur.trim()); cur = ''; }
       cur += v;
+      if (!out.length && cur.trim().length >= 40 && /[.!?…]\s*$/.test(cur)) { out.push(cur.trim()); cur = ''; }
     }
     if (cur.trim()) out.push(cur.trim());
     return out;
   }
 
-  async function zvuk(text) {
+  /* `opts` přebije, čím se čte: {engine: 'piper'} = místní hlas,
+     {voice_id, model_id} = ukázka hlasu z ElevenLabs.
+     S ElevenLabs jde zvuk proudem (<audio src> na hlas-proud): hraje se od
+     prvních bajtů a další kus se začne stahovat hned, jak se připraví.
+     Vrací {audio, uklid}. */
+  async function zvuk(text, opts) {
+    const telo = JSON.stringify(Object.assign({text}, opts || {}));
+    try {
+      const r = await io.api('hlas-pripravit', JSON.parse(telo));
+      if (r && r.proud && r.id) {
+        const a = new Audio(io.url('hlas-proud') + '&id=' + encodeURIComponent(r.id));
+        a.preload = 'auto';
+        a.load();
+        return {audio: a, uklid() { a.removeAttribute('src'); try { a.load(); } catch (_) { /* nic */ } }};
+      }
+      if (r && r.error && opts && opts.voice_id) throw new Error(r.error);
+    } catch (err) {
+      if (opts && opts.voice_id) throw err;       // ukázka konkrétního hlasu chybu ukáže
+    }
     const res = await fetch(io.url('hlas-rec'), {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({text})});
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: telo});
     if (!res.ok) {
       let msg = 'Předčítání se nepovedlo.';
       try { msg = (await res.json()).error || msg; } catch (_) { /* není JSON */ }
       throw new Error(msg);
     }
-    return URL.createObjectURL(await res.blob());
+    const url = URL.createObjectURL(await res.blob());
+    return {audio: new Audio(url), uklid() { URL.revokeObjectURL(url); }};
   }
 
-  let fronta = [];                     // [{text, btn}]
+  let fronta = [];                     // [{text, btn, opts}]
   let hraje = null;                    // {audio, btn, zruseno}
 
   function stopVse() {
@@ -371,26 +394,44 @@
 
   async function dalsi(notice) {
     if (hraje || !fronta.length) return;
-    const {text, btn} = fronta.shift();
+    const {text, btn, opts} = fronta.shift();
     const casti = kusy(plain(text));
     const ja = {audio: null, btn, zruseno: false};
     hraje = ja;
     // „pripravuje" = hlas se teprve počítá (první věta trvá pár vteřin).
     if (btn) btn.classList.add('hraje', 'pripravuje');
     try {
-      let pristi = casti.length ? zvuk(casti[0]) : null;
+      let pristi = casti.length ? zvuk(casti[0], opts) : null;
       for (let i = 0; i < casti.length && !ja.zruseno; i++) {
-        const url = await pristi;
-        pristi = i + 1 < casti.length ? zvuk(casti[i + 1]) : null;   // další se chystá, zatímco tahle hraje
-        if (ja.zruseno) break;
+        const z = await pristi;
+        // Další kus se chystá (a stahuje), zatímco tenhle hraje.
+        pristi = i + 1 < casti.length ? zvuk(casti[i + 1], opts) : null;
+        if (pristi) pristi.catch(() => {});
+        if (ja.zruseno) { z.uklid(); break; }
         if (btn) btn.classList.remove('pripravuje');
-        await new Promise((hotovo) => {
-          const a = new Audio(url);
+        const zahraj = (z) => new Promise((hotovo) => {
+          const a = z.audio;
           ja.audio = a;
-          a.onended = a.onerror = () => { URL.revokeObjectURL(url); hotovo(); };
-          a.play().catch(() => hotovo());
+          let konec = false;
+          const dohrano = (chyba) => {
+            if (konec) return;
+            konec = true;
+            const nic = chyba === true && !(a.currentTime > 0);
+            z.uklid();
+            hotovo(nic);
+          };
+          a.onended = () => dohrano(false);
+          a.onerror = () => dohrano(true);
+          a.onpause = () => { if (ja.zruseno) dohrano(false); };
+          a.play().catch(() => dohrano(true));
         });
+        // Proud z ElevenLabs nezahrál ani kousek (kredit, síť) → tenhle kus
+        // přečte místní hlas, když tu je.
+        if (await zahraj(z) && !ja.zruseno && stav && stav.ready && !(opts && opts.voice_id)) {
+          try { await zahraj(await zvuk(casti[i], {engine: 'piper'})); } catch (_) { /* nic */ }
+        }
       }
+      if (ja.zruseno && pristi) pristi.then((z) => z.uklid(), () => {});
     } catch (err) {
       if (notice) notice(chyba('Předčítání se nepovedlo', err));
     }
@@ -400,10 +441,10 @@
   }
 
   /* Přečíst text; `btn` se během čtení rozsvítí a druhým klikem čtení zastaví. */
-  function speak(text, btn, notice) {
+  function speak(text, btn, notice, opts) {
     if (hraje && btn && hraje.btn === btn) { stopVse(); return; }
     if (btn) stopVse();                 // klik na jiné tlačítko = tohle hned
-    fronta.push({text, btn});
+    fronta.push({text, btn, opts});
     dalsi(notice);
   }
 
@@ -417,7 +458,8 @@
     b.innerHTML = '<svg class="ico hlas-i-cti"><use href="#i-speak"/></svg>' +
                   '<svg class="ico hlas-i-stop"><use href="#i-stop"/></svg>';
     b.hidden = true;
-    ready().then((ok) => { b.hidden = !ok; });
+    // Předčítat jde i bez místního hlasu, když je napojený ElevenLabs.
+    ready().then((ok) => { b.hidden = !(ok || (stav && stav.cteni)); });
     b.onclick = (ev) => { ev.stopPropagation(); speak(text, b, notice); };
     box.appendChild(b);
     return b;

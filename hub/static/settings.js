@@ -209,6 +209,9 @@
     volba('na_pozadi', 'Nechat appku běžet na pozadí',
       'Zavřením okna appka neskončí: chaty s Claudem běží dál a když ji spustíš znovu, ' +
       'otevře se okno k té běžící.');
+    volba('tray', 'Ikonka v liště dole',
+      'Je vidět, že appka běží, i se zavřeným oknem. Klik na ni okno otevře, ' +
+      'v nabídce je i Ukončit.');
     volba('bez_spanku', 'Nenechat počítač usnout, dokud appka běží',
       'I se zavřeným víkem, kde to systém dovolí. Spánek vyvolaný ručně (nabídka, tlačítko) ' +
       'žádná aplikace zakázat nemůže.');
@@ -2042,12 +2045,17 @@
         prepis.appendChild(t);
       }
 
-      // Předčítání: hlas jako dlaždice (jako model u diktování) s ukázkou
-      // uvnitř, pod ním obyčejné zaškrtávátko „číst samo".
-      const cteni = group('i-speak', 'Předčítání');
-      const hlasTile = tile('i-speak', 'Jirka', 'český hlas', true);
-      hlasTile.classList.add('hlas-voice');
-      hlasTile.onclick = null;
+    }
+
+    /* Předčítání: místní Jirka, nebo hlas z ElevenLabs (hub/eleven.py).
+       Kreslí se vždycky — ElevenLabs jde i bez nainstalovaného hlasu. */
+    const cteniWrap = el('div', 'hlas-ready');
+    const UKAZKA = 'Ahoj, tady je hub. Tímhle hlasem ti budu číst odpovědi.';
+    const ELEVEN_SVG = '<svg class="hlas-ico" viewBox="0 0 24 24"><rect x="7" y="4" width="3.2" height="16" rx=".6"/>' +
+                       '<rect x="13.8" y="4" width="3.2" height="16" rx=".6"/></svg>';
+    let elevenForm = false;           // rozbalený formulář na klíč
+
+    function playBtn(opts) {
       const play = el('span', 'hlas-play');
       play.title = 'Přehrát ukázku';
       play.setAttribute('role', 'button');
@@ -2055,19 +2063,209 @@
       play.innerHTML = '<svg class="hlas-i-play"><use href="#i-play"/></svg>' +
                        '<svg class="hlas-i-stop"><use href="#i-stop"/></svg>' +
                        '<span class="hlas-spin"></span>';
-      play.onclick = () => window.HubHlas && HubHlas.speak(
-        'Ahoj, tady je hub. Tohle je český hlas, kterým ti budu číst odpovědi.', play, io.toast);
-      hlasTile.appendChild(play);
-      cteni.appendChild(hlasTile);
+      play.onclick = (ev) => {
+        ev.stopPropagation();
+        if (window.HubHlas) HubHlas.speak(UKAZKA, play, io.toast, opts);
+      };
+      return play;
+    }
+
+    async function elevenVyber(body, s) {
+      try {
+        const r = await io.api('hlas-eleven', Object.assign({action: 'vyber'}, body));
+        if (r.ok === false) throw new Error(r.error || 'Nepovedlo se uložit.');
+        s.eleven = r;
+        s.cteni = s.ready || r.active;
+      } catch (err) { io.toast(err.message); }
+      drawCteni(s);
+      if (window.HubHlas) HubHlas.refresh();
+    }
+
+    function drawCteni(s) {
+      cteniWrap.textContent = '';
+      const ev = s.eleven || {};
+      const h = el('div', 'hlas-head');
+      h.innerHTML = '<svg class="ico"><use href="#i-speak"/></svg>';
+      h.appendChild(el('span', null, 'Předčítání'));
+      cteniWrap.appendChild(h);
+      const tiles = el('div', 'onb-tiles');
+      cteniWrap.appendChild(tiles);
+
+      // Jirka: místní hlas, zdarma, nic neodchází ven.
+      const jirka = tile('i-speak', 'Jirka', s.ready ? 'v počítači · zdarma' : 'tady není',
+                         s.ready && !ev.active);
+      jirka.classList.add('hlas-voice');
+      jirka.disabled = !s.ready;
+      jirka.onclick = () => { if (ev.active) elevenVyber({active: false}, s); };
+      if (s.ready) jirka.appendChild(playBtn({engine: 'piper'}));
+      tiles.appendChild(jirka);
+
+      // ElevenLabs: hlas z účtu, za kredity.
+      const el11 = tile('i-speak', 'ElevenLabs',
+                        ev.connected ? (ev.voice_name || 'vyber hlas') : 'napojit vlastním klíčem',
+                        !!ev.active);
+      el11.classList.add('hlas-voice');
+      el11.querySelector('.hlas-ico').outerHTML = ELEVEN_SVG;
+      el11.onclick = () => {
+        if (!ev.connected) { elevenForm = !elevenForm; drawCteni(s); return; }
+        if (!ev.active) elevenVyber({active: true}, s);
+      };
+      if (ev.connected && ev.voice_id) el11.appendChild(playBtn({voice_id: ev.voice_id, model_id: ev.model_id}));
+      tiles.appendChild(el11);
+
+      if (!ev.connected && elevenForm) cteniWrap.appendChild(elevenPripojit(s));
+      if (ev.connected) cteniWrap.appendChild(elevenPanel(s));
 
       const row = el('label', 'onb-row hlas-auto');
       const cb = el('input');
       cb.type = 'checkbox';
       cb.checked = !!(window.HubHlas && HubHlas.auto.get());
+      cb.disabled = !s.cteni;
       cb.onchange = () => { if (window.HubHlas) HubHlas.auto.set(cb.checked); };
       row.append(cb, el('span', null, 'Číst nové odpovědi samy'));
       row.title = 'Jen v tabu, na který se díváš, a jen na tomhle zařízení.';
-      ready.appendChild(row);
+      cteniWrap.appendChild(row);
+    }
+
+    // Formulář na API klíč (jako u Jevu): klíč se ověří, uloží jen k tobě
+    // a do prohlížeče se už nevrací.
+    function elevenPripojit(s) {
+      const form = el('div', 'eleven-form');
+      const steps = el('div', 'set-note');
+      steps.textContent = 'V ElevenLabs otevři Developers → API Keys → Create Key ' +
+        '(stačí práva Text to Speech a Voices: Read) a klíč vlož sem.';
+      const open = el('button', 'btn ghost', 'Otevřít API klíče');
+      open.onclick = () => io.open('https://elevenlabs.io/app/developers/api-keys');
+      const row = el('label', 'mcp-field');
+      row.appendChild(el('span', null, 'API klíč'));
+      const key = el('input');
+      key.type = 'password';
+      key.placeholder = 'sk_…';
+      key.autocomplete = 'off';
+      key.spellcheck = false;
+      row.appendChild(key);
+      row.appendChild(el('small', null, 'Uloží se jen k tobě do ~/.claude/elevenlabs.json. ' +
+        'Text odpovědí se pak posílá na ElevenLabs a čerpá kredity účtu.'));
+      const status = el('div', 'set-note');
+      const btns = el('div', 'onb-btns');
+      const go = el('button', 'btn primary', 'Ověřit a napojit');
+      async function napoj(body) {
+        go.disabled = true;
+        status.className = 'set-note';
+        status.textContent = 'Ověřuju klíč a načítám hlasy…';
+        try {
+          const r = await io.api('hlas-eleven', Object.assign({action: 'save'}, body));
+          if (r.ok === false) throw new Error(r.error || 'Napojení se nepovedlo.');
+          s.eleven = r;
+          s.cteni = true;
+          elevenForm = false;
+          elevenSeznam = r;
+          io.toast('ElevenLabs napojený — odpovědi čte ' + (r.voice_name || 'vybraný hlas') + '.');
+          drawCteni(s);
+          if (window.HubHlas) HubHlas.refresh();
+        } catch (err) {
+          status.className = 'set-warn';
+          status.textContent = err.message;
+          go.disabled = false;
+        }
+      }
+      go.onclick = () => napoj({api_key: key.value});
+      key.onkeydown = (e) => { if (e.key === 'Enter') go.click(); };
+      btns.append(go, open);
+      if ((s.eleven || {}).dabing_key) {
+        const dab = el('button', 'btn ghost', 'Použít klíč z /dabing');
+        dab.title = 'Klíč, který už máš uložený pro dabing videí.';
+        dab.onclick = () => napoj({z_dabingu: true});
+        btns.appendChild(dab);
+      }
+      form.append(steps, row, btns, status);
+      setTimeout(() => key.focus(), 0);
+      return form;
+    }
+
+    // Napojeno: výběr hlasu a modelu. Hlasy a modely se tahají z účtu.
+    let elevenSeznam = null;
+    function elevenPanel(s) {
+      const ev = s.eleven || {};
+      const panel = el('div', 'eleven-panel');
+      const hlava = el('div', 'eleven-row');
+      hlava.appendChild(el('span', 'eleven-lbl', 'Model'));
+      const model = el('select', 'set-input eleven-model');
+      hlava.appendChild(model);
+      const seznam = el('div', 'eleven-voices');
+      seznam.appendChild(el('div', 'set-note', 'Načítám hlasy z účtu…'));
+      const pata = el('div', 'eleven-foot');
+      pata.appendChild(el('span', 'set-note', 'Klíč ' + (ev.key_hint || '') +
+        ' · další hlasy přidáš v knihovně ElevenLabs (Add to My Voices).'));
+      const lib = el('button', 'btn ghost', 'Knihovna hlasů');
+      lib.onclick = () => io.open('https://elevenlabs.io/app/voice-library?language=cs');
+      const reload = el('button', 'btn ghost', 'Načíst znovu');
+      reload.onclick = () => { elevenSeznam = null; nactiSeznam(true); };
+      const off = el('button', 'btn ghost', 'Odpojit');
+      off.onclick = async () => {
+        if (!(await HubDialog.confirm('Odpojit ElevenLabs? Klíč se z tohohle počítače smaže ' +
+            'a odpovědi bude číst zase místní hlas.', {title: 'Odpojit ElevenLabs', ok: 'Odpojit'}))) return;
+        try {
+          const r = await io.api('hlas-eleven', {action: 'remove'});
+          s.eleven = r;
+          s.cteni = s.ready;
+          elevenSeznam = null;
+        } catch (err) { io.toast(err.message); }
+        drawCteni(s);
+        if (window.HubHlas) HubHlas.refresh();
+      };
+      pata.append(lib, reload, off);
+      panel.append(hlava, seznam, pata);
+
+      function kresli(n) {
+        model.textContent = '';
+        for (const m of n.models || []) {
+          // Flash začne mluvit nejdřív (~0,4 s), Multilingual v2 až za ~1,5 s.
+          const o = el('option', null, m.name + (/flash/.test(m.id) ? ' · okamžitý start' : '') +
+                                       (m.half ? ' · poloviční cena' : ''));
+          o.value = m.id;
+          o.selected = m.id === ev.model_id;
+          model.appendChild(o);
+        }
+        model.onchange = () => elevenVyber({model_id: model.value}, s);
+        seznam.textContent = '';
+        for (const v of n.voices || []) {
+          const r = el('div', 'eleven-voice' + (v.id === ev.voice_id ? ' on' : '') + (v.ok ? '' : ' off'));
+          r.setAttribute('role', 'button');
+          r.tabIndex = 0;
+          const txt = el('span', 'eleven-vt');
+          const nm = el('strong', null, v.name);
+          txt.appendChild(nm);
+          if (v.cs) txt.appendChild(el('span', 'eleven-tag', 'česky'));
+          if (v.own) txt.appendChild(el('span', 'eleven-tag', 'tvůj'));
+          const bits = [v.desc, v.gender === 'male' ? 'muž' : v.gender === 'female' ? 'žena' : '',
+                        v.accent].filter(Boolean);
+          if (!v.ok) bits.unshift('ještě se dotrénovává');
+          if (bits.length) txt.appendChild(el('small', null, bits.join(' · ')));
+          r.appendChild(txt);
+          seznam.appendChild(r);
+          if (!v.ok) { r.title = 'ElevenLabs tenhle hlas ještě dotrénovává — zatím nejde použít.'; continue; }
+          r.appendChild(playBtn({voice_id: v.id, model_id: model.value || ev.model_id}));
+          const vyber = () => { if (v.id !== ev.voice_id) elevenVyber({voice_id: v.id, active: true}, s); };
+          r.onclick = vyber;
+          r.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); vyber(); } };
+        }
+        if (!(n.voices || []).length) seznam.appendChild(el('div', 'set-note', 'Na účtu nejsou žádné hlasy.'));
+      }
+      async function nactiSeznam(fresh) {
+        if (elevenSeznam && elevenSeznam.voices) return kresli(elevenSeznam);
+        try {
+          const n = await io.api('hlas-eleven' + (fresh ? '?fresh=1' : ''));
+          if (n.ok === false) throw new Error(n.error);
+          elevenSeznam = n;
+          kresli(n);
+        } catch (err) {
+          seznam.textContent = '';
+          seznam.appendChild(el('div', 'set-warn', err.message));
+        }
+      }
+      nactiSeznam(false);
+      return panel;
     }
 
     let poll = null;
@@ -2075,10 +2273,11 @@
       let s;
       try { s = await io.api('hlas'); } catch (_) { s = {ready: false}; }
       btns.textContent = '';
+      drawCteni(s);
       if (s.ready) {
         status.hidden = true;
         drawReady(s);
-        if (!ready.parentNode) box.appendChild(ready);
+        if (!ready.parentNode) box.insertBefore(ready, cteniWrap);
         if (window.HubHlas) HubHlas.refresh();
         return;
       }
@@ -2113,6 +2312,7 @@
       };
       btns.appendChild(go);
     }
+    box.appendChild(cteniWrap);
     nacti();
     return box;
   }

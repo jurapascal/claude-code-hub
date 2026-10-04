@@ -655,20 +655,95 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": str(exc)}, 400)
         if name.startswith("hlas"):
             # Diktování a předčítání (hub/hlas.py) — česky, na tomhle stroji.
-            from . import hlas
+            from . import eleven, hlas
             if name == "hlas":
-                return self._json({**hlas.state(), "job": core.job_state("hlas"),
-                                   "prepis": hlas.dostupny()})
+                st = hlas.state()
+                el = eleven.status()
+                return self._json({**st, "job": core.job_state("hlas"),
+                                   "prepis": hlas.dostupny(), "eleven": el,
+                                   # Předčítat jde místním hlasem, nebo přes ElevenLabs.
+                                   "cteni": st["ready"] or el["active"]})
+            if name == "hlas-proud":
+                # Zvuk z ElevenLabs proudem (hub/eleven.py): <audio> začne hrát
+                # s prvními bajty, nečeká se na celý kus.
+                try:
+                    up = eleven.proud((query.get("id") or [""])[0])
+                except (ValueError, RuntimeError) as exc:
+                    return self._json({"error": str(exc)}, 400)
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/mpeg")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Connection", "close")
+                self.send_header("X-Accel-Buffering", "no")    # nginx před bránou
+                self.end_headers()
+                self.close_connection = True
+                try:
+                    with up:
+                        while True:
+                            kus = up.read1(8192) if hasattr(up, "read1") else up.read(8192)
+                            if not kus:
+                                break
+                            self.wfile.write(kus)
+                            self.wfile.flush()
+                except (OSError, ValueError):
+                    pass                 # prohlížeč přestal poslouchat (stop)
+                return None
+            if name == "hlas-eleven":
+                # Napojení ElevenLabs (hub/eleven.py): klíč se jen ukládá,
+                # do prohlížeče jde zpátky nanejvýš jeho konec.
+                if self.command != "POST":
+                    return self._json(eleven.nabidka(fresh=query.get("fresh", [""])[0] == "1"))
+                act = payload.get("action")
+                try:
+                    if act == "save":
+                        return self._json(eleven.save(payload.get("api_key"),
+                                                      payload.get("z_dabingu") is True))
+                    if act == "vyber":
+                        return self._json(eleven.vyber(
+                            payload.get("voice_id"), payload.get("model_id"),
+                            payload.get("active") if isinstance(payload.get("active"), bool) else None))
+                    if act == "remove":
+                        return self._json(eleven.remove())
+                except RuntimeError as exc:
+                    return self._json({"ok": False, "error": str(exc)})
+                return self._json({"error": "Neznámá akce."}, 400)
             if self.command != "POST":
                 return self._json({"error": "Jen POST."}, 405)
             if name == "hlas-install":
                 return self._json({"ok": hlas.start_install()})
+            if name == "hlas-pripravit":
+                # Předčítání bez čekání: ElevenLabs → id pro hlas-proud. Bez
+                # ElevenLabs (nebo při chybě) {"proud": false} a čte se postaru.
+                text = str(payload.get("text") or "").strip()[:hlas.MAX_TEXT]
+                voice = str(payload.get("voice_id") or "")
+                if text and payload.get("engine") != "piper" and (voice or eleven.aktivni()):
+                    try:
+                        return self._json({"proud": True, "id": eleven.priprav(
+                            text, voice, str(payload.get("model_id") or ""))})
+                    except (ValueError, RuntimeError) as exc:
+                        return self._json({"proud": False, "error": str(exc)})
+                return self._json({"proud": False})
             try:
                 if name == "hlas-prepis":
                     wav = base64.b64decode(str(payload.get("wav") or ""), validate=False)
                     return self._json({"text": hlas.prepis(wav)})
                 if name == "hlas-rec":
-                    return self._send(200, hlas.rec(payload.get("text")), "audio/wav")
+                    text = str(payload.get("text") or "").strip()[:hlas.MAX_TEXT]
+                    if not text:
+                        raise ValueError("Není co přečíst.")
+                    voice = str(payload.get("voice_id") or "")
+                    if payload.get("engine") != "piper" and (voice or eleven.aktivni()):
+                        try:
+                            return self._send(200, eleven.rec(text, voice, str(
+                                payload.get("model_id") or "")), "audio/mpeg")
+                        except RuntimeError as exc:
+                            # Ukázka konkrétního hlasu chybu ukáže; běžné čtení
+                            # přejde na místní hlas, když tu je.
+                            if voice or not hlas.root():
+                                raise
+                            core.log(f"hlas: ElevenLabs selhal ({exc}), čtu místním hlasem", "warn")
+                    return self._send(200, hlas.rec(text), "audio/wav")
             except (ValueError, RuntimeError) as exc:
                 return self._json({"error": str(exc)}, 400)
             except subprocess.TimeoutExpired:
@@ -805,6 +880,7 @@ class Handler(BaseHTTPRequestHandler):
                            "prohlizec_okno": core.CONFIG.get("prohlizec_okno") or {},
                            "na_pozadi": bool(core.CONFIG.get("na_pozadi")),
                            "bez_spanku": bool(core.CONFIG.get("bez_spanku")),
+                           "tray": core.CONFIG.get("tray", True) is not False,
                            # Server, na kterém má appka účet, a jestli se má
                            # otevírat rovnou tam. Token sem nepatří — stránka
                            # ho nepotřebuje a /api/state se kreslí všude.
@@ -1143,7 +1219,7 @@ class Handler(BaseHTTPRequestHandler):
                        "newtab", "extra_projects", "show_archived",
                        "agents", "default_agent", "project_agents",
                        "remote_keep_running", "dev_mode", "memory_autosave",
-                       "hlas_model", "theme", "prohlizec_okno", "na_pozadi", "bez_spanku")
+                       "hlas_model", "theme", "prohlizec_okno", "na_pozadi", "bez_spanku", "tray")
             updates = {k: v for k, v in payload.items() if k in allowed}
             if "theme" in updates and updates["theme"] not in ("", "dark", "light"):
                 return self._json({"error": "Neznámé téma."}, 400)
@@ -1153,7 +1229,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "Nic k uložení."}, 400)
             try:
                 core.save_config(updates)
-                if "bez_spanku" in updates:
+                if "bez_spanku" in updates or "tray" in updates:
                     pozadi.sync()
             except Exception as exc:
                 return self._json({"error": f"Konfig nejde zapsat: {exc}"}, 500)
@@ -1274,6 +1350,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({**out, "appka": pluginy.appka_seznam()}, 200 if out.get("ok") else 400)
             out = pluginy.akce(co, payload.get("id", ""), payload.get("sha", ""), payload.get("zdroj", ""))
             return self._json(out, 200 if out.get("ok") or out.get("potvrdit") else 400)
+        if name == "okno-otevrit":
+            # Klik na ikonku v liště (hub/tray.py): ukázat okno appky. Okno
+            # z cizího procesu dopředu vytáhnout nejde (Wayland to nedovolí),
+            # tak se otevřené okno zavře a otevře znovu — taby běží dál tady.
+            if core.on_gateway() or self.command != "POST":
+                return self._json({"error": "Jen v appce na počítači."}, 400)
+
+            def otevri():
+                from . import restart
+                if HUB.clients > 0:
+                    # Okno se zavře samo (hub.js, za 1,2 s). Podle procesu ho
+                    # najít nejde: po restartu má Chromium v příkazu starou adresu.
+                    HUB.broadcast({"t": "okno-zavri"})
+                    time.sleep(1.6)
+                restart._spawn()
+            threading.Thread(target=otevri, daemon=True).start()
+            return self._json({"ok": True})
         if name == "quit":
             # Úplné ukončení appky, i když běží na pozadí (Nastavení → Ostatní).
             if core.on_gateway():

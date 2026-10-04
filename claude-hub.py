@@ -265,6 +265,8 @@ def main():
 
     httpd, url = server.start()
     pozadi.zapis(url)
+    if "--no-browser" not in args:
+        pozadi.ikonka_url(url)          # ikonka v liště jen u appky s oknem
     pozadi.sync()
     # Celý doctor() tu nevolat — ptá se agentů (CLI) a okno by na to čekalo.
     core.log(f"start: port {httpd.server_address[1]}, platforma {sys.platform}")

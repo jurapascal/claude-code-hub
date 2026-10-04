@@ -2083,6 +2083,7 @@ chce být přihlášená jako <b>{html.escape(user["email"])}</b>.</p>
         headers = self._forward_headers(hub)
         idempotent = method in ("GET", "HEAD", "OPTIONS")
         resp = data = last = None
+        proud = None
         # Instance hubu pod náporem paralelních požadavků občas spojení zavře
         # bez odpovědi (RemoteDisconnected). Reverzní proxy to nesmí propustit
         # jako 502 — zkusí to znovu na čerstvém spojení. `RemoteDisconnected`
@@ -2093,6 +2094,12 @@ chce být přihlášená jako <b>{html.escape(user["email"])}</b>.</p>
             try:
                 conn.request(method, self.path, body=body, headers=headers)
                 resp = conn.getresponse()
+                # Zvuk předčítání (hub/eleven.py) jde proudem — přehrává se od
+                # prvních bajtů, bufferovat ho celý by zdrželo start o vteřiny.
+                if (resp.getheader("Content-Type") or "").startswith("audio/") \
+                        and resp.getheader("Content-Length") is None:
+                    proud, data = conn, b""
+                    break
                 data = resp.read()
                 conn.close()
                 break
@@ -2127,6 +2134,23 @@ chce být přihlášená jako <b>{html.escape(user["email"])}</b>.</p>
             if low == "set-cookie":
                 continue
             self.send_header(key, value)
+        if proud is not None:
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+            try:
+                while True:
+                    kus = resp.read1(8192)
+                    if not kus:
+                        break
+                    self.wfile.write(kus)
+                    self.wfile.flush()
+            except (OSError, ValueError):
+                pass
+            finally:
+                proud.close()
+            return None
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         if data and self.command != "HEAD":

@@ -90,6 +90,7 @@ DEFAULTS = {
     "remote_keep_running": False,  # nechat server běžet i po zavření okna
     "na_pozadi": False,       # po zavření okna běžet dál (hub/pozadi.py)
     "bez_spanku": False,      # dokud appka běží, počítač neusne
+    "tray": True,             # ikonka v oznamovací oblasti panelu (hub/tray.py)
     # Vývojářský režim: nasazování a práce s GitHubem. Vypnuto znamená, že se
     # hub o nic z toho nepokouší — ani se nenabízí, ani nic neinstaluje.
     "dev_mode": False,
