@@ -38,7 +38,18 @@
     return stavP;
   }
 
-  function refresh() { stav = null; stavP = null; return ready(); }
+  /* Po změně v Nastavení → Hlas: nový stav hned platí i pro tlačítka u
+     odpovědí, které už jsou na stránce, a rozehrané čtení starým hlasem se
+     zastaví — žádné zavírání appky. */
+  function refresh() {
+    stav = null; stavP = null;
+    stopVse();
+    return ready().then((ok) => {
+      const lze = ok || !!(stav && stav.cteni);
+      document.querySelectorAll('.hlas-cti').forEach((b) => { b.hidden = !lze; });
+      return ok;
+    });
+  }
 
   const umiMikrofon = () => !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 
