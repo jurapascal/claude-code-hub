@@ -137,7 +137,7 @@ def linux(base, ppid, ikona):
     pix = _pixmapy(GdkPixbuf, GLib, ikona)
     pix_v = GLib.Variant("a(iiay)", pix)
     ikony_dir = os.path.dirname(os.path.abspath(ikona))
-    polozky = {1: "Otevřít Claude Hub", 2: None, 3: "Ukončit appku"}
+    polozky = {1: "Otevřít " + NAZEV, 2: None, 3: "Ukončit appku"}
 
     def otevri():
         _api(base, "okno-otevrit")
@@ -247,9 +247,9 @@ Add-Type -AssemblyName System.Web
 $ni = New-Object System.Windows.Forms.NotifyIcon
 $bmp = [System.Drawing.Bitmap]::FromFile($env:HUB_TRAY_ICON)
 $ni.Icon = [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
-$ni.Text = 'Claude Code Hub'
+$ni.Text = $env:HUB_TRAY_NAME
 $m = New-Object System.Windows.Forms.ContextMenuStrip
-$m.Items.Add('Otevřít Claude Hub', $null, { Hub 'okno-otevrit' }) | Out-Null
+$m.Items.Add('Otevřít ' + $env:HUB_TRAY_NAME, $null, { Hub 'okno-otevrit' }) | Out-Null
 $m.Items.Add('-') | Out-Null
 $m.Items.Add('Ukončit appku', $null, { Hub 'quit'; $ni.Visible = $false; [System.Windows.Forms.Application]::Exit() }) | Out-Null
 $ni.ContextMenuStrip = $m
@@ -263,7 +263,7 @@ $tm.Start()
 
 
 def windows(base, ppid, ikona):
-    env = dict(os.environ, HUB_TRAY_URL=base, HUB_TRAY_PID=str(ppid), HUB_TRAY_ICON=ikona)
+    env = dict(os.environ, HUB_TRAY_URL=base, HUB_TRAY_PID=str(ppid), HUB_TRAY_ICON=ikona, HUB_TRAY_NAME=NAZEV)
     subprocess.run(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
                     "-Command", PS], env=env, creationflags=0x08000000)
 
@@ -277,7 +277,8 @@ def spust(url):
         return None
     if not core.CONFIG.get("tray", True):
         return None
-    ikona = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "icon-256.png")
+    from . import vzhled
+    ikona = vzhled.ikona(512) or os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "icon-256.png")
     kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
           "stderr": open(os.path.join(core.CLAUDE_DIR, "hub-tray.log"), "a")}
     if sys.platform == "win32":
@@ -286,7 +287,8 @@ def spust(url):
         kw["start_new_session"] = True
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     try:
-        return subprocess.Popen([sys.executable, "-m", "hub.tray", url, str(os.getpid()), ikona],
+        return subprocess.Popen([sys.executable, "-m", "hub.tray", url, str(os.getpid()), ikona,
+                                 vzhled.zobrazeny()],
                                 cwd=root, **kw)
     except OSError as exc:
         core.log(f"tray: nespuštěno ({exc})", "warn")
@@ -295,6 +297,8 @@ def spust(url):
 
 if __name__ == "__main__":
     base, ppid, ikona = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+    if len(sys.argv) > 4 and sys.argv[4].strip():
+        NAZEV = sys.argv[4].strip()[:40]
     try:
         (windows if sys.platform == "win32" else linux)(base, ppid, ikona)
     except Exception as exc:                               # bez panelu / D-Bus

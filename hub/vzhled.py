@@ -64,6 +64,11 @@ def uloz(name=None, icons=None, reset=False):
                 os.remove(p)
         core.save_config({"app_name": ""})
         sync_desktop()
+    try:
+        from . import pozadi
+        pozadi.ikonka_znovu()
+    except Exception:
+        pass
         return stav()
     if name is not None:
         clean = re.sub(r"[\x00-\x1f\x7f]", "", str(name)).strip()
@@ -92,6 +97,11 @@ def uloz(name=None, icons=None, reset=False):
             os.chmod(tmp, 0o644)
             os.replace(tmp, target)
     sync_desktop()
+    try:
+        from . import pozadi
+        pozadi.ikonka_znovu()
+    except Exception:
+        pass
     return stav()
 
 

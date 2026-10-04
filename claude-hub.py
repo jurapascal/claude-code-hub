@@ -266,6 +266,13 @@ def main():
     httpd, url = server.start()
     pozadi.zapis(url)
     if "--no-browser" not in args:
+        # Aktualizace přepíše spouštěč na výchozí název a ikonu; okno se po
+        # restartu jen přepne, takže vlastní vzhled se musí vrátit tady.
+        try:
+            from hub import vzhled
+            vzhled.sync_desktop()
+        except Exception as exc:
+            core.log(f"vzhled: spouštěč nejde srovnat ({exc})", "warn")
         pozadi.ikonka_url(url)          # ikonka v liště jen u appky s oknem
     pozadi.sync()
     # Celý doctor() tu nevolat — ptá se agentů (CLI) a okno by na to čekalo.
