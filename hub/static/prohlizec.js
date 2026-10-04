@@ -63,20 +63,31 @@
   }
   const ico = (id) => `<svg class="ico"><use href="#${id}"/></svg>`;
 
+  let io_ = {};
   function nactiGeo() {
+    // Napřed to, co drží hub (přežije restart i aktualizaci — port, a tím i
+    // localStorage, je pokaždé jiný), pak localStorage.
     let g = null;
-    try { g = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (_) { /* nic */ }
+    try { g = (io_.ulozene && io_.ulozene()) || null; } catch (_) { g = null; }
+    if (!g || !g.w) {
+      try { g = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (_) { g = null; }
+    }
     const vw = window.innerWidth, vh = window.innerHeight;
     const w = Math.min(g && g.w || Math.round(vw * 0.62), vw - 16), h = Math.min(g && g.h || Math.round(vh * 0.72), vh - 16);
     return {
       w: Math.max(MIN_W, w), h: Math.max(MIN_H, h),
       x: Math.max(0, Math.min(g ? g.x : vw - w - 24, vw - 120)),
       y: Math.max(0, Math.min(g ? g.y : vh - h - 90, vh - 60)),
-      stav: g && g.stav,
+      stav: g && g.stav, cela: !!(g && g.cela),
     };
   }
+  let ulozTimer = null;
   function ulozGeo() {
-    try { localStorage.setItem(KEY, JSON.stringify({...geo, stav})); } catch (_) { /* soukromé okno */ }
+    const data = {...geo, stav, cela: !!(root && root.classList.contains('br-cela'))};
+    try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (_) { /* soukromé okno */ }
+    // Hubu se to řekne se zpožděním (tažení okna volá ulozGeo pořád dokola).
+    clearTimeout(ulozTimer);
+    ulozTimer = setTimeout(() => { if (io_.uloz) io_.uloz(data); }, 600);
   }
 
   function usad() {
@@ -205,6 +216,7 @@
     hlava.addEventListener('dblclick', (ev) => {
       if (ev.target.closest('.br-btn')) return;
       root.classList.toggle('br-cela');
+      ulozGeo();
     });
   }
 
@@ -648,6 +660,7 @@
 
   function install(io) {
     send = io.send;
+    io_ = io;
     copyText = io.copy || null;
     if (io.tabTitle) tabTitle = io.tabTitle;
     // Obnovení po reloadu: zůstává tak, jak jsi ho nechal (okno / lišta).
@@ -655,6 +668,7 @@
     if (g.stav === 'okno' || g.stav === 'mini') {
       geo = g;
       nastav(g.stav, true);
+      if (g.cela && root) root.classList.add('br-cela');
     }
     document.addEventListener('hub-tab', (ev) => {
       aktivniTab = (ev.detail && ev.detail.id) || null;

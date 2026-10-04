@@ -3914,6 +3914,8 @@ async function main() {
   }
   if (window.HubProhlizec) {
     HubProhlizec.install({send, copy: (t) => copyText(t),
+                          ulozene: () => (STATE.config && STATE.config.prohlizec_okno) || null,
+                          uloz: (o) => api('config', {prohlizec_okno: o}).catch(() => {}),
                           tabTitle: (sid) => { const t = TABS.find((x) => x.id === sid); return t ? t.title : ''; }});
   }
   /* Ikonka prohlížeče u tabů, které v něm mají karty (prohlizec.js). */
