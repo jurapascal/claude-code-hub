@@ -89,10 +89,15 @@ def _open_chromium(browser, url):
     a chromium launcher that hands the window to an already running process exits
     immediately, and treating that as 'window closed' would kill the server out
     from under a window the user is still looking at."""
+    profile = PROFILE_DIR
+    if not core.IS_WINDOWS and not core.IS_MAC and (browser.startswith("/snap/") or "/snap/" in os.path.realpath(browser)):
+        # Snapový Chromium nesmí zapisovat do skrytých složek (~/.claude), okno
+        # by se hned zavřelo. Snap povoluje jen ~/snap/<balíček>/common.
+        profile = os.path.join(os.path.expanduser("~"), "snap", "chromium", "common", "hub-browser-profile")
     argv = [
         browser,
         f"--app={url}",
-        f"--user-data-dir={PROFILE_DIR}",   # a profile of our own, not the user's
+        f"--user-data-dir={profile}",   # a profile of our own, not the user's
         "--no-first-run",
         "--no-default-browser-check",
         # Sestavení „Chrome for Testing" (např. to od Playwrightu) jinak nad
@@ -102,7 +107,7 @@ def _open_chromium(browser, url):
         "--window-size=1360,860",
     ]
     if not core.IS_WINDOWS and not core.IS_MAC:
-        argv.append("--class=Claude Code Hub")  # matches StartupWMClass in the .desktop
+        argv += ["--class=claude-code-hub", "--ozone-platform=x11"]  # matches StartupWMClass in the .desktop
     return subprocess.Popen(argv, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL)
 
