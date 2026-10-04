@@ -3524,6 +3524,11 @@ window.addEventListener('focus', () => claimSize(ACTIVE));
 
 function handle(msg) {
   // Appka se restartuje (aktualizace): nové okno se otevře samo, tohle se zavře.
+  if (msg.t === 'okno-jdi' && /^http:\/\/127\.0\.0\.1:\d+\//.test(msg.url || '')) {
+    // Restart po aktualizaci: stejné okno přejde rovnou na novou instanci.
+    setTimeout(() => { location.replace(msg.url); }, 150);
+    return;
+  }
   if (msg.t === 'okno-zavri') { setTimeout(() => { try { window.close(); } catch (_) { /* nic */ } }, 1200); return; }
   if (msg.t && msg.t.startsWith('br-')) { if (window.HubProhlizec) HubProhlizec.naZpravu(msg); return; }
   if (msg.t === 'out') {

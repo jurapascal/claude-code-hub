@@ -172,14 +172,14 @@ def take():
     return (tabs if isinstance(tabs, list) else []), reason
 
 
-def _spawn():
+def _spawn(*extra):
     """Pustí novou instanci hubu, odpojenou od téhle."""
     launcher = LAUNCHER if os.path.isfile(LAUNCHER) else os.path.abspath(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
                      "claude-hub.py"))
     if not os.path.isfile(launcher):
         raise RuntimeError("Nenašel jsem claude-hub.py, ze kterého se hub pouští.")
-    argv = [sys.executable, launcher]
+    argv = [sys.executable, launcher, *extra]
     kwargs = {"cwd": core.HOME, "close_fds": True}
     if os.name == "nt":
         # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP — ať nové okno nezmizí
@@ -213,24 +213,41 @@ def relaunch(hub, delay=0.6):
         except Exception:
             stara = ""
         try:
-            _spawn()
+            # Nová instance okno sama neotvírá — stávající okno se na ni přepne
+            # (rychlejší než zavřít okno a čekat, až Chromium otevře nové).
+            _spawn("--bez-okna")
         except Exception as exc:
             core.log(f"restart: nová instance nenaběhla: {exc}", "error")
             return
-        # Okna, která proces zavřít nejde (předaná běžícímu prohlížeči), si
-        # zavřou stránky samy.
+        # Počká, až nová instance odpovídá, a otevřené okno na ni přepne.
+        # Když to nevyjde (nenaběhla včas), nová si okno otevře sama a tohle
+        # se zavře.
+        nova = ""
         try:
-            hub.broadcast({"t": "okno-zavri"})
+            for _ in range(60):
+                nova = pozadi.bezici_url()
+                if nova:
+                    break
+                time.sleep(0.1)
+        except Exception:
+            nova = ""
+        try:
+            hub.broadcast({"t": "okno-jdi", "url": nova} if nova else {"t": "okno-zavri"})
         except Exception:
             pass
+        time.sleep(0.4)                     # ať zpráva stihne odejít
         core.log("restart: nová instance spuštěna, končím")
-        # Staré okno se zavře — nové se otevře samo. Jinak by tu zůstala dvě.
-        try:
-            n = window.zavri_okno(stara)
-            if n:
-                core.log(f"restart: zavřeno staré okno ({n})")
-        except Exception:
-            pass
+        # Okno, které se nepřepnulo (nová instance nenaběhla), se zavře — nová
+        # si otevře vlastní. Jinak by tu zůstala dvě.
+        if not nova:
+            try:
+                n = window.zavri_okno(stara)
+                if n:
+                    core.log(f"restart: zavřeno staré okno ({n})")
+            except Exception:
+                pass
+        else:
+            core.log("restart: okno přepnuto na novou instanci")
         # Terminály stejně umírají s procesem; tohle je pošle spát řízeně,
         # ať po sobě Claude Code stihne zavřít přepisy.
         try:

@@ -284,6 +284,16 @@ def main():
         if core.CONFIG.get("server_mode") and core.CONFIG.get("pocitac_asked") \
                 and not predplatne.should_offer():
             target = server_start_url(url) or url
+        if "--bez-okna" in args:
+            # Restart po aktualizaci: stávající okno se přepne samo. Kdyby se do
+            # 12 s nepřipojilo (zavřeli jsme ho, nemá spojení), otevře se nové.
+            deadline = time.time() + 12
+            while time.time() < deadline and server.HUB.clients == 0:
+                time.sleep(0.2)
+            if server.HUB.clients > 0:
+                core.log("okno: převzato (přepnuté stávající)")
+                wait_for_page(None)
+                return 0
         host, proc, blocking = window.open_window(target, prefer)
         core.log(f"okno: {host}")
         if blocking:
