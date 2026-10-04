@@ -697,8 +697,7 @@ class Handler(BaseHTTPRequestHandler):
                 act = payload.get("action")
                 try:
                     if act == "save":
-                        return self._json(eleven.save(payload.get("api_key"),
-                                                      payload.get("z_dabingu") is True))
+                        return self._json(eleven.save(payload.get("api_key")))
                     if act == "vyber":
                         return self._json(eleven.vyber(
                             payload.get("voice_id"), payload.get("model_id"),

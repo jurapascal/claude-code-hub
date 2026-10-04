@@ -27,9 +27,6 @@ FORMAT = "mp3_44100_128"
 # Výchozí model: rychlý a za poloviční cenu, česky umí. Kdo chce nejvyšší
 # kvalitu, přepne si na v3 / Multilingual v2.
 VYCHOZI_MODEL = "eleven_flash_v2_5"
-# Uložený klíč z /dabing (skill) — nabídne se jedním klikem, ať ho člověk
-# nemusí hledat znovu.
-DABING = os.path.join(core.CLAUDE_DIR, "dabing", "config.json")
 ID_RE = re.compile(r"[A-Za-z0-9]{8,40}")
 
 _cache = {}                         # klíč → (čas, data) pro hlasy a modely
@@ -61,14 +58,6 @@ def _write(cfg):
 
 def _key():
     return str(_load().get("api_key") or "")
-
-
-def _dabing_key():
-    try:
-        with open(DABING, encoding="utf-8") as fh:
-            return str(json.load(fh).get("elevenlabs_api_key") or "")
-    except (OSError, ValueError, AttributeError):
-        return ""
 
 
 def _request(key, method, path, body=None, raw=False):
@@ -128,7 +117,6 @@ def status():
         "voice_id": str(cfg.get("voice_id") or ""),
         "voice_name": str(cfg.get("voice_name") or ""),
         "model_id": str(cfg.get("model_id") or VYCHOZI_MODEL),
-        "dabing_key": not key and bool(_dabing_key()),
     }
 
 
@@ -204,10 +192,10 @@ def nabidka(fresh=False):
         return {"ok": False, "error": str(exc), **status()}
 
 
-def save(api_key="", z_dabingu=False):
+def save(api_key=""):
     """Uloží klíč, jen když s ním ElevenLabs doopravdy odpoví. Hned vybere
     první česky mluvící hlas, ať předčítání funguje bez dalšího klikání."""
-    key = _dabing_key() if z_dabingu else str(api_key or "").strip()
+    key = str(api_key or "").strip()
     if not key or len(key) < 20 or any(c.isspace() for c in key):
         return {"ok": False, "error": "Vlož celý API klíč z ElevenLabs."}
     try:

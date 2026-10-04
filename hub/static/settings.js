@@ -2172,12 +2172,6 @@
       go.onclick = () => napoj({api_key: key.value});
       key.onkeydown = (e) => { if (e.key === 'Enter') go.click(); };
       btns.append(go, open);
-      if ((s.eleven || {}).dabing_key) {
-        const dab = el('button', 'btn ghost', 'Použít klíč z /dabing');
-        dab.title = 'Klíč, který už máš uložený pro dabing videí.';
-        dab.onclick = () => napoj({z_dabingu: true});
-        btns.appendChild(dab);
-      }
       form.append(steps, row, btns, status);
       setTimeout(() => key.focus(), 0);
       return form;
