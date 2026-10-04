@@ -703,7 +703,7 @@
     install, naZpravu, potreba,
     otevri: () => nastav('okno'),
     /* Ikonka u tabu: prohlížeč s kartami toho chatu. */
-    ukaz: (sid) => { nastav('okno'); vyberChat(sid); },
+    ukaz: (sid) => { aktivniTab = sid; samo = false; nastav('okno'); vyberChat(sid); usadViditelnost(); },
     get stav() { return stav; },
   };
 })(window);

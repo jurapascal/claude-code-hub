@@ -2721,7 +2721,7 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
   el.onclick = (ev) => {
     if (ev.target.closest('input')) return;       // pole na přejmenování
     if (ev.target.closest('.tab-close')) { requestCloseTab(tab); return; }
-    if (ev.target.closest('.tab-br') && window.HubProhlizec) { HubProhlizec.ukaz(tab.id); return; }
+    if (ev.target.closest('.tab-br') && window.HubProhlizec) { activate(tab); HubProhlizec.ukaz(tab.id); return; }
     activate(tab);
   };
   el.ondblclick = (ev) => { if (!ev.target.closest('.tab-close')) startRename(tab); };
