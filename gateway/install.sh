@@ -467,9 +467,12 @@ setup_company_skills() {
     # Hotové postupy pro celý tým leží ve firemním Obsidianu — jeden trezor,
     # v prostorech jen ke čtení — a ne u každého v domově. Tohle je jediné
     # místo, kde se zavádějí při instalaci; ručně pak `claude-hub-admin skills`.
-    local out
-    if out="$(claude-hub-admin skills update 2>&1)"; then          # jsou z gitu
-        ok "${out%%$'\n'*}"
+    # Už tam nějaké jsou → nechávají se, jak je tým má: aktualizace serveru
+    # je nepřepisuje ani nestahuje znovu (ručně `claude-hub-admin skills update`).
+    local out COMPANY_SKILLS_DIR
+    COMPANY_SKILLS_DIR="$(cd "$REPO_DIR" && python3 -c 'from gateway import config; print(config.COMPANY_SKILLS)' 2>/dev/null)"
+    if [ -n "$COMPANY_SKILLS_DIR" ] && [ -d "$COMPANY_SKILLS_DIR" ] && [ -n "$(ls -A "$COMPANY_SKILLS_DIR" 2>/dev/null)" ]; then
+        ok "firemní skilly nechávám, jak jsou"
     elif out="$(claude-hub-admin skills install 2>&1)"; then       # ještě tam nejsou
         ok "${out%%$'\n'*}"
     else

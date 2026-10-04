@@ -494,11 +494,15 @@ $stateFile = if ($HasVault) { Join-Path $MemoryDir 'session-state.md' }
 $vaultOnly = @('save', 'learn', 'project', 'skill')   # bez vaultu nedávají smysl
 $installed = @()
 
+# Skilly patří uživateli: aktualizace na ně nesahá a nová instalace přidá
+# jen ty, které ještě nemá.
 foreach ($dir in Get-ChildItem -Path (Join-Path $Src 'skills') -Directory) {
+    if ($Update) { break }
     $skillFile = Join-Path $dir.FullName 'SKILL.md'
     if (-not (Test-Path $skillFile)) { continue }
     if (-not $HasVault -and $vaultOnly -contains $dir.Name) { continue }
     $target = Join-Path $ClaudeDir "skills\$($dir.Name)"
+    if (Test-Path $target) { continue }
     New-Item -ItemType Directory -Force -Path $target | Out-Null
     (Get-Content $skillFile -Raw -Encoding UTF8).
         Replace('{{MEMORY_DIR}}',   (To-Slash $MemoryDir)).

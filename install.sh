@@ -528,12 +528,16 @@ $HAS_VAULT && STATE_FILE="$MEMORY_DIR/session-state.md"
 VAULT_ONLY=" save learn project skill "   # bez vaultu nedávají smysl
 INSTALLED=""
 
+# Skilly patří uživateli: aktualizace na ně nesahá vůbec a nová instalace
+# přidá jen ty, které ještě nemá — vlastní úpravy ani smazané se nevrací.
 for dir in "$SRC"/skills/*/; do
+    $UPDATE && break
     name="$(basename "$dir")"
     [ -f "$dir/SKILL.md" ] || continue
     if ! $HAS_VAULT && [[ "$VAULT_ONLY" == *" $name "* ]]; then
         continue
     fi
+    [ -e "$CLAUDE_DIR/skills/$name" ] && continue
     mkdir -p "$CLAUDE_DIR/skills/$name"
     sed -e "s|{{MEMORY_DIR}}|$MEMORY_DIR|g" \
         -e "s|{{PROJECT_DIRS}}|$PROJECT_DIRS_LIST|g" \
@@ -545,7 +549,11 @@ for dir in "$SRC"/skills/*/; do
         "$dir/SKILL.md" > "$CLAUDE_DIR/skills/$name/SKILL.md"
     INSTALLED="$INSTALLED /$name"
 done
-ok "slash příkazy:$INSTALLED"
+if $UPDATE; then
+    ok "skilly nechávám, jak je máš"
+else
+    ok "slash příkazy:${INSTALLED:- (všechny už máš)}"
+fi
 
 if ls "$CLAUDE_DIR"/commands/*.md >/dev/null 2>&1; then
     warn "$CLAUDE_DIR/commands/ tenhle build Claude Code nečte — příkazy teď běží ze skills/"
