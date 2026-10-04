@@ -600,6 +600,7 @@ function openVault(path, vault, title) {
 }
 
 /* Které Obsidiany člověk má: osobní, firemní (když má přístup) a sdílené. */
+let brMapa = {};            // které taby mají v prohlížeči karty (hlásí prohlizec.js)
 let sharedVaults = [];
 let sharedCizi = [];       // správce: sdílené, ve kterých není (jen spravovat, obsah nevidí)
 function vaultList() {
@@ -3546,6 +3547,10 @@ function handle(msg) {
     const tab = TABS.find(t => t.ref === msg.ref);
     if (tab) {
       tab.id = msg.id;
+      // Taby po restartu vznikají dřív, než server řekne jejich id — ikonka
+      // prohlížeče a lišta se musí dopočítat teď, ne až při další změně.
+      if (window.__brPouzij) window.__brPouzij();
+      if (tab === ACTIVE) document.dispatchEvent(new CustomEvent('hub-tab', {detail: {id: tab.id, title: tab.title, path: tab.path || ''}}));
       tab.bypass = !!msg.bypass;
       tab.chat = msg.chat || tab.chat || '';
       // Server mohl model doplnit sám (Ollama bez modelu nespustíš), tak se
@@ -3926,8 +3931,10 @@ async function main() {
                           tabTitle: (sid) => { const t = TABS.find((x) => x.id === sid); return t ? t.title : ''; }});
   }
   /* Ikonka prohlížeče u tabů, které v něm mají karty (prohlizec.js). */
-  document.addEventListener('hub-br-taby', (ev) => {
-    const mapa = ev.detail || {};
+  document.addEventListener('hub-br-taby', (ev) => { brMapa = ev.detail || {}; brPouzij(); });
+  window.__brPouzij = () => brPouzij();
+  function brPouzij() {
+    const mapa = brMapa;
     for (const t of TABS) {
       const ik = t.el && t.el.querySelector('.tab-br');
       if (!ik) continue;
@@ -3937,7 +3944,7 @@ async function main() {
       ik.title = !m ? '' : m.potreba ? 'Claude v prohlížeči potřebuje tvou pomoc — ukázat'
         : 'Prohlížeč tohohle chatu (' + m.karet + (m.karet === 1 ? ' karta' : m.karet < 5 ? ' karty' : ' karet') + ')';
     }
-  });
+  }
   connect();
   checkForUpdate();
   checkServerUpdate();
