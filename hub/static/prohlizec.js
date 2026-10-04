@@ -46,6 +46,8 @@
   let samo = false;                  // okno otevřela potřeba člověka (po vyřízení se zase složí)
   const odbyto = new Set();          // „id:důvod“ — člověk okno při té potřebě sám zavřel
   let posledniTaby = '';
+  let mapaTabu = {};                 // sid tabu → {karet, potreba} (co hlásí server)
+  let aktivniTab = null;             // tab, na kterém zrovna stojíš
   const DUVODY = {
     heslo: 'Claude potřebuje, aby ses tu přihlásil.',
     kod: 'Claude potřebuje ověřovací kód — opiš ho sem.',
@@ -352,15 +354,24 @@
     return pill;
   }
 
+  /* Okno i lišta patří chatu, na kterém stojíš: vidíš je jen tam, kde má Claude
+     v prohlížeči karty. Jiný chat = jiný prohlížeč, nebo žádný. Výjimka: okno,
+     které se samo otevřelo, protože je potřeba člověk (přihlášení, captcha). */
+  function usadViditelnost() {
+    const ma = (aktivniTab && !!mapaTabu[aktivniTab]) || (samo && stav === 'okno');
+    if (root) root.hidden = stav !== 'okno' || !ma;
+    if (pill) pill.hidden = stav !== 'mini' || !ma;
+    document.body.classList.toggle('br-otevren', stav === 'okno' && ma);
+  }
+
   /* `zavreno` = pryč a server neposílá nic; `mini` = jen lišta (obraz se dál
      stahuje, ať je při rozbalení hned vidět, co se děje); `okno` = plovoucí. */
   function nastav(novy, potichu) {
     if (!root) { geo = nactiGeo(); sestav(); usad(); }
     stav = novy;
-    root.hidden = novy !== 'okno';
-    pilulka().hidden = novy !== 'mini';
-    document.body.classList.toggle('br-otevren', novy === 'okno');
+    pilulka();
     if (novy !== 'okno') samo = false;
+    usadViditelnost();
     if (novy === 'zavreno') zavriSpojeni(); else otevriSpojeni();
     // Minimalizované okno obraz nestahuje — jen ví, co je v kartách.
     if (otevrene) send({t: 'br', a: 'vidi', on: novy === 'okno'});
@@ -412,8 +423,7 @@
   function viditelne(pages) {
     pages = pages || [];
     if (!vyber) return pages;
-    const moje = pages.filter((p) => p.tab === vyber);
-    return moje.length ? moje : pages;
+    return pages.filter((p) => p.tab === vyber);
   }
 
   function kresliKarty(msg) {
@@ -577,6 +587,8 @@
       mapa[p.tab].karet++;
       if (p.potreba) mapa[p.tab].potreba = p.potreba;
     }
+    mapaTabu = mapa;
+    usadViditelnost();
     const sig = JSON.stringify(mapa);
     if (sig === posledniTaby) return;
     posledniTaby = sig;
@@ -625,12 +637,9 @@
     const ted = Date.now();
     const dlouho = ted - posledniNastroj > POP_PAUZA;
     posledniNastroj = ted;
-    if (sid && stav !== 'okno' && sid !== vyber) {
-      vyber = sid;
-      if (otevrene) send({t: 'br', a: 'sleduj', tab: vyber});
-    }
     if (stav === 'zavreno') nastav('mini', true);
-    if (stav === 'mini' && dlouho && pill) {
+    // Zamrká jen u chatu, ve kterém Claude prohlížeč používá — jinde by to rušilo.
+    if (stav === 'mini' && dlouho && pill && (!sid || sid === aktivniTab)) {
       pill.classList.remove('br-mrk');
       void pill.offsetWidth;
       pill.classList.add('br-mrk');
@@ -647,6 +656,19 @@
       geo = g;
       nastav(g.stav, true);
     }
+    document.addEventListener('hub-tab', (ev) => {
+      aktivniTab = (ev.detail && ev.detail.id) || null;
+      vyber = aktivniTab;
+      samo = false;
+      if (otevrene) {
+        send({t: 'br', a: 'sleduj', tab: vyber});
+        const moje = (info.pages || []).filter((p) => p.tab === vyber);
+        if (moje.length && !moje.some((p) => p.id === info.active)) send({t: 'br', a: 'tab', id: moje[moje.length - 1].id});
+        kresliKarty(info);
+        kresliChaty(info);
+      }
+      usadViditelnost();
+    });
     document.addEventListener('hub-tool', (ev) => {
       if (ev.detail && /^mcp__playwright__/.test(ev.detail.name || '')) potreba(ev.detail.tab || null);
     });
