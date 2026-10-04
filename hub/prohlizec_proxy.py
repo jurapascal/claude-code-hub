@@ -153,18 +153,55 @@ class Evidence:
         except OSError:
             pass
 
-    def uklid(self, zavrit_karty=True):
-        """Session končí: její karty už nikdo neovládá, tak se zavřou."""
+    def uklid(self, zavrit_karty=False):
+        """Session končí. Karty se NEzavírají: při restartu appky nebo aktualizaci
+        končí všechny sessions naráz a po obnově by člověk přišel o rozdělanou
+        práci v prohlížeči (přihlášení, vyplněné formuláře). Zápis zůstane jako
+        „osiřelý" a převezme ho nová session ve stejné složce (`adoptuj`);
+        co nikdo nepřevezme, hub za den zavře (`vlastnici`)."""
         if zavrit_karty:
             for tid in list(self.karty):
                 try:
                     prohlizec.zavri_kartu(tid)
                 except Exception:
                     pass
+            try:
+                os.remove(self.soubor)
+            except OSError:
+                pass
+            return
+        self.uloz()
+
+    def adoptuj(self):
+        """Převezme karty osiřelých zápisů ze stejné složky (po restartu appky
+        se session otevře znovu a prohlížeč pokračuje tam, kde skončil)."""
         try:
-            os.remove(self.soubor)
-        except OSError:
-            pass
+            zive = {p["id"] for p in prohlizec._get("/json/list", 1.5) if p.get("type") == "page"}
+            names = os.listdir(slozka())
+        except Exception:
+            return
+        moje = os.path.abspath(os.getcwd())
+        for name in names:
+            path = os.path.join(slozka(), name)
+            if not name.endswith(".json") or path == self.soubor:
+                continue
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    d = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            pid = d.get("pid")
+            if not isinstance(pid, int) or _zije(pid) or os.path.abspath(d.get("cwd") or "") != moje:
+                continue
+            for tid in d.get("pages") or []:
+                if tid in zive:
+                    with self._lock:
+                        self.karty.add(tid)
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        self.uloz()
 
 
 class Spojeni:
@@ -379,6 +416,7 @@ class Proxy:
         return f"ws://{prohlizec.HOST}:{self.port}/devtools/browser/{self.token}"
 
     def start(self):
+        self.ev.adoptuj()
         self.ev.uloz()
         threading.Thread(target=self._prijimej, name="cdp-proxy", daemon=True).start()
         return self
@@ -421,7 +459,7 @@ class Proxy:
             except OSError:
                 pass
 
-    def stop(self, zavrit_karty=True):
+    def stop(self, zavrit_karty=False):
         try:
             self.sock.close()
         except OSError:
@@ -448,10 +486,18 @@ def vlastnici():
             continue
         pid = d.get("pid")
         if isinstance(pid, int) and not _zije(pid):
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+            # Osiřelý zápis: karty nikdo neovládá, ale čekají na novou session
+            # ve stejné složce. Co zůstane dýl než den, se zavře.
+            if time.time() - float(d.get("ts") or 0) > 86400:
+                for tid in d.get("pages") or []:
+                    try:
+                        prohlizec.zavri_kartu(tid)
+                    except Exception:
+                        pass
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
             continue
         for tid in d.get("pages") or []:
             out[tid] = d.get("tab") or ""

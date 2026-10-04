@@ -33,7 +33,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (account, automodel, chats, clockify, connect, core, cteni, jev, pocitac, predplatne,
-               prenos, prenos_hub, prohlizec, pty_backend, qr, remote, restart, setup, stats, vzhled)
+               pozadi, prenos, prenos_hub, prohlizec, pty_backend, qr, remote, restart, setup, stats, vzhled)
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -803,6 +803,8 @@ class Handler(BaseHTTPRequestHandler):
                            # Poloha a stav okna s prohlížečem — drží hub, ne
                            # localStorage (port hubu se mění s každým startem).
                            "prohlizec_okno": core.CONFIG.get("prohlizec_okno") or {},
+                           "na_pozadi": bool(core.CONFIG.get("na_pozadi")),
+                           "bez_spanku": bool(core.CONFIG.get("bez_spanku")),
                            # Server, na kterém má appka účet, a jestli se má
                            # otevírat rovnou tam. Token sem nepatří — stránka
                            # ho nepotřebuje a /api/state se kreslí všude.
@@ -1141,7 +1143,7 @@ class Handler(BaseHTTPRequestHandler):
                        "newtab", "extra_projects", "show_archived",
                        "agents", "default_agent", "project_agents",
                        "remote_keep_running", "dev_mode", "memory_autosave",
-                       "hlas_model", "theme", "prohlizec_okno")
+                       "hlas_model", "theme", "prohlizec_okno", "na_pozadi", "bez_spanku")
             updates = {k: v for k, v in payload.items() if k in allowed}
             if "theme" in updates and updates["theme"] not in ("", "dark", "light"):
                 return self._json({"error": "Neznámé téma."}, 400)
@@ -1151,6 +1153,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "Nic k uložení."}, 400)
             try:
                 core.save_config(updates)
+                if "bez_spanku" in updates:
+                    pozadi.sync()
             except Exception as exc:
                 return self._json({"error": f"Konfig nejde zapsat: {exc}"}, 500)
             return self._json({"ok": True, "brain_dir": core.BRAIN,
@@ -1270,6 +1274,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({**out, "appka": pluginy.appka_seznam()}, 200 if out.get("ok") else 400)
             out = pluginy.akce(co, payload.get("id", ""), payload.get("sha", ""), payload.get("zdroj", ""))
             return self._json(out, 200 if out.get("ok") or out.get("potvrdit") else 400)
+        if name == "quit":
+            # Úplné ukončení appky, i když běží na pozadí (Nastavení → Ostatní).
+            if core.on_gateway():
+                return self._json({"error": "Prostor na serveru ukončuje server."}, 400)
+            threading.Timer(0.3, pozadi.konec).start()
+            return self._json({"ok": True})
         if name == "claude-ucet":
             # Pod jakým účtem claude.ai je Claude Code přihlášený (Nastavení → Účet).
             return self._json({"account": core.claude_account()})

@@ -42,7 +42,7 @@ if sys.platform == "win32":
         except (AttributeError, ValueError, OSError):
             pass
 
-from hub import account, core, pocitac, predplatne, pty_backend, server, window  # noqa: E402
+from hub import account, core, pocitac, pozadi, predplatne, pty_backend, server, window  # noqa: E402
 
 
 MCP_MARKS = {"ok": "+", "auth": "!", "fail": "-", "local": ".",
@@ -196,6 +196,9 @@ def wait_for_page(proc=None, grace=10, startup=60):
             if core.CONFIG.get("remote_enabled") and \
                     core.CONFIG.get("remote_keep_running"):
                 continue
+            # „Běžet na pozadí": zavřené okno je jen zavřené okno.
+            if core.CONFIG.get("na_pozadi"):
+                continue
             core.log("okno zavřeno — končím")
             return
 
@@ -249,7 +252,20 @@ def main():
         elif arg == "--local":
             core.save_config({"server_mode": False})
 
+    # Appka už běží na pozadí (zavřené okno) → jen se k ní otevře nové okno.
+    # Druhá instance nad stejnými chaty by si přepisovala konverzace.
+    if "--no-browser" not in args and not core.TEST_MODE:
+        bezi = pozadi.bezici_url()
+        if bezi:
+            core.log("běží na pozadí — otevírám okno k ní")
+            host, proc, blocking = window.open_window(bezi, prefer)
+            if blocking:
+                blocking()
+            return 0
+
     httpd, url = server.start()
+    pozadi.zapis(url)
+    pozadi.sync()
     # Celý doctor() tu nevolat — ptá se agentů (CLI) a okno by na to čekalo.
     core.log(f"start: port {httpd.server_address[1]}, platforma {sys.platform}")
     if core.CONFIG.get("remote_enabled"):
@@ -272,6 +288,9 @@ def main():
         core.log(f"okno: {host}")
         if blocking:
             blocking()          # in-process loop owns the window's lifetime
+            # Na pozadí: okno (WebKit je součást procesu) je pryč, server zůstává.
+            while core.CONFIG.get("na_pozadi"):
+                time.sleep(3600)
         else:
             wait_for_page(proc)
     except KeyboardInterrupt:
@@ -280,6 +299,8 @@ def main():
         core.log(f"CHYBA: {exc!r}")
         raise
     finally:
+        pozadi.spanek(False)
+        pozadi.smaz()
         pocitac.stop()
         server.stop_remote()
         server.HUB.shutdown()

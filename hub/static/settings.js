@@ -192,6 +192,35 @@
       'na psaní, nahrávání webů a GitHub, spotřeba tokenů, jiní AI pomocníci, ' +
       'technické podrobnosti napojení, cesty na disku a záznam chyb. Vypnutím se ' +
       'zase schová — nic se nesmaže.'));
+    box.appendChild(el('div', 'set-title', 'Běh na pozadí'));
+    const volba = (klic, text, popis) => {
+      const r = el('label', 'onb-row');
+      const c = el('input');
+      c.type = 'checkbox';
+      c.checked = !!(state.config && state.config[klic]);
+      c.onchange = () => { if (state.config) state.config[klic] = c.checked; save({[klic]: c.checked}); };
+      r.appendChild(c);
+      const col = el('span', 'onb-col');
+      col.appendChild(el('span', null, text));
+      col.appendChild(el('small', null, popis));
+      r.appendChild(col);
+      box.appendChild(r);
+    };
+    volba('na_pozadi', 'Nechat appku běžet na pozadí',
+      'Zavřením okna appka neskončí: chaty s Claudem běží dál a když ji spustíš znovu, ' +
+      'otevře se okno k té běžící.');
+    volba('bez_spanku', 'Nenechat počítač usnout, dokud appka běží',
+      'I se zavřeným víkem, kde to systém dovolí. Spánek vyvolaný ručně (nabídka, tlačítko) ' +
+      'žádná aplikace zakázat nemůže.');
+    const konec = el('button', 'btn ghost', 'Ukončit appku úplně');
+    konec.title = 'Zavře i to, co běží na pozadí — chaty s Claudem se zastaví.';
+    konec.onclick = async () => {
+      if (!(await HubDialog.confirm('Ukončit appku úplně? Chaty s Claudem, které běží na pozadí, se zastaví.',
+                                    {title: 'Ukončit appku', ok: 'Ukončit'}))) return;
+      try { await io.api('quit', {}); } catch (_) { /* appka už neodpoví */ }
+      io.toast('Appka se ukončuje…');
+    };
+    box.appendChild(konec);
     return box;
   }
 
