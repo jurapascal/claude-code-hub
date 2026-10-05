@@ -12,3 +12,6 @@ __pycache__/
 *.backup-*
 *.log
 .DS_Store
+
+# chat exports saved by /export
+gateway/20*-*/
