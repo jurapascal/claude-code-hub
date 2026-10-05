@@ -5,7 +5,7 @@ Katalog v core.MCP_CATALOG je technický („zaregistruj server s těmahle údaj
 Tohle je vrstva pro člověka: karta služby, pod ní účty a u každého Přihlásit
 a Odebrat (Nastavení → Napojení). Každý účet je samostatné napojení:
 
-* **Freelo, Canva, Ecomail** — oficiální vzdálené MCP servery s OAuth, které si
+* **Freelo, Canva** — oficiální vzdálené MCP servery s OAuth, které si
   klienta zaregistrují samy (DCR — ověřeno na jejich metadatech). Účet je
   `claude mcp add` pod jménem `<služba>-<popisek>`. Claude Code ukládá
   přihlášení pod jménem serveru (`canva-firma|<otisk>`), takže dva účty téže
@@ -63,13 +63,23 @@ SERVICES = {
         "warn": "Canva napojení pouští jen v placeném tarifu (Pro, Teams…). "
                 "V týmovém účtu ho musí správce Canvy povolit: Canva AI Connector.",
     },
+    # Vzdálený server Ecomailu ({účet}.ecomailapp.cz/mcp) pouští OAuth jen
+    # claude.ai a ChatGPT — registraci klienta s návratem na localhost odmítne
+    # 403 (ověřeno 6. 10. 2026). Pro Claude Code má Ecomail oficiální lokální
+    # server s API klíčem (github.com/Ecomailcz/ecomail-public-mcp).
     "ecomail": {
         "label": "Ecomail",
         "note": "Kontakty, seznamy a kampaně.",
-        "kind": "mcp",
-        "url": "https://{account}.ecomailapp.cz/mcp",
-        "field": {"name": "account", "label": "Název účtu v Ecomailu",
-                  "help": "Z adresy, na které Ecomail otevíráš: název.ecomailapp.cz"},
+        "kind": "token",
+        "command": ["npx", "-y", "ecomail-mcp@1.0.0"],
+        "package": "ecomail-mcp",
+        "env": "ECOMAIL_API_KEY",
+        "field": {"name": "account", "label": "API klíč z Ecomailu", "secret": True,
+                  "help": "Ecomail → Správa účtu → Pro vývojáře → Zkopírovat API klíč"},
+        "warn": "API klíč dává přístup k celému účtu Ecomailu, včetně odesílání kampaní.",
+        # Server se spustí i se špatným klíčem a spadne až první nástroj —
+        # proto klíč ověří přímo API Ecomailu ještě před uložením.
+        "check": {"url": "https://api2.ecomailapp.cz/account", "header": "key"},
     },
     # Clockify se nepřihlašuje přes OAuth, bere API klíč v hlavičce — proto
     # vlastní druh „apikey": po vložení klíče je hotovo, žádné přihlášení.
@@ -524,6 +534,24 @@ def services(refresh=False):
             "on_server": core.on_gateway(), "servers": sorted(claimed)}
 
 
+def _key_rejected(spec, key):
+    """Věta pro člověka, když služba klíč odmítla; jinak "" (i když se
+    ověřit nepovedlo — výpadek sítě nemá napojení blokovat)."""
+    check = spec.get("check")
+    if not check:
+        return ""
+    req = urllib.request.Request(check["url"], headers={
+        check["header"]: key, "User-Agent": "claude-code-hub"})
+    try:
+        urllib.request.urlopen(req, timeout=15).close()
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return f"{spec['label']} ten klíč nepřijal — zkopíruj ho znovu celý."
+    except (urllib.error.URLError, OSError):
+        pass
+    return ""
+
+
 def add_account(service, label="", account="", client_id="", client_secret=""):
     """Přidá účet a rovnou spustí přihlášení. Vrací {ok, name, login|detail}."""
     spec = SERVICES.get(service)
@@ -543,6 +571,9 @@ def add_account(service, label="", account="", client_id="", client_secret=""):
         key = (account or "").strip()
         if not key:
             return {"ok": False, "detail": f"Chybí {spec['field']['label']}."}
+        bad = _key_rejected(spec, key)
+        if bad:
+            return {"ok": False, "detail": bad}
         if name in _user_servers():
             return {"ok": False, "detail": f"Účet „{slug}“ u služby {spec['label']} už je "
                                            "— zvol jiný popisek."}
@@ -571,13 +602,6 @@ def add_account(service, label="", account="", client_id="", client_secret=""):
         _recheck()
         return {"ok": True, "name": name,
                 "login": {"done": True, "message": f"{spec['label']} napojené."}}
-    if "{account}" in url:
-        text = (account or "").strip().lower()
-        m = re.search(r"([a-z0-9][a-z0-9-]*)\.ecomailapp\.cz", text)
-        acc = m.group(1) if m else re.sub(r"[^a-z0-9-]", "", text)
-        if not acc:
-            return {"ok": False, "detail": f"Chybí {spec['field']['label'].lower()}."}
-        url = url.format(account=acc)
     if name in _user_servers():
         return {"ok": False, "detail": f"Účet „{slug}“ u služby {spec['label']} už je "
                                        "— zvol jiný popisek."}
@@ -587,13 +611,11 @@ def add_account(service, label="", account="", client_id="", client_secret=""):
     core.log(f"služby: přidán účet {name}")
     started = login_start(name)
     if not started.get("ok"):
-        # Přihlášení se ani nerozběhlo (typicky překlep v názvu účtu Ecomailu —
-        # server pak registraci klienta odmítne). Nefunkční účet v seznamu by
-        # jen mátl, tak se registrace vrátí zpátky.
+        # Přihlášení se ani nerozběhlo (server třeba registraci klienta
+        # odmítl). Nefunkční účet v seznamu by jen mátl, tak se registrace
+        # vrátí zpátky.
         _run([claude, "mcp", "remove", name, "-s", "user"], 30)
-        hint = (" Zkontroluj název účtu — musí sedět s adresou, na které "
-                "Ecomail otevíráš." if "{account}" in spec["url"] else "")
-        return {"ok": False, "detail": f"Přihlášení k {spec['label']} se nerozběhlo.{hint}"}
+        return {"ok": False, "detail": f"Přihlášení k {spec['label']} se nerozběhlo."}
     write_claude_md()
     return {**started, "name": name}
 
@@ -916,7 +938,7 @@ def _cleanup():
 
 
 def login_start(name):
-    """Přihlášení existujícího účtu (Freelo, Canva, Ecomail)."""
+    """Přihlášení existujícího účtu (Freelo, Canva, Meta reklamy)."""
     _cleanup()
     if name not in _user_servers():
         return {"ok": False, "detail": "Tenhle účet tu není."}

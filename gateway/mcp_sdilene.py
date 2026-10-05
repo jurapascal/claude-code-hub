@@ -324,7 +324,8 @@ SERVICES = {"freelo": "Freelo", "canva": "Canva", "ecomail": "Ecomail",
             "clockify": "Clockify", "google": "Google", "facebook": "Facebook a Instagram",
             "reklamy": "Meta reklamy", "vlastni": "Vlastní napojení"}
 # Služby spouštěné příkazem s tokenem v proměnné (hub/connect.py, druh „token").
-COMMAND_SERVICES = {"facebook": ("@oliverames/meta-mcp-server", "META_ACCESS_TOKEN")}
+COMMAND_SERVICES = {"facebook": ("@oliverames/meta-mcp-server", "META_ACCESS_TOKEN"),
+                    "ecomail": ("ecomail-mcp", "ECOMAIL_API_KEY")}
 ACCOUNT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
 GOOGLE_TOOLS = ["gmail", "drive", "calendar", "docs", "sheets", "slides",
                 "forms", "tasks", "contacts"]
