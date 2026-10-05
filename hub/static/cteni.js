@@ -41,9 +41,20 @@
   const DUL_BARVY = ['#e0843c', '#f85149', '#3fb950', '#4c97f0', '#a371f7', '#d29922', '#e5609c'];
   const DUL_JMENA = {'#e0843c': 'oranžová', '#f85149': 'červená', '#3fb950': 'zelená', '#4c97f0': 'modrá',
                      '#a371f7': 'fialová', '#d29922': 'žlutá', '#e5609c': 'růžová'};
-  function paleta(kotva, aktualni, vyber, odeber) {
+  function paleta(kotva, aktualni, vyber, odeber, kopie) {
     document.querySelectorAll('.dul-paleta').forEach((n) => n.remove());
     const box = el('div', 'dul-paleta');
+    // Kopírování (jen u zpráv ve Čtení): celá zpráva, a když je co, i označený kousek.
+    if (kopie && kopie.zprava) {
+      const z = el('button', 'dul-kopie', 'Kopírovat zprávu');
+      z.onclick = (ev) => { ev.stopPropagation(); kopie.zprava(); zavri(); };
+      box.appendChild(z);
+      if (kopie.vyber) {
+        const v = el('button', 'dul-kopie', 'Kopírovat výběr');
+        v.onclick = (ev) => { ev.stopPropagation(); kopie.vyber(); zavri(); };
+        box.appendChild(v);
+      }
+    }
     box.appendChild(el('div', 'dul-nadpis', 'Barva poznámky'));
     for (const b of DUL_BARVY) {
       const t = el('button', 'dul-barva' + (b === aktualni ? ' on' : ''));
@@ -272,7 +283,7 @@
      `imageUrl` převede cestu k obrázku z hub-images na adresu, ze které ho
      stránka smí načíst (/api/image). */
   function flow(mount, imageUrl, {historie = false, openLink = null, notice = null, zive = null,
-                                  udalost = null, naPrehled = null, dulKlic = null} = {}) {
+                                  udalost = null, naPrehled = null, dulKlic = null, copy = null} = {}) {
     /* Odkaz v Markdownu je <a> bez href (vault.js) — sám nikam nevede,
        otevřít ho musí hub. V okně appky by holý odkaz stejně nic neudělal. */
     mount.addEventListener('click', (ev) => {
@@ -390,14 +401,56 @@
       if (d) d.barva = barva;
       dulUloz(); dulVykresli(k); zmenaPrehledu();
     }
-    // Pravý klik na zprávu: vybereš barvu a zpráva je poznámka vpravo.
+    /* Do schránky přes copyText z hubu (io.copy); výsledek hlásí toast. */
+    function zkopiruj(text) {
+      if (!copy || !text) return;
+      Promise.resolve().then(() => copy(text))
+        .then(() => { if (notice) notice('Zkopírováno (' + text.length + ' znaků)'); })
+        .catch((err) => { if (notice) notice('Kopírování se nepovedlo: ' + ((err && err.message) || err)); });
+    }
+    /* Označený text uvnitř proudu → malá lišta „Kopírovat výběr“. Nativní
+       označování prstem zůstává, lišta jen přidává tlačítko nad pole na psaní.
+       Text se zachytí hned při označení — klepnutí na tlačítko by výběr mohlo
+       stihnout zrušit dřív, než se přečte. */
+    function pripojListuVyberu() {
+      if (!copy) return;
+      let lista = null, text = '';
+      const skryj = () => { if (lista) lista.hidden = true; text = ''; };
+      function naVyber() {
+        if (!mount.isConnected) { document.removeEventListener('selectionchange', naVyber); if (lista) lista.remove(); return; }
+        const sel = window.getSelection();
+        const t = sel && !sel.isCollapsed ? sel.toString().trim() : '';
+        if (!t || !mount.contains(sel.anchorNode) || !mount.contains(sel.focusNode)) { skryj(); return; }
+        const root = mount.closest('.cteni, .onb-body');
+        if (!root) return;
+        if (!lista) {
+          lista = el('div', 'cteni-vyber-lista');
+          const tl = el('button', 'cteni-vyber-tl', 'Kopírovat výběr');
+          // Bez přenosu zaostření, ať klepnutí výběr nezruší.
+          tl.addEventListener('mousedown', (e) => e.preventDefault());
+          tl.addEventListener('pointerdown', (e) => e.preventDefault());
+          tl.onclick = () => { zkopiruj(text); skryj(); };
+          lista.appendChild(tl);
+        }
+        if (lista.parentNode !== root) root.appendChild(lista);
+        const zapis = root.querySelector('.cteni-write');
+        lista.style.bottom = ((zapis ? zapis.offsetHeight : 0) + 10) + 'px';
+        text = t;
+        lista.hidden = false;
+      }
+      document.addEventListener('selectionchange', naVyber);
+    }
+    pripojListuVyberu();
+    // Pravý klik / podržení zprávy: vybereš barvu nebo zprávu zkopíruješ.
     function dulMenu(ev, k, text) {
       ev.preventDefault();
       ev.stopPropagation();
       dulNacti();
       const d = dul.find((x) => x.k === k);
+      const oznaceno = String(window.getSelection()).trim();
       paleta({x: ev.clientX, y: ev.clientY}, d && d.barva, (b) => dulPridej(k, text, b),
-             d ? () => dulOdeber(k) : null);
+             d ? () => dulOdeber(k) : null,
+             copy ? {zprava: () => zkopiruj(text), vyber: oznaceno ? () => zkopiruj(oznaceno) : null} : null);
     }
     /* Stejná věta napsaná dvakrát jsou dvě zprávy, každá s vlastní poznámkou:
        první má starý klíč (uložené poznámky se nerozbijí), další #2, #3… */
@@ -1172,7 +1225,7 @@
     /* Předčítá se jen to, co přibude naživo — ne historie při otevření tabu. */
     let nacteno = false;
     const proud = flow(mount, io.imageUrl, {
-      openLink: io.openLink, notice: io.notice,
+      openLink: io.openLink, notice: io.notice, copy: io.copy,
       zive: () => nacteno && !!global.HubHlas && global.HubHlas.auto.get() &&
                   (!io.aktivni || io.aktivni()),
       naPrehled: () => { if (io.prehled) io.prehled(); },
@@ -1411,7 +1464,7 @@
 
     const scroll = q('.cteni-scroll');
     const proud = flow(q('.cteni-flow'), io.imageUrl, {historie: true, openLink: io.openLink,
-                                                        notice: io.notice});
+                                                        notice: io.notice, copy: io.copy});
     const data = zdroj(io, 'chat=' + encodeURIComponent(chat.id));
 
     (async () => {
@@ -1480,7 +1533,7 @@
     const lista = q('.relace-lista');
     let zivy = true, uDna = true, odkud = 0, psat = share.role === 'pise', prazdnych = 0;
 
-    const proud = flow(q('.cteni-flow'), io.imageUrl, {openLink: io.openLink, notice: io.notice});
+    const proud = flow(q('.cteni-flow'), io.imageUrl, {openLink: io.openLink, notice: io.notice, copy: io.copy});
     scroll.addEventListener('scroll', () => {
       uDna = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < U_DNA;
     }, {passive: true});

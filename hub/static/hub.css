@@ -3447,6 +3447,17 @@ button.pr-radek:hover { background: var(--card-hover); color: var(--fg-bright); 
 }
 .dul-barva { width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
 .dul-barva.on { border-color: var(--fg-bright); }
+.dul-kopie { flex: 1 0 100%; border: none; background: none; color: var(--fg-bright); cursor: pointer; font: inherit; font-size: 13px; text-align: left; padding: 5px 2px; }
+.dul-kopie:hover { color: var(--accent, var(--fg-bright)); }
+/* Lišta „Kopírovat výběr“ — v kořeni Čtení, nad polem na psaní (cteni.js). */
+.cteni-modal .onb-body { position: relative; }
+.cteni-vyber-lista {
+  position: absolute; z-index: 6; left: 50%; transform: translateX(-50%);
+  padding: 6px; background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 999px; box-shadow: 0 8px 24px #0008;
+}
+.cteni-vyber-lista[hidden] { display: none; }
+.cteni-vyber-tl { border: none; background: none; color: var(--fg-bright); font: inherit; font-size: 14px; padding: 6px 14px; cursor: pointer; }
 .dul-odeber { flex: 1 0 100%; border: none; background: none; color: var(--red); cursor: pointer; font: inherit; font-size: 12px; text-align: left; padding: 2px 0 0; }
 
 /* ── Prohlížeč v appce (prohlizec.js) ─────────────────────────────────────

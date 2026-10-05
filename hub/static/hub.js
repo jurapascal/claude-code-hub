@@ -1288,7 +1288,7 @@ function readChat(c) {
   closeDrawer();
   if (!window.HubCteni) return resumeChat(c);
   const at = new Date(c.updated * 1000);
-  HubCteni.open({api, notice: toast, resume: resumeChat, imageUrl, openLink},
+  HubCteni.open({api, notice: toast, resume: resumeChat, imageUrl, openLink, copy: copyText},
                 {...c, when: at.toLocaleString('cs-CZ')});
 }
 
@@ -1599,7 +1599,7 @@ function renderRelace() {
       (s.diva.length ? ' · dívá se ' + s.diva.join(', ') : '');
     row.append(t, m);
     row.onclick = () => HubCteni.openSdilene({
-      gw: relaceGw, notice: toast, imageUrl, openLink, onClose: loadRelace,
+      gw: relaceGw, notice: toast, imageUrl, openLink, copy: copyText, onClose: loadRelace,
     }, s);
     list.appendChild(row);
   }
@@ -2624,7 +2624,7 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
      svůj přepis nepíšou, takže by nebylo z čeho číst. */
   if (kind === 'project' && window.HubCteni &&
       (agent || STATE.default_agent || 'claude') === 'claude') {
-    tab.cteni = HubCteni.install(tab, {api, notice: toast, imageUrl, openLink,
+    tab.cteni = HubCteni.install(tab, {api, notice: toast, imageUrl, openLink, copy: copyText,
                                        aktivni: () => ACTIVE === tab,
                                        // Panel Průběh vpravo (renderPrehled).
                                        prehled: () => { if (ACTIVE === tab) showActionbar(tab); }});
