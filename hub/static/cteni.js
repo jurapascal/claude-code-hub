@@ -113,10 +113,66 @@
   function markdown(text) {
     if (global.HubVault && global.HubVault.render) {
       try {
-        return global.HubVault.render(text, {resolve: () => '', image: () => '', breaks: true}).html;
+        return global.HubVault.render(jakoHtml(text), {resolve: () => '', image: () => '', breaks: true}).html;
       } catch (_) { /* radši holý text než prázdno */ }
     }
     return '';
+  }
+
+  /* Odpověď, která je celá HTML (dokument, tabulka, kus stránky), by se jinak
+     ukázala jako holé značky. Obalí se do bloku ```html, který ozivHtml()
+     vykreslí jako náhled. */
+  function jakoHtml(text) {
+    const t = String(text || '').trim();
+    const cely = /^<!doctype html|^<html[\s>]/i.test(t) ||
+      (/^<(div|table|section|article|main|header|body|style|h[1-6]|p|ul|ol|svg)[\s>]/i.test(t) && /<\/[a-z0-9]+>$/i.test(t));
+    return cely ? '~~~~~~~~html\n' + t + '\n~~~~~~~~' : text;
+  }
+
+  /* Kód v bloku ```html se ukáže jako vykreslená stránka s přepínačem na zdroj.
+     iframe je bez skriptů (sandbox), takže HTML od Clauda nemůže nic spustit;
+     `allow-same-origin` jen kvůli změření výšky. */
+  function nahledHtml(kod) {
+    const box = el('div', 'cteni-html');
+    const bar = el('div', 'cteni-html-bar');
+    const zdroj = el('button', 'cteni-html-btn', 'Kód');
+    const nahled = el('button', 'cteni-html-btn on', 'Náhled');
+    bar.append(nahled, zdroj);
+    const ram = el('iframe', 'cteni-html-ram');
+    ram.setAttribute('sandbox', 'allow-same-origin');
+    ram.setAttribute('loading', 'lazy');
+    const zaklad = '<meta charset="utf-8"><base target="_blank"><style>' +
+      'body{font:14px/1.55 system-ui,sans-serif;margin:14px;color:#1b1b1b;background:#fff}' +
+      'table{border-collapse:collapse}th,td{border:1px solid #ccc;padding:6px 10px;text-align:left;vertical-align:top}' +
+      'img{max-width:100%}</style>';
+    ram.srcdoc = zaklad + kod;
+    ram.onload = () => {
+      try {
+        ram.style.height = '0px';     // jinak scrollHeight nikdy nezmenší pod výšku rámu
+        const h = ram.contentDocument.documentElement.scrollHeight;
+        ram.style.height = Math.min(h + 4, Math.round(window.innerHeight * 0.8)) + 'px';
+      } catch (_) { /* zůstane výchozí výška */ }
+    };
+    const pre = el('pre', 'vault-code cteni-html-kod');
+    pre.hidden = true;
+    pre.appendChild(el('code', '', kod));
+    const prepni = (jeKod) => {
+      ram.hidden = jeKod;
+      pre.hidden = !jeKod;
+      zdroj.classList.toggle('on', jeKod);
+      nahled.classList.toggle('on', !jeKod);
+    };
+    zdroj.onclick = () => prepni(true);
+    nahled.onclick = () => prepni(false);
+    box.append(bar, ram, pre);
+    return box;
+  }
+
+  function ozivHtml(koren) {
+    for (const pre of koren.querySelectorAll('pre.vault-code[data-lang]')) {
+      if (!/^(html?|xhtml)$/.test(pre.dataset.lang)) continue;
+      pre.replaceWith(nahledHtml(pre.textContent));
+    }
   }
 
   /* Obrázek přes celé okno — klepnutí nebo Esc ho zavře. */
@@ -508,6 +564,22 @@
         box.classList.toggle('open', !detail.hidden);
       };
       box.append(head, detail);
+      // Zapsaný .html soubor: vedle kódu jde ukázat i jak vypadá.
+      if (b.name === 'Write' && /\.html?\b/i.test(b.title || '') && b.detail) {
+        const nahled = el('button', 'cteni-html-btn cteni-html-otevrit', 'Zobrazit náhled');
+        let ukazka = null;
+        nahled.onclick = () => {
+          if (!ukazka) {
+            ukazka = nahledHtml(b.detail);
+            box.appendChild(ukazka);
+            nahled.textContent = 'Skrýt náhled';
+          } else {
+            ukazka.hidden = !ukazka.hidden;
+            nahled.textContent = ukazka.hidden ? 'Zobrazit náhled' : 'Skrýt náhled';
+          }
+        };
+        box.insertBefore(nahled, detail);
+      }
       box.dataset.id = b.id || '';
       box._meta = meta;
       box._detail = detail;
@@ -669,7 +741,7 @@
           if (co === 'prompt') telo.textContent = k.prompt || '(bez zadání)';
           else {
             const html = markdown(k.vysledek);
-            if (html) telo.innerHTML = html;
+            if (html) { telo.innerHTML = html; ozivHtml(telo); }
             else telo.textContent = k.vysledek;
           }
           // Náhled výsledku je jen upoutávka — s rozbaleným celým by byl dvakrát.
@@ -711,7 +783,7 @@
       if (k.vysledek && nahled.dataset.src !== k.vysledek) {
         nahled.dataset.src = k.vysledek;
         const html = markdown(k.vysledek);
-        if (html) nahled.innerHTML = html;
+        if (html) { nahled.innerHTML = html; ozivHtml(nahled); }
         else nahled.textContent = k.vysledek;
       }
       nahled.hidden = !k.vysledek || k.otevreno === 'vysledek';
@@ -986,7 +1058,7 @@
       if (b.kind === 'say') {
         const box = el('div', 'cteni-say vault-md');
         const html = markdown(b.text);
-        if (html) box.innerHTML = html;
+        if (html) { box.innerHTML = html; ozivHtml(box); }
         else box.textContent = b.text;
         mount.appendChild(box);
         pripojPoznamku(box, b.text);

@@ -1296,7 +1296,8 @@ button.vault-crumb:hover { background: var(--bg-card); color: var(--fg-bright); 
 .vault-callout.warning, .vault-callout.caution, .vault-callout.danger,
 .vault-callout.error, .vault-callout.bug, .vault-callout.failure { border-left-color: var(--red); }
 .vault-callout.tip, .vault-callout.success, .vault-callout.check, .vault-callout.done { border-left-color: var(--green); }
-.vault-md table { display: block; overflow-x: auto; border-collapse: collapse; margin: 0 0 1em; font-size: 13px; }
+.vault-md .vault-table { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 0 1em; }
+.vault-md table { border-collapse: collapse; font-size: 13px; width: max-content; min-width: 100%; }
 .vault-md th, .vault-md td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
 .vault-md th { background: var(--bg-card); color: var(--fg-bright); }
 .vault-md hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }
@@ -2259,24 +2260,39 @@ select option { background-color: var(--bg-card); color: var(--fg-bright); }
 .cteni-say pre { max-width: 100%; overflow-x: auto; }
 /* Odpověď s tabulkou dostane celou šířku — v 85 % se sloupce nevešly. */
 .cteni-say:has(table) { max-width: 100%; }
-/* Tabulka: když se nevejde, posouvá se do strany uvnitř bubliny, místo
-   aby se sloupce mačkaly. Každý sloupec má rozumné minimum a dlouhý text
-   se v buňce láme po slovech. */
+/* Tabulka: dostane šířku podle obsahu a posouvá se do strany (obal
+   .vault-table), místo aby se sloupce mačkaly do úzkých sloupečků po jednom
+   dvou slovech. Dlouhý text se v buňce láme až na rozumné šířce. */
+.cteni-say .vault-table {
+  border: 1px solid var(--border); border-radius: 10px; margin: 0 0 1em;
+}
 .cteni-say table {
-  max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;
-  border-collapse: separate; border-spacing: 0;
-  border: 1px solid var(--border); border-radius: 10px;
+  border-collapse: separate; border-spacing: 0; border: none;
   font-size: 13px; line-height: 1.5;
 }
 .cteni-say th, .cteni-say td {
-  min-width: 7em; max-width: 26em; padding: 7px 11px;
+  min-width: 9em; max-width: 30em; padding: 7px 11px;
   border: none; border-bottom: 1px solid var(--border);
-  overflow-wrap: break-word; word-break: normal; hyphens: auto;
+  overflow-wrap: break-word; word-break: normal; hyphens: manual;
 }
 .cteni-say th + th, .cteni-say td + td { border-left: 1px solid var(--border); }
 .cteni-say tr:last-child td { border-bottom: none; }
 .cteni-say th { background: var(--bg); white-space: nowrap; font-weight: 600; }
 .cteni-say tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--bg) 35%, transparent); }
+/* HTML od Clauda vykreslené jako stránka (ozivHtml v cteni.js). */
+.cteni-say:has(.cteni-html) { width: 100%; max-width: 100%; }
+.cteni-html { margin: 0 0 1em; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg-card); }
+.cteni-html-bar { display: flex; gap: 4px; padding: 5px 6px; border-bottom: 1px solid var(--border); }
+.cteni-html-btn {
+  padding: 3px 10px; border: 1px solid transparent; border-radius: 6px;
+  background: none; color: var(--dim); font: inherit; font-size: 12px; cursor: pointer;
+}
+.cteni-html-btn:hover { color: var(--fg); border-color: var(--border); }
+.cteni-html-btn.on { color: var(--fg-bright); background: var(--bg); border-color: var(--border); }
+.cteni-html-ram { display: block; width: 100%; height: 320px; border: none; background: #fff; }
+.cteni-html-kod { margin: 0; border: none; border-radius: 0; max-height: 60vh; overflow: auto; }
+.cteni-html-otevrit { align-self: flex-start; margin: 2px 0 4px 22px; border-color: var(--border); }
+.cteni-tool > .cteni-html { margin: 2px 0 6px; }
 /* Nadpisy v odpovědi jsou členění textu, ne titulek stránky. */
 .cteni-say h1 { font-size: 1.3em; }
 .cteni-say h2 { font-size: 1.18em; }
@@ -2740,7 +2756,7 @@ select option { background-color: var(--bg-card); color: var(--fg-bright); }
      než text, ať se vejdou aspoň dva tři sloupce bez posouvání. */
   .cteni-say:has(table) { max-width: 100%; }
   .cteni-say table { font-size: 13.5px; }
-  .cteni-say th, .cteni-say td { min-width: 6.5em; max-width: 17em; padding: 8px 10px; }
+  .cteni-say th, .cteni-say td { min-width: 8em; max-width: 20em; padding: 8px 10px; }
   .cteni-say pre { font-size: 12.5px; }
   .cteni-say ul, .cteni-say ol { padding-left: 1.3em; }
 }

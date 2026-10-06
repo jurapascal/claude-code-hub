@@ -149,12 +149,14 @@
   function tableHtml(lines, ctx) {
     const cells = (l) => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
     const head = cells(lines[0]);
-    let html = '<table><thead><tr>' + head.map((c) => '<th>' + inline(c, ctx) + '</th>').join('') +
+    /* Obal je to, co se posouvá do strany — `overflow` na samotné <table> se
+       neuplatní a sloupce by se místo toho mačkaly do úzkých sloupečků. */
+    let html = '<div class="vault-table"><table><thead><tr>' + head.map((c) => '<th>' + inline(c, ctx) + '</th>').join('') +
                '</tr></thead><tbody>';
     for (const row of lines.slice(2)) {
       html += '<tr>' + cells(row).map((c) => '<td>' + inline(c, ctx) + '</td>').join('') + '</tr>';
     }
-    return html + '</tbody></table>';
+    return html + '</tbody></table></div>';
   }
 
   function blocks(lines, ctx) {
@@ -167,12 +169,14 @@
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       let m;
-      if ((m = /^\s*(`{3,}|~{3,})/.exec(line))) {
+      if ((m = /^\s*(`{3,}|~{3,})\s*([\w-]*)/.exec(line))) {
         flush();
         const fence = m[1];
+        const lang = m[2].toLowerCase();
         const code = [];
         for (i++; i < lines.length && !lines[i].trim().startsWith(fence); i++) code.push(lines[i]);
-        out.push('<pre class="vault-code"><code>' + esc(code.join('\n')) + '</code></pre>');
+        out.push('<pre class="vault-code"' + (lang ? ' data-lang="' + esc(lang) + '"' : '') + '><code>' +
+                 esc(code.join('\n')) + '</code></pre>');
         continue;
       }
       if (!line.trim()) { flush(); continue; }
