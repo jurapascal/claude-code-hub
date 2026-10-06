@@ -898,6 +898,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._gw_relace(route, method, user)
             if route == "/gw/tym":
                 return self._gw_team(method, user)
+            if route == "/gw/spotreba":
+                return self._gw_spotreba(method, user)
             if route == "/gw/mcp-sdilene":
                 return self._mcp_shared(method, user)
             if route == "/gw/restart":
@@ -1708,6 +1710,32 @@ chce být přihlášená jako <b>{html.escape(user["email"])}</b>.</p>
             return self._json(tym.act(self.accounts, user, form, self.hubs))
         except ValueError as exc:
             return self._json({"error": str(exc)}, 400)
+
+    def _gw_spotreba(self, method, user):
+        """Statistiky → Tým: spotřeba po lidech. Admin vidí všechny a nastavuje
+        týdenní strop, ostatní jen sebe (a jestli jsou u svého stropu)."""
+        from . import spotreba
+        admin = user.get("role") == "admin"
+        if method == "GET":
+            data = spotreba.prehled(self.accounts.list(), None if admin else user["email"],
+                                    wait=2.0)
+            data["admin"] = admin
+            return self._json(data)
+        if method != "POST":
+            return self._json({"error": "Jen GET nebo POST."}, 405)
+        if not admin:
+            return self._json({"error": "Limity nastavují admini."}, 403)
+        form = self._read_form()
+        if not self._account_post_ok():
+            return self._json({"error": "Limity jde měnit jen v hubu."}, 403)
+        try:
+            row = next((r for r in self.accounts.list() if r["id"] == int(form.get("id"))), None)
+            if not row:
+                raise ValueError("Tenhle člověk tu účet nemá.")
+            usd = spotreba.set_limit(row["email"], form.get("limit"))
+        except (TypeError, ValueError) as exc:
+            return self._json({"error": str(exc)}, 400)
+        return self._json({"ok": True, "limit": usd})
 
     def _gw_restart(self, method, user):
         """Restart vlastního prostoru z hubu (nové sdílené Obsidiany, přepnutí

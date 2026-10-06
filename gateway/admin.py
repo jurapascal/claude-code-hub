@@ -15,6 +15,8 @@ přes `--password` (hodí se do skriptu, ale zůstane v historii shellu).
     python3 -m gateway.admin disable jmeno@firma.cz
     python3 -m gateway.admin enable jmeno@firma.cz
     python3 -m gateway.admin remove jmeno@firma.cz
+    python3 -m gateway.admin spotreba            # kdo kolik čerpá za týden
+    python3 -m gateway.admin spotreba jmeno@firma.cz --limit 150   # týdenní strop v USD
     python3 -m gateway.admin sessions            # které prostory běží
     python3 -m gateway.admin stop jmeno@firma.cz # zastavit prostor
     python3 -m gateway.admin stop --orphans      # zastavit osiřelé
@@ -92,6 +94,30 @@ def cmd_list(a, args):
         twofa = "ano" if r.get("twofa") else "ne"
         print(f'{r["email"]:<{w}}  {r["role"]:<5}  {auth:<8}  {twofa:<3}  '
               f'{(r["vault"] or "-"):<18} {stav}')
+
+
+def cmd_spotreba(a, args):
+    from . import spotreba
+    if args.limit is not None:
+        if not args.email:
+            raise ValueError("Ke stropu patří e-mail: spotreba <e-mail> --limit 150")
+        usd = spotreba.set_limit(args.email, args.limit)
+        print(f"{args.email}: týdenní strop " + (f"{usd:g} USD" if usd else "zrušen"))
+        return
+    print("Počítám spotřebu za posledních 7 dní…", flush=True)
+    data = spotreba.prehled(a.list(), args.email or None, wait=600)
+    lide = data["lide"]
+    if not lide:
+        print("Žádní lidé.")
+        return
+    w = max(len(r["email"]) for r in lide)
+    print(f'{"e-mail":<{w}}  7 dní $   dnes $   podíl  strop $   stav')
+    znacka = {"nad": "NAD STROPEM", "blizko": "u stropu", "ok": "", "": ""}
+    for r in lide:
+        strop = f'{r["limit"]:g}' if r["limit"] else "-"
+        print(f'{r["email"]:<{w}}  {r["tyden"]:>7.2f}  {r["dnes"]:>7.2f}  '
+              f'{r["podil"] * 100:>4.0f} %  {strop:>7}   {znacka[r["stav"]]}')
+    print(f'{"celkem":<{w}}  {data["soucet"]:>7.2f}   (odhad podle ceníku API, na předplatném se neplatí)')
 
 
 def cmd_sdilene(a, args):
@@ -636,6 +662,11 @@ def build_parser():
     a.set_defaults(func=cmd_add)
 
     sub.add_parser("list", help="vypsat účty").set_defaults(func=cmd_list)
+
+    sp = sub.add_parser("spotreba", help="spotřeba Claude po lidech za týden, týdenní stropy")
+    sp.add_argument("email", nargs="?", default="")
+    sp.add_argument("--limit", default=None, help="týdenní strop v USD (0 = zrušit)")
+    sp.set_defaults(func=cmd_spotreba)
 
     pw = sub.add_parser("passwd", help="změnit heslo")
     pw.add_argument("email")

@@ -262,10 +262,97 @@
     }
     body.appendChild(s5);
 
+    const tymBox = el('div', 'st-tym');
+    body.appendChild(tymBox);
+    kresliTym(tymBox);
+
     const foot = el('div', 'set-note',
       'Počítáno z ~/.claude — tokeny z přepisů sezení, zprávy z historie. ' +
       (data.rescanned ? `Nově přečteno ${data.rescanned} souborů.` : 'Z mezipaměti.'));
     body.appendChild(foot);
+  }
+
+  /* ── tým: spotřeba po lidech a týdenní limity ────────────────────────────
+     Jen na serveru (brána). Správce vidí všechny a každému nastaví strop
+     v USD za týden, ostatní jen sebe — a jen když mají strop. Strop nic
+     nevypíná, jen ukáže, kdo je u něj. */
+  async function gwSpotreba(payload) {
+    const r = await fetch('/gw/spotreba', payload === undefined ? {credentials: 'same-origin'} : {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-Hub-Account': '1'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || 'Server teď neodpovídá, zkus to za chvíli.');
+    return d;
+  }
+
+  const STAV_TEXT = {nad: 'nad limitem', blizko: 'blízko limitu'};
+
+  async function kresliTym(box) {
+    let d;
+    try {
+      d = await gwSpotreba();
+      // Brána krátce počítá na pozadí — chvíli počkat, než čísla přijdou.
+      for (let i = 0; d.pocita && i < 40 && root; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        d = await gwSpotreba();
+      }
+    } catch (_) { return; }               // mimo server /gw/spotreba není
+    if (!root || !d || !d.lide) return;
+    box.textContent = '';
+    const admin = !!d.admin;
+    const lide = d.admin ? d.lide : d.lide.filter((r) => r.limit);
+    if (!lide.length) return;
+    const s = section(admin ? 'Tým — spotřeba za 7 dní' : 'Tvůj týdenní limit',
+      admin ? 'Odhad podle ceníku API; na předplatném se neplatí. Limit nic nevypíná, jen upozorní. ' +
+              (d.stari != null && d.stari > 90 ? 'Stav před ' + Math.round(d.stari / 60) + ' min.' : '')
+            : 'Správce ti nastavil týdenní strop, ať společný limit nevyčerpá jeden člověk.');
+    const max = Math.max(0.01, ...lide.map((r) => Math.max(r.tyden, r.limit || 0)));
+    const list = el('div', 'st-tym-rows');
+    for (const r of lide) {
+      const row = el('div', 'st-tym-row' + (r.stav ? ' ' + r.stav : ''));
+      const name = el('span', 'st-row-name', r.name || r.email);
+      name.title = r.email;
+      row.appendChild(name);
+      const track = el('span', 'st-track');
+      const fill = el('span', 'st-fill');
+      fill.style.width = Math.max(1, r.tyden / max * 100) + '%';
+      track.appendChild(fill);
+      if (r.limit) {
+        const znacka = el('span', 'st-limit-znacka');
+        znacka.style.left = Math.min(100, r.limit / max * 100) + '%';
+        track.appendChild(znacka);
+      }
+      row.appendChild(track);
+      row.appendChild(el('span', 'st-row-val', dolary(r.tyden)));
+      row.title = 'Dnes ' + dolary(r.dnes) + ' · ' + cislo(r.tokenu) + ' tokenů výstupu · ' +
+        Math.round(r.podil * 100) + ' % týmu';
+      const stav = el('span', 'st-tym-stav', STAV_TEXT[r.stav] || '');
+      row.appendChild(stav);
+      if (admin) {
+        const inp = el('input', 'st-tym-limit');
+        inp.type = 'number'; inp.min = '0'; inp.step = '10';
+        inp.placeholder = 'limit $';
+        inp.value = r.limit || '';
+        inp.title = 'Týdenní limit v USD (odhad podle ceníku API). Prázdné = bez limitu.';
+        const ulozit = async () => {
+          try {
+            await gwSpotreba({id: r.id, limit: inp.value});
+            const nove = await gwSpotreba();
+            kresliTym(box);
+            return nove;
+          } catch (err) { inp.title = err.message; inp.classList.add('chyba'); }
+        };
+        inp.onchange = ulozit;
+        row.appendChild(inp);
+      } else {
+        row.appendChild(el('span', 'st-tym-limit-txt', 'limit ' + dolary(r.limit)));
+      }
+      list.appendChild(row);
+    }
+    s.appendChild(list);
+    box.appendChild(s);
   }
 
   function close() {
