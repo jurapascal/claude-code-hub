@@ -129,6 +129,14 @@
       const go = document.createElement('button');
       go.className = 'open-name';
       go.textContent = name(t);
+      // Sdílený chat: štítek „Sdílené · Jiří“ nad názvem.
+      if (t.dataset.stitek) {
+        row.classList.add('sdileny');
+        const st = document.createElement('span');
+        st.className = 'open-stitek';
+        st.textContent = t.dataset.stitek;
+        go.prepend(st);
+      }
       // Jedno ťuknutí přepne tab, dvě rychle po sobě ho přejmenují jako
       // dvojklik na počítači. Přepnutí proto chvíli počká, jestli nepřijde druhé.
       let wait = 0;

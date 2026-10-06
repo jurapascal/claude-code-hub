@@ -1581,8 +1581,12 @@ async function zrusitSdileni(rel) {
   loadRelace();
 }
 
+/* Sdílené chaty v panelu vlevo: totéž co taby nahoře, jen se z nich dá vrátit
+   chat, který sis zavřel. Klepnutí otevře (nebo přepne na) tab. */
 function renderRelace() {
   const box = $('relace-section');
+  syncSdileneTaby();
+  paintSdileni();
   if (!box) return;
   const list = $('relace-list');
   list.textContent = '';
@@ -1595,14 +1599,133 @@ function renderRelace() {
     t.textContent = s.titulek;
     const m = document.createElement('span');
     m.className = 'chat-meta';
-    m.textContent = s.majitel + (s.role === 'pise' ? ' · smíš psát' : ' · jen čtení') +
+    m.textContent = 'Sdílí ' + s.majitel + (s.role === 'pise' ? ' · smíš psát' : ' · jen čtení') +
       (s.diva.length ? ' · dívá se ' + s.diva.join(', ') : '');
     row.append(t, m);
-    row.onclick = () => HubCteni.openSdilene({
-      gw: relaceGw, notice: toast, imageUrl, openLink, copy: copyText, onClose: loadRelace,
-    }, s);
+    row.onclick = () => {
+      otevriSdilenyTab(s, true);
+      if (window.HubMobile) HubMobile.closeDrawer();
+    };
     list.appendChild(row);
   }
+}
+
+/* ── Sdílené chaty jako taby ────────────────────────────────────────────────
+   Chat, který ti někdo sdílí, je v liště tabů jako každý jiný — se štítkem
+   „Sdílené“ a jménem toho, kdo ti ho sdílí. Otevře se v tabu (ne v okně nad
+   stránkou), čte se živě přes bránu a kdo smí, píše. Zavřený tab se dá vrátit
+   z panelu vlevo; zrušené sdílení tab samo odstraní. */
+const SDILENE_TABY = new Map();       // id relace → {id, share, el, pane, viewer}
+let relaceZavrene = new Set();
+try { relaceZavrene = new Set(JSON.parse(localStorage.getItem('hub-relace-zavrene') || '[]')); } catch (_) { /* nic */ }
+function ulozZavrene() {
+  try { localStorage.setItem('hub-relace-zavrene', JSON.stringify([...relaceZavrene].slice(-200))); } catch (_) { /* soukromé okno */ }
+}
+
+function popisSdilenyTab(st) {
+  const s = st.share;
+  st.el.querySelector('.tab-stitek').textContent = 'Sdílené · ' + s.majitel;
+  st.el.querySelector('.tab-title').textContent = s.titulek;
+  st.el.dataset.stitek = 'Sdílené · ' + s.majitel;
+  st.el.title = `${s.titulek}\nSdílí ${s.majitel} — ` + (s.role === 'pise' ? 'smíš psát' : 'jen čtení');
+}
+
+function otevriSdilenyTab(s, aktivovat) {
+  relaceZavrene.delete(s.id);
+  ulozZavrene();
+  let st = SDILENE_TABY.get(s.id);
+  if (!st) {
+    const pane = document.createElement('div');
+    pane.className = 'pane relace-tab';
+    $('panes').appendChild(pane);
+    const el = document.createElement('button');
+    el.className = 'tab tab-sdileny';
+    el.innerHTML = '<span class="tab-stitek"></span><span class="tab-title"></span>' +
+                   `<span class="tab-close" title="Zavřít tab">${icon('i-close')}</span>`;
+    st = {id: s.id, share: s, el, pane, viewer: null};
+    el.onclick = (ev) => {
+      if (ev.target.closest('.tab-close')) { zavriSdilenyTab(st, true); return; }
+      aktivujSdileny(st);
+    };
+    $('tabbar').insertBefore(el, $('btn-new-agent'));
+    SDILENE_TABY.set(s.id, st);
+    // Nový tab (ne ten při prvním načtení) svítí, dokud se na něj nepodíváš.
+    if (relaceHotovo) el.classList.add('hotovo');
+  }
+  st.share = s;
+  popisSdilenyTab(st);
+  if (aktivovat) aktivujSdileny(st);
+  return st;
+}
+
+function aktivujSdileny(st) {
+  ACTIVE = null;
+  showProjekty(false);
+  for (const t of TABS) { t.el.classList.remove('active'); t.pane.classList.remove('active'); }
+  for (const o of SDILENE_TABY.values()) {
+    o.el.classList.toggle('active', o === st);
+    o.pane.classList.toggle('active', o === st);
+  }
+  $('welcome').hidden = true;
+  st.el.classList.remove('hotovo');
+  document.dispatchEvent(new CustomEvent('hub-tab', {detail: {id: 'relace:' + st.id, title: st.share.titulek, path: ''}}));
+  syncActionbar(null);
+  if (!st.viewer) {
+    st.viewer = HubCteni.openSdilene({
+      host: st.pane, gw: relaceGw, notice: toast, imageUrl, openLink, copy: copyText,
+    }, st.share);
+  } else st.viewer.wake();
+}
+
+function zavriSdilenyTab(st, zapamatovat) {
+  if (st.viewer) st.viewer.close();
+  const bylAktivni = st.el.classList.contains('active');
+  st.el.remove();
+  st.pane.remove();
+  SDILENE_TABY.delete(st.id);
+  if (zapamatovat) { relaceZavrene.add(st.id); ulozZavrene(); }
+  if (bylAktivni) {
+    const dalsi = TABS[TABS.length - 1];
+    if (dalsi) activate(dalsi); else activate(null);
+  }
+}
+
+/* Podle seznamu z brány: nové sdílení přidá tab, zrušené ho odstraní. */
+function syncSdileneTaby() {
+  if (!onServer()) return;
+  const ids = new Set(RELACE.semnou.map((s) => s.id));
+  for (const st of [...SDILENE_TABY.values()]) if (!ids.has(st.id)) zavriSdilenyTab(st, false);
+  for (const s of RELACE.semnou) {
+    if (relaceZavrene.has(s.id)) continue;
+    otevriSdilenyTab(s, false);
+  }
+}
+
+/* U tabu, který sdílím já, je vidět s kolika lidmi — a jde na to kliknout. */
+function paintSdileni() {
+  for (const t of TABS) {
+    const b = t.el && t.el.querySelector('.tab-sdil');
+    if (!b) continue;
+    const rel = onServer() ? relaceTabu(t) : null;
+    b.hidden = !rel;
+    if (rel) {
+      b.querySelector('span').textContent = String(rel.clenove.length);
+      b.title = 'Sdílíš s: ' + rel.clenove.map((c) => c.name || c.email).join(', ') + ' — klepni a uprav';
+    }
+  }
+  syncShareBtn();
+}
+
+/* Tlačítko „Sdílet“ v liště tabů: vidět na každém chatu, který se dá sdílet. */
+function syncShareBtn() {
+  const b = $('btn-sdilet');
+  if (!b) return;
+  const ok = onServer() && ACTIVE && (ACTIVE.chat || ACTIVE.resume) && ACTIVE.kind !== 'shell';
+  b.hidden = !ok;
+  if (!ok) return;
+  const rel = relaceTabu(ACTIVE);
+  b.classList.toggle('on', !!rel);
+  b.querySelector('span').textContent = rel ? 'Sdíleno' : 'Sdílet';
 }
 
 /* Okno se sdíleným chatem čte a píše přes bránu (ne přes vlastní hub). */
@@ -1838,10 +1961,27 @@ function prehledHtml(tab, box) {
   return neco;
 }
 
+/* Panel se překresluje každých pár vteřin. Kdyby se pokaždé vyměnily i
+   tlačítka, na telefonu by zmizela pod prstem dřív, než klepnutí skončí
+   (proto dřív nešlo sdílet) — vymění se jen to, co se opravdu změnilo.
+   Rozepsané pole v panelu se nepřekresluje vůbec. */
+function prehledStabilne(tab, box) {
+  if (box.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return !box.hidden;
+  const novy = document.createElement('div');
+  const neco = prehledHtml(tab, novy);
+  const podpis = (neco ? '1' : '0') + novy.innerHTML + '|' + novy.textContent;
+  if (box.dataset.podpis === podpis && box.firstChild) return neco;
+  box.textContent = '';
+  box.dataset.podpis = podpis;
+  // prehledHtml navěsil obsluhu na `novy`, ne na box — děti se přesunou, obsluha jde s nimi.
+  while (novy.firstChild) box.appendChild(novy.firstChild);
+  return neco;
+}
+
 function renderPrehled(tab) {
   const box = $('prehled');
   if (!box) return false;
-  const neco = prehledHtml(tab, box);
+  const neco = prehledStabilne(tab, box);
   box.hidden = !neco;
   document.body.classList.toggle('ma-prehled', neco);
   return neco;
@@ -1856,7 +1996,7 @@ function openPrehled(tab) {
     '<button class="set-x" title="Zavřít">×</button></div><div class="prehled-telo"></div></div>';
   wrap.querySelector('.onb-sub').textContent = tab.title || '';
   const telo = wrap.querySelector('.prehled-telo');
-  const kresli = () => { if (!prehledHtml(tab, telo)) telo.textContent = 'Zatím se tu nic neděje.'; };
+  const kresli = () => { if (!prehledStabilne(tab, telo)) { telo.textContent = 'Zatím se tu nic neděje.'; delete telo.dataset.podpis; } };
   kresli();
   const t = setInterval(kresli, 1500);
   const zavri = () => { clearInterval(t); wrap.remove(); };
@@ -2718,12 +2858,14 @@ function createTab({kind, path, title, id, agent, model, background, bypass, mod
   el.innerHTML = '<span class="tab-agent" hidden></span>' +
                  '<span class="tab-title"></span>' +
                  `<span class="tab-br" hidden title="Prohlížeč tohohle chatu">${icon('i-globe')}</span>` +
+                 `<span class="tab-sdil" hidden>${icon('i-user')}<span></span></span>` +
                  `<span class="tab-close" title="Zavřít tab">${icon('i-close')}</span>`;
   el.querySelector('.tab-title').textContent = title;
   el.onclick = (ev) => {
     if (ev.target.closest('input')) return;       // pole na přejmenování
     if (ev.target.closest('.tab-close')) { requestCloseTab(tab); return; }
     if (ev.target.closest('.tab-br') && window.HubProhlizec) { activate(tab); HubProhlizec.ukaz(tab.id); return; }
+    if (ev.target.closest('.tab-sdil')) { activate(tab); sdiletChat(tab); return; }
     activate(tab);
   };
   el.ondblclick = (ev) => { if (!ev.target.closest('.tab-close')) startRename(tab); };
@@ -2822,6 +2964,8 @@ function activate(tab) {
     t.el.classList.toggle('active', t === tab);
     t.pane.classList.toggle('active', t === tab);
   }
+  for (const o of SDILENE_TABY.values()) { o.el.classList.remove('active'); o.pane.classList.remove('active'); }
+  syncShareBtn();
   // Bez tabu (activate(null)) je vidět úvod — i když jsou taby otevřené:
   // domů se dá kdykoli (logo v liště, Domů v šuplíku) a taby běží dál.
   $('welcome').hidden = !!tab;
@@ -3426,6 +3570,12 @@ function topbarMenu(btn) {
   if (ACTIVE && ACTIVE.cteni && ACTIVE.cteni.prehled) {
     items.push({icon: 'i-status', label: 'Průběh', color: 'var(--accent)', run: () => openPrehled(ACTIVE)});
   }
+  // Sdílení chatu: na telefonu není lišta s tlačítkem, tak je to tady.
+  if (onServer() && ACTIVE && (ACTIVE.chat || ACTIVE.resume) && ACTIVE.kind !== 'shell') {
+    const rel = relaceTabu(ACTIVE);
+    items.push({icon: 'i-user', label: rel ? 'Sdílení chatu (' + rel.clenove.length + ')…' : 'Sdílet chat…',
+                color: 'var(--accent)', run: () => sdiletChat(ACTIVE)});
+  }
   items.push(
     {icon: 'i-note', label: 'Chaty', run: () => open('chats')},
     {icon: 'i-folder', label: 'Projekty', run: () => showProjekty(true)},
@@ -3905,6 +4055,7 @@ async function main() {
     openTab({kind: 'project', path: STATE.home, title: newTabLabel(), agent: a.id});
   };
   $('btn-new-agent').oncontextmenu = (ev) => { ev.preventDefault(); newAgentMenu(ev); };
+  $('btn-sdilet').onclick = () => { if (ACTIVE) sdiletChat(ACTIVE); };
   $('btn-new-firma').onclick = () => openFirmaTab();
   $('btn-new-menu').onclick = (ev) => newTabMenu(ev.currentTarget);
   // Poznámky se otevírají v hubu (i s přepínačem firemní / sdílené); aplikace

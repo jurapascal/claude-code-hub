@@ -1572,8 +1572,25 @@
      dívá, a kód, který Claude napsal (Edit/Write se rozbalí sám). Kdo smí,
      píše — zpráva dojde do chatu majitele s tvým jménem. */
   function openSdilene(io, share) {
-    const box = el('div', 'onb set-modal cteni-modal relace-modal');
-    box.innerHTML = `
+    /* io.host = vložený do tabu (hub.js sdileneTab), jinak okno nad stránkou. */
+    const host = io.host || null;
+    const box = host || el('div', 'onb set-modal cteni-modal relace-modal');
+    const telo = `
+          <div class="cteni-scroll"><div class="cteni-flow"></div></div>
+          <div class="cteni-write">
+            <textarea class="cteni-input" rows="1" spellcheck="false" autocomplete="off"
+                      data-form-type="other" data-1p-ignore data-lpignore="true"></textarea>
+            <button class="cteni-send" title="Odeslat (Enter)">↑</button>
+          </div>`;
+    box.innerHTML = host ? `
+      <div class="relace-hlava">
+        <span class="relace-stitek">Sdílené</span>
+        <span class="relace-kdo"></span>
+        <span class="spacer"></span>
+        <span class="relace-stav"></span>
+      </div>
+      <div class="relace-lista"></div>
+      <div class="relace-telo">${telo}</div>` : `
       <div class="onb-box">
         <div class="onb-head">
           <span class="onb-mark"><svg class="ico" width="26" height="26"><use href="#i-hub"/></svg></span>
@@ -1586,19 +1603,15 @@
           <button class="set-x cteni-close" title="Zavřít (Esc)">×</button>
         </div>
         <div class="relace-lista"></div>
-        <div class="onb-body">
-          <div class="cteni-scroll"><div class="cteni-flow"></div></div>
-          <div class="cteni-write">
-            <textarea class="cteni-input" rows="1" spellcheck="false" autocomplete="off"
-                      data-form-type="other" data-1p-ignore data-lpignore="true"></textarea>
-            <button class="cteni-send" title="Odeslat (Enter)">↑</button>
-          </div>
-        </div>
+        <div class="onb-body">${telo}</div>
       </div>`;
-    document.body.appendChild(box);
+    if (!host) document.body.appendChild(box);
     const q = (sel) => box.querySelector(sel);
-    q('.onb-title').textContent = share.titulek || 'Sdílený chat';
-    q('.onb-sub').textContent = share.majitel + ' ti ho sdílí';
+    if (host) q('.relace-kdo').textContent = 'od ' + share.majitel;
+    else {
+      q('.onb-title').textContent = share.titulek || 'Sdílený chat';
+      q('.onb-sub').textContent = share.majitel + ' ti ho sdílí';
+    }
     const scroll = q('.cteni-scroll');
     const pole = q('.cteni-input');
     const stav = q('.relace-stav');
@@ -1615,19 +1628,22 @@
       clearTimeout(timer);
       proud.stav(null);
       proud.zavri();
-      box.remove();
+      if (host) host.textContent = '';
+      else box.remove();
       document.removeEventListener('keydown', naKlavesu, true);
       if (io.onClose) io.onClose();
     };
     function naKlavesu(ev) { if (ev.key === 'Escape' && document.activeElement !== pole) { ev.stopPropagation(); zavrit(); } }
-    document.addEventListener('keydown', naKlavesu, true);
-    q('.cteni-close').onclick = zavrit;
-    box.addEventListener('click', (ev) => { if (ev.target === box) zavrit(); });
+    if (!host) {
+      document.addEventListener('keydown', naKlavesu, true);
+      q('.cteni-close').onclick = zavrit;
+      box.addEventListener('click', (ev) => { if (ev.target === box) zavrit(); });
+    }
 
     function psaniPole() {
       q('.cteni-write').hidden = !psat;
       pole.placeholder = psat
-        ? `Napiš ${share.majitel} do chatu… (Enter odešle, Claude to uvidí s tvým jménem)`
+        ? `Napiš do chatu (uvidí to ${share.majitel} i Claude)…`
         : '';
     }
     psaniPole();
@@ -1689,6 +1705,8 @@
     async function tik(hned) {
       if (!zivy || ceka) return;
       clearTimeout(timer);
+      // Tab, na který se nekouká, nečte — jen občas zkontroluje, jestli se nemá probudit.
+      if (host && !hned && !host.classList.contains('active')) { timer = setTimeout(tik, 3000); return; }
       ceka = true;
       let dalsi = prazdnych < 6 && !document.hidden ? 1200 : 4000;
       try {
@@ -1720,7 +1738,7 @@
       }
     }
     tik();
-    return {close: zavrit};
+    return {close: zavrit, wake: () => tik(true)};
   }
 
   global.HubCteni = {install, open, openSdilene, claudik, paleta};
