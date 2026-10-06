@@ -13,7 +13,10 @@ nečte znovu, a první průchod (stovky MB) neblokuje odpověď — stránka dos
 „počítám“ a za chvíli čísla. Čte se jen to, co se za poslední týden změnilo.
 
 Limity: týdenní strop v USD (odhad) pro každého zvlášť. Strop nic nevypíná —
-jen ukáže, že je člověk blízko nebo nad, adminovi i jemu samotnému.
+jen ukáže, že je člověk blízko nebo nad, adminovi i jemu samotnému (hub mu
+to připomene hláškou nahoře) a počítá se, kolikrát už přes strop přešel.
+Počítání dělá hlídač na pozadí (`sledovani`), který se po pár minutách sám
+podívá, jak kdo stojí — i když nikdo Statistiky neotevřel.
 """
 import json
 import os
@@ -26,6 +29,7 @@ from . import config, workspace
 
 CACHE = os.path.join(config.GATEWAY_DIR, "spotreba-cache.json")
 LIMITY = os.path.join(config.GATEWAY_DIR, "spotreba-limity.json")
+PRESLO = os.path.join(config.GATEWAY_DIR, "spotreba-preslo.json")   # kolikrát přes strop
 DNI = 7
 STARE = 8 * 86400            # přepis starší než tohle se do týdne nevejde
 OBNOVA = 300                 # nejdřív za 5 minut znovu projít disk
@@ -145,15 +149,72 @@ def _projdi(users):
     return lide
 
 
+def _tyden(dny):
+    hranice = time.strftime("%Y-%m-%d", time.gmtime(time.time() - (DNI - 1) * 86400))
+    return sum(d["cost"] for den, d in dny.items() if den >= hranice)
+
+
+def preslo():
+    """{e-mail: {"pocet": kolikrát přes strop, "stav": poslední stav, "naposledy": kdy}}"""
+    return _load(PRESLO)
+
+
+def _zapocti(lide):
+    """Přechod z „v pořádku / blízko“ na „nad stropem“ je jedno překročení.
+    Člověk, který zůstane nad, se nepočítá znovu; až klesne a zase přeleze,
+    připočte se další. Změnu stavu zapíše na disk."""
+    lim = limity()
+    data = preslo()
+    zmena = False
+    for email, dny in lide.items():
+        zaznam = data.get(email) or {"pocet": 0, "stav": "", "naposledy": ""}
+        stav = _stav_limitu(_tyden(dny), lim.get(email, 0))
+        if stav != zaznam.get("stav"):
+            if stav == "nad":
+                zaznam["pocet"] = int(zaznam.get("pocet") or 0) + 1
+                zaznam["naposledy"] = time.strftime("%Y-%m-%d %H:%M")
+            zaznam["stav"] = stav
+            data[email] = zaznam
+            zmena = True
+    if zmena:
+        try:
+            os.makedirs(config.GATEWAY_DIR, exist_ok=True)
+            _save(PRESLO, data)
+        except OSError:
+            pass
+
+
 def _na_pozadi(users):
     try:
         lide = _projdi(users)
+        _zapocti(lide)
         with _lock:
             _stav["lide"] = lide
             _stav["cas"] = time.time()
+    except Exception as exc:                      # hlídač nesmí spadnout s bránou
+        print("spotřeba:", exc, flush=True)
     finally:
         with _lock:
             _stav["bezi"] = False
+
+
+def sledovani(get_users, kazdych=600):
+    """Vlákno brány: každých pár minut přepočítá spotřebu, ať se překročení
+    stropu zaznamená, i když Statistiky nikdo nemá otevřené."""
+    def smycka():
+        time.sleep(30)
+        while True:
+            with _lock:
+                volno = not _stav["bezi"]
+                if volno:
+                    _stav["bezi"] = True
+            if volno:
+                try:
+                    _na_pozadi([dict(u) for u in get_users()])
+                except Exception as exc:
+                    print("spotřeba:", exc, flush=True)
+            time.sleep(kazdych)
+    threading.Thread(target=smycka, daemon=True).start()
 
 
 def _stav_limitu(cost, limit):
@@ -183,6 +244,7 @@ def prehled(users, only=None, wait=0.0):
     hranice = time.strftime("%Y-%m-%d", time.gmtime(time.time() - (DNI - 1) * 86400))
     dnes = time.strftime("%Y-%m-%d", time.gmtime())
     lim = limity()
+    kolikrat = preslo()
     out = []
     for u in users:
         email = u["email"].lower()
@@ -199,6 +261,8 @@ def prehled(users, only=None, wait=0.0):
             "dny": [{"den": den, "cost": round(d["cost"], 2)}
                     for den, d in sorted(dny.items()) if den >= hranice],
             "limit": limit, "stav": _stav_limitu(tyden, limit),
+            "preslo": int((kolikrat.get(email) or {}).get("pocet") or 0),
+            "preslo_kdy": (kolikrat.get(email) or {}).get("naposledy") or "",
             "zablokovany": bool(u.get("disabled")),
         })
     out.sort(key=lambda r: -r["tyden"])

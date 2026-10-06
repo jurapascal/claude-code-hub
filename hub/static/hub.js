@@ -1912,6 +1912,7 @@ function renderFooter() {
   me.append(avatar, who);
   me.onclick = () => HubSettings.open({...hubIO(), state: STATE, tab: 'ucet'});
   foot.appendChild(me);
+  if (!spotrebaTimer) hlidejLimit();
   // Verze vede rovnou na Aktualizace: ty se hned zeptají GitHubu, co je
   // nejnovější, a mají odkaz na seznam vydání.
   const ver = document.createElement('button');
@@ -3742,6 +3743,48 @@ async function memorySaved({files, projects}) {
     renderMemory();
     renderWelcome();
   } catch (_) { /* hláška stačí, seznam se obnoví příště */ }
+}
+
+/* Týdenní limit spotřeby (gateway/spotreba.py): když je člověk u svého stropu
+   nebo nad ním, hub mu to řekne pruhem nahoře. Pruh jde zavřít a stejný stav
+   se ten den neukáže znovu. Jen na serveru a jen pro toho, komu správce limit
+   nastavil. */
+let spotrebaTimer = null;
+
+async function hlidejLimit() {
+  if (!onServer()) return;
+  if (!spotrebaTimer) spotrebaTimer = setInterval(() => { if (!document.hidden) hlidejLimit(); }, 600000);
+  const gw = (STATE.config && STATE.config.gateway_user) || {};
+  let data;
+  try {
+    const r = await fetch('/gw/spotreba', {credentials: 'same-origin'});
+    if (!r.ok) return;
+    data = await r.json();
+  } catch (_) { return; }
+  const ja = (data.lide || []).find((x) => String(x.email).toLowerCase() === String(gw.email || '').toLowerCase());
+  let bar = document.getElementById('spotreba-pruh');
+  if (!ja || !ja.limit || !ja.stav || ja.stav === 'ok') { if (bar) bar.remove(); return; }
+  const klic = 'hub-spotreba-' + ja.stav + '-' + new Date().toISOString().slice(0, 10);
+  try { if (localStorage.getItem(klic)) return; } catch (_) {}
+  const dolary = (c) => (Number(c) || 0).toFixed(0) + ' $';
+  const text = ja.stav === 'nad'
+    ? 'Tenhle týden jsi přes svůj limit spotřeby Claude (' + dolary(ja.tyden) + ' z ' + dolary(ja.limit) +
+      '). Je to už ' + (ja.preslo || 1) + '. překročení — ať společný limit nevyčerpáme všichni, zkus ubrat.'
+    : 'Blížíš se ke svému týdennímu limitu spotřeby Claude (' + dolary(ja.tyden) + ' z ' + dolary(ja.limit) + ').';
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'spotreba-pruh';
+    document.body.appendChild(bar);
+  }
+  bar.className = 'spotreba-pruh ' + ja.stav;
+  bar.textContent = '';
+  const t = document.createElement('span');
+  t.textContent = text;
+  const x = document.createElement('button');
+  x.textContent = '×';
+  x.title = 'Zavřít (dnes se to nebude opakovat)';
+  x.onclick = () => { try { localStorage.setItem(klic, '1'); } catch (_) {} bar.remove(); };
+  bar.append(t, x);
 }
 
 function toast(text) {

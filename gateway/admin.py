@@ -111,12 +111,12 @@ def cmd_spotreba(a, args):
         print("Žádní lidé.")
         return
     w = max(len(r["email"]) for r in lide)
-    print(f'{"e-mail":<{w}}  7 dní $   dnes $   podíl  strop $   stav')
+    print(f'{"e-mail":<{w}}  7 dní $   dnes $   podíl  strop $   přes limit  stav')
     znacka = {"nad": "NAD STROPEM", "blizko": "u stropu", "ok": "", "": ""}
     for r in lide:
         strop = f'{r["limit"]:g}' if r["limit"] else "-"
         print(f'{r["email"]:<{w}}  {r["tyden"]:>7.2f}  {r["dnes"]:>7.2f}  '
-              f'{r["podil"] * 100:>4.0f} %  {strop:>7}   {znacka[r["stav"]]}')
+              f'{r["podil"] * 100:>4.0f} %  {strop:>7}   {str(r["preslo"]) + "×":>8}   {znacka[r["stav"]]}')
     print(f'{"celkem":<{w}}  {data["soucet"]:>7.2f}   (odhad podle ceníku API, na předplatném se neplatí)')
 
 

@@ -2329,6 +2329,8 @@ def serve():
     # assume_https zapneme, když je za bránou nginx s TLS (řekne to env).
     assume_https = os.environ.get("HUB_GW_ASSUME_HTTPS", "") == "1"
     gw = Gateway((config.HOST, config.PORT), accounts, hubs, assume_https)
+    from . import spotreba
+    spotreba.sledovani(accounts.list)
     where = f"{config.HOST}:{config.PORT}"
     print(f"brána poslouchá na {where}, izolace {config.ISOLATION}, "
           f"účtů {accounts.count()}", flush=True)

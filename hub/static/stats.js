@@ -330,6 +330,10 @@
         Math.round(r.podil * 100) + ' % týmu';
       const stav = el('span', 'st-tym-stav', STAV_TEXT[r.stav] || '');
       row.appendChild(stav);
+      // Kolikrát už přes strop přešel (jen když nějaký má).
+      const kolikrat = el('span', 'st-tym-preslo', r.limit ? 'přes limit ' + (r.preslo || 0) + '×' : '');
+      if (r.preslo_kdy) kolikrat.title = 'Naposledy ' + r.preslo_kdy;
+      row.appendChild(kolikrat);
       if (admin) {
         const inp = el('input', 'st-tym-limit');
         inp.type = 'number'; inp.min = '0'; inp.step = '10';
