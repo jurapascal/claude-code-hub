@@ -2067,6 +2067,65 @@ def on_gateway():
     return bool(CONFIG.get("gateway_user"))
 
 
+def pamet_prostoru():
+    """(použito, strop, počet OOM zabití) cgroupy, ve které hub běží, nebo None.
+
+    Na serveru běží prostor jako scope s MemoryMax; jádro po jeho překročení
+    zabíjí procesy a bez téhle stopy v logu nezbyde, proč tab zmizel."""
+    try:
+        with open("/proc/self/cgroup", encoding="ascii") as fh:
+            rel = fh.read().strip().split("::", 1)[1]
+    except (OSError, IndexError):
+        return None
+    base = "/sys/fs/cgroup"
+    parts = rel.strip("/").split("/")
+    while parts:
+        d = os.path.join(base, *parts)
+        try:
+            with open(os.path.join(d, "memory.max"), encoding="ascii") as fh:
+                raw = fh.read().strip()
+            if raw.isdigit():
+                with open(os.path.join(d, "memory.current"), encoding="ascii") as fh:
+                    cur = int(fh.read())
+                kills = 0
+                with open(os.path.join(d, "memory.events"), encoding="ascii") as fh:
+                    for line in fh:
+                        if line.startswith("oom_kill "):
+                            kills = int(line.split()[1])
+                return cur, int(raw), kills
+        except (OSError, ValueError):
+            pass
+        parts.pop()
+    return None
+
+
+def hlidej_pamet(notify, every=30, warn=0.85):
+    """Smyčka na pozadí: zapíše OOM zabití do hub.log a přes `notify` pošle
+    oknům varování, když se prostor blíží stropu (a znovu až po poklesu)."""
+    import time
+    last_kills, warned = None, False
+    while True:
+        time.sleep(every)
+        st = pamet_prostoru()
+        if not st:
+            return
+        cur, mx, kills = st
+        if last_kills is not None and kills > last_kills:
+            log(f"pamet: jádro zabilo {kills - last_kills} proces(ů) na stropu prostoru "
+                f"({cur // 2**20} z {mx // 2**20} MB)", "warn")
+            notify({"t": "pamet", "stav": "oom", "pouzito": cur // 2**20,
+                    "strop": mx // 2**20})
+        last_kills = kills
+        if cur >= mx * warn and not warned:
+            warned = True
+            log(f"pamet: prostor je na {cur * 100 // mx} % stropu "
+                f"({cur // 2**20} z {mx // 2**20} MB)", "warn")
+            notify({"t": "pamet", "stav": "blizko", "pouzito": cur // 2**20,
+                    "strop": mx // 2**20})
+        elif cur < mx * (warn - 0.1):
+            warned = False
+
+
 # Kam noční aktualizace brány zapisuje, jak dopadla. /etc je v sandboxu vidět
 # ke čtení, takže to prostor přečte, i když na nic jiného mimo domov nedosáhne.
 GATEWAY_UPDATE_STATUS = "/etc/claude-hub/update.json"
@@ -2825,7 +2884,7 @@ def transcript_for(session):
             if now - getattr(session, "navaz_at", 0) >= NAVAZ_KAZDYCH:
                 session.navaz_at = now
                 rodina = getattr(session, "rodina", None) or [chat_id]
-                novy = _pokracovani(path, rodina)
+                novy = _pokracovani(path, rodina, getattr(session, "started", 0))
                 if novy:
                     session.chat_id = os.path.basename(novy)[:-6]
                     session.rodina = rodina + [session.chat_id]
@@ -2837,10 +2896,14 @@ def transcript_for(session):
 NAVAZ_KAZDYCH = 4.0
 
 
-def _pokracovani(path, rodina):
+def _pokracovani(path, rodina, started=0):
     """Novější přepis ve stejné složce, který navazuje na některé z id v `rodina`
     (Claude Code ho založil při obnovení tabu), nebo ''. Pozná se podle toho,
-    že staré id je v jeho začátku — zkopírovaná historie ho nese dál."""
+    že staré id je v jeho začátku — zkopírovaná historie ho nese dál.
+
+    Bere se jen přepis změněný až po startu tabu (`started`): při obnovení po
+    pádu by jinak „novější“ kopie z předchozího běhu přebila originál, do
+    kterého tab zrovna píše, a po dalším restartu by se Claude vrátil do kopie."""
     try:
         base = os.path.getmtime(path)
         entries = list(os.scandir(os.path.dirname(path)))
@@ -2856,7 +2919,7 @@ def _pokracovani(path, rodina):
             m = e.stat().st_mtime
         except OSError:
             continue
-        if m <= best_m:
+        if m <= best_m or (started and m < started):
             continue
         try:
             with open(e.path, "rb") as fh:

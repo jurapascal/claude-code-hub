@@ -58,7 +58,9 @@ def _pamet():
 
 # Strop na celý prostor (všechny taby), viz isolation.LIMITS.
 LIMITY = {"MemoryMax": _pamet(), "MemorySwapMax": "0", "TasksMax": "1024",
-          "CPUWeight": "100"}
+          "CPUWeight": "100",
+          # OOM zabije jen proces, ne celý scope (výchozí stop shodil všechny taby).
+          "OOMPolicy": "continue"}
 
 
 def konec(zprava):

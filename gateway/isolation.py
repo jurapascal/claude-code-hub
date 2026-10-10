@@ -152,7 +152,8 @@ def _limited(argv, limits, unit=""):
     if unit:
         scope += [f"--unit={unit}"]
     if limits.get("memory"):
-        scope += ["-p", f"MemoryMax={limits['memory']}", "-p", "MemorySwapMax=0"]
+        scope += ["-p", f"MemoryMax={limits['memory']}", "-p", "MemorySwapMax=0",
+                  "-p", "OOMPolicy=continue"]
     if limits.get("tasks"):
         scope += ["-p", f"TasksMax={limits['tasks']}"]
     if limits.get("cpu_weight"):

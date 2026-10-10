@@ -1783,6 +1783,9 @@ def start():
     pocitac.NOTIFY = HUB.broadcast
     pocitac.start()
     connect.start_shared_sync()
+    if core.on_gateway():
+        threading.Thread(target=core.hlidej_pamet, args=(HUB.broadcast,),
+                         daemon=True).start()
     return httpd, f"http://127.0.0.1:{port}/?t={urllib.parse.quote(token)}"
 
 

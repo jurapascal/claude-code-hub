@@ -3721,6 +3721,10 @@ function handle(msg) {
       // Ve čtení terminál není vidět — bez hlášky by jen přestalo přibývat.
       if (tab.cteni) tab.cteni.upozorni('Claude Code v tomhle tabu skončil. Konverzaci otevřeš znovu v seznamu Konverzace.');
     }
+  } else if (msg.t === 'pamet') {
+    toast(msg.stav === 'oom'
+      ? 'Prostoru došla paměť (' + msg.pouzito + ' z ' + msg.strop + ' MB), server ukončil proces. Zavři nepotřebné taby.'
+      : 'Prostor je skoro na stropu paměti (' + msg.pouzito + ' z ' + msg.strop + ' MB). Zavři nepotřebné taby a testy.');
   } else if (msg.t === 'tab-opened') {
     // Tab z jiného okna téhož hubu (appka i prohlížeč naráz). Přidá se na
     // pozadí — přepnout na něj by tomu, kdo tu zrovna pracuje, sebralo tab.
