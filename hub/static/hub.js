@@ -68,6 +68,11 @@ async function api(path, body) {
       const parsed = JSON.parse(body);
       message = parsed.error || parsed.detail || body;
     } catch (_) { /* není JSON */ }
+    // Proxy před hubem (502/503/504, HTML stránka nginxu) = server se zrovna
+    // restartuje; člověku patří věta, ne kus HTML.
+    if ([502, 503, 504].includes(res.status) || /^\s*<(!doctype|html)/i.test(message)) {
+      message = 'Server se právě restartuje, zkus to za chvíli.';
+    }
     throw new Error(message);
   }
   return res.json();
